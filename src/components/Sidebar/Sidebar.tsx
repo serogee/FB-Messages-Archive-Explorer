@@ -51,7 +51,7 @@ export function Sidebar({
       {/* Title row */}
       <div className="title-row">
         <div className="title-text">
-          <strong>Messenger Archive Explorer</strong>
+          <strong>FB Messages Archive Explorer</strong>
           <small className="footer">Browser-only · no data uploaded</small>
         </div>
         <HeaderMenu
