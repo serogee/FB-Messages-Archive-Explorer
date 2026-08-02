@@ -1,0 +1,104 @@
+/* Layout */
+#line { border-bottom: 1.5px solid var(--border); }
+.container { display:grid; grid-template-columns:minmax(260px, var(--sidebar-width)) 28px minmax(0, 1fr) 0 0; height:100vh; }
+.container.info-open { grid-template-columns:minmax(260px, var(--sidebar-width)) 28px minmax(0, 1fr) 28px minmax(340px, var(--info-panel-width)); }
+.container.resizing { cursor:col-resize; user-select:none; }
+.container.info-open .chat-container { margin-right:0; }
+
+.resize-ghost-line {
+    position:fixed;
+    top:0;
+    bottom:0;
+    width:5px;
+    border-radius:999px;
+    background:var(--accent);
+    box-shadow:0 0 0 3px rgba(62,166,255,0.16);
+    pointer-events:none;
+    z-index:5000;
+    opacity:0;
+    transform:translateX(-50%);
+    transition:opacity 0.08s ease;
+}
+.resize-ghost-line.active {
+    opacity:1;
+}
+
+/* Sub Container (Settings Panel Area) */
+.sub-container { display: flex; flex-direction: column; height: calc(100vh - 40px); box-sizing: border-box; margin:20px 0 20px 20px; background:var(--panel-bg); padding:15px; border-radius:10px; box-shadow:0 2px 6px rgba(0,0,0,0.06); position:relative; }
+
+/* Resizers */
+.sidebar-resize-handle,
+.info-resize-handle {
+    align-self:stretch;
+    cursor:col-resize;
+    position:relative;
+    width:28px;
+    margin:0 auto;
+}
+.sidebar-resize-handle::before,
+.info-resize-handle::before {
+    content:"";
+    position:absolute;
+    top:20px;
+    bottom:20px;
+    left:50%;
+    width:3px;
+    transform:translateX(-50%);
+    border-radius:999px;
+    background:var(--border);
+    transition:background 0.15s ease, width 0.15s ease;
+}
+.sidebar-resize-handle:hover::before,
+.sidebar-resize-handle:focus-visible::before,
+.info-resize-handle:hover::before,
+.info-resize-handle:focus-visible::before,
+.container.resizing .sidebar-resize-handle::before,
+.container.resizing .info-resize-handle::before {
+    width:5px;
+    background:var(--accent);
+}
+.info-resize-handle,
+.chat-info-panel {
+    display:none;
+}
+.container.info-open .info-resize-handle {
+    display:block;
+}
+.container.info-open .chat-info-panel {
+    display:flex;
+    flex-direction:column;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    body { overflow: auto; }
+    .sidebar-resize-handle {
+        display: none;
+    }
+    .info-resize-handle,
+    .chat-info-panel {
+        display: none !important;
+    }
+    .container {
+        flex-direction: column;
+        display: flex;
+        align-items: center;
+        height: auto;
+    }
+    .chat-container {
+        display: flex;
+        width: auto;
+        min-width: calc(100% - 20px);
+        border-radius: 0;
+        box-shadow: none;
+        margin-top: 10px;
+        max-height: 100%;
+    }
+    .settings {
+        width: 100%;
+        max-height: 100%;
+        margin: 0px;
+        border-radius: 0;
+        box-shadow: none;
+    }
+}

@@ -1,0 +1,139 @@
+// ── Media & Reactions ──────────────────────────────────────────────
+
+export interface MediaItem {
+  uri?: string;
+  filename?: string;
+  path?: string;
+  name?: string;
+}
+
+export interface Reaction {
+  actor: string;
+  reaction: string;
+  timestamp?: number;
+  timestamp_ms?: number;
+  /** Enriched from reaction-notice messages */
+  __timestamp?: number;
+}
+
+// ── Messages ───────────────────────────────────────────────────────
+
+export interface MessengerMessage {
+  sender_name: string;
+  senderName?: string;
+  timestamp_ms: number;
+  timestamp?: number;
+  content?: string;
+  text?: string;
+  photos?: MediaItem[];
+  videos?: MediaItem[];
+  audio?: MediaItem[];
+  audio_files?: MediaItem[];
+  gifs?: MediaItem[];
+  files?: MediaItem[];
+  media?: MediaItem[];
+  reactions?: Reaction[];
+  is_unsent?: boolean;
+  is_geoblocked_for_viewer?: boolean;
+  is_unsent_image_by_messenger_kid_parent?: boolean;
+}
+
+// ── Thread (single conversation JSON) ──────────────────────────────
+
+export interface MessengerThread {
+  participants: { name: string }[];
+  messages: MessengerMessage[];
+  title: string;
+  thread_path: string;
+  is_still_participant: boolean;
+  magic_words?: string[];
+  joinable_mode?: { mode: number; link: string };
+
+  // Runtime flags set after first processing
+  _reactionsEnriched?: boolean;
+  _dateNavBuilt?: boolean;
+  _chunkHeights?: number[];
+}
+
+// ── Chat list entry (lightweight, for sidebar) ─────────────────────
+
+export interface ChatListEntry {
+  folderName: string;
+  title: string;
+  participants: string[];
+  lastMessage?: string;
+  lastTimestamp?: number;
+  messageCount: number;
+  /** Total folder size in bytes (computed lazily) */
+  folderSize: number;
+  dirHandle: FileSystemDirectoryHandle;
+  jsonFileCount: number;
+  source: 'inbox' | 'archived' | 'requests' | 'e2ee';
+}
+
+// ── Attachment counts ──────────────────────────────────────────────
+
+export interface AttachmentCounts {
+  photos: number;
+  videos: number;
+  audio: number;
+  gifs: number;
+  files: number;
+  total: number;
+}
+
+// ── Date navigator ─────────────────────────────────────────────────
+
+export type DateScale = 'month' | 'week' | 'day';
+
+export interface DateBucket {
+  key: string;
+  index: number;
+  timestamp: number;
+  count: number;
+  label: string;
+}
+
+export interface DateNavState {
+  bucketsByScale: Record<DateScale, DateBucket[]>;
+  scale: DateScale;
+  activeKey: string | null;
+  scrollTimer: ReturnType<typeof setTimeout> | null;
+  sliderTimer: ReturnType<typeof setTimeout> | null;
+  headerHover: boolean;
+  autoCollapse: boolean;
+  collapsed: boolean;
+  syncing: boolean;
+}
+
+// ── Search ─────────────────────────────────────────────────────────
+
+export interface SearchIndexEntry {
+  text: string;
+  normalized: string;
+  sender: string;
+  timestamp: number;
+  idx: number;
+  /** Only present in wide-search results */
+  chatTitle?: string;
+  chatFolderName?: string;
+}
+
+export interface SearchResult {
+  item: SearchIndexEntry;
+}
+
+// ── Media lookup ───────────────────────────────────────────────────
+
+export interface MediaEntry {
+  url: string;
+  type: string;
+}
+
+export interface MediaState {
+  files: Record<string, string>;
+  types: Record<string, string>;
+  lookup: Map<string, MediaEntry>;
+  pathIndex: Set<string>;
+  basenameIndex: Set<string>;
+}

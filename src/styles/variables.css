@@ -1,0 +1,46 @@
+/* WebKit custom scrollbar */
+*::-webkit-scrollbar {
+    width: 12px;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: var(--muted);
+    border-radius: 10px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* Theme variables */
+:root {
+    --bg: #ffffff;
+    --panel-bg: #f6f8fb;
+    --text: #111213;
+    --muted: #6b6f76;
+    --accent: #0084ff;
+    --me-bg: #0084ff;
+    --me-text: #ffffff;
+    --them-bg: #e9eef8;
+    --highlight: rgba(255, 221, 64, 0.38);
+    --border: #e6e9ee;
+    --sidebar-width: clamp(260px, 24vw, 480px);
+    --info-panel-width: 320px;
+    --hover-overlay: rgba(0,0,0,0.04);
+    --hover-overlay-dark: rgba(255,255,255,0.04);
+}
+
+.dark {
+    --bg: #0b1116;
+    --panel-bg: #0f161b;
+    --text: #e6eef8;
+    --muted: #9aa4b2;
+    --accent: #3ea6ff;
+    --me-bg: #1667d6;
+    --me-text: #f7fbff;
+    --them-bg: #0f2a3a;
+    --highlight: rgba(255, 221, 64, 0.32);
+    --border: #1b2330;
+}

@@ -1,0 +1,29 @@
+/* Trust / Privacy modal */
+.trust-modal { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:4000; }
+.trust-modal.hidden { display:none; }
+.trust-backdrop { position:fixed; inset:0; background:rgba(10,15,25,0.55); backdrop-filter: blur(3px); }
+.trust-card { position:relative; width:min(740px, 92%); background:var(--panel-bg); color:var(--text); border-radius:12px; box-shadow:0 18px 50px rgba(0,0,0,0.45); padding:18px; z-index:4100; max-height:80vh; overflow:auto; }
+.trust-header h2 { margin:0 0 8px 0; font-size:18px; }
+.trust-body { font-size:14px; color:var(--muted); line-height:1.5; }
+.trust-body p { margin:10px 0; color:var(--text); }
+.trust-row { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:13px; color:var(--muted); }
+.trust-footer { display:flex; align-items:center; justify-content:space-between; margin-top:14px; }
+.trust-actions { display:flex; gap:8px; }
+
+@media (max-width:520px) {
+    .trust-card { padding:12px; }
+    .trust-header h2 { font-size:16px; }
+}
+
+/* Delete Confirmation Modal */
+.delete-modal { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:4000; }
+.delete-modal.hidden { display:none; }
+.delete-backdrop { position:fixed; inset:0; background:rgba(10,15,25,0.55); backdrop-filter:blur(3px); }
+.delete-card { position:relative; width:min(480px,92%); background:var(--panel-bg); color:var(--text); border-radius:12px; box-shadow:0 18px 50px rgba(0,0,0,0.45); padding:24px; z-index:4100; }
+.delete-card h3 { margin:0 0 12px 0; font-size:18px; }
+.delete-warning { color:var(--muted); font-size:14px; line-height:1.5; margin-bottom:16px; }
+.delete-warning strong { color:#e53e3e; }
+.delete-meta { color:var(--muted); font-size:13px; margin-bottom:20px; }
+.delete-actions { display:flex; justify-content:flex-end; gap:8px; }
+.btn-danger { background:#e53e3e; color:white; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; font:inherit; }
+.btn-danger:hover { background:#c53030; }

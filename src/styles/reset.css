@@ -1,0 +1,49 @@
+body {
+    font-family: Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    overflow: hidden;
+}
+
+/* Typography */
+h3 { margin: 0; position: relative; font-size: 16px; }
+
+hr {
+    border: none;
+    border-top: 2px solid var(--border);
+    margin: 15px 0;
+    width: 100%;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* Common Interactive Resets */
+.clickable { position:relative; overflow:visible; }
+.clickable::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: transparent;
+    pointer-events: none;
+    transition: background .16s ease, transform .16s ease;
+}
+.clickable:hover::after, .clickable:focus::after { background: var(--hover-overlay); }
+.dark .clickable:hover::after, .dark .clickable:focus::after { background: var(--hover-overlay-dark); }
+
+/* Hide native search clear buttons since we provide custom ones */
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  display: none;
+}

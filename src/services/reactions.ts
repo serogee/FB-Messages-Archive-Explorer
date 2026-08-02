@@ -1,0 +1,76 @@
+import type { MessengerMessage, Reaction } from '../types/messenger';
+import { fixEncoding } from './parser';
+import { getMessageMediaItems } from './media';
+
+// ── Internal helpers ───────────────────────────────────────────────
+
+function normalizeReactionValue(value: string): string {
+  return String(value || '')
+    .normalize('NFC')
+    .replace(/[\uFE0E\uFE0F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function parseReactionNotice(
+  msg: MessengerMessage
+): { actor: string; reaction: string; timestamp: number } | null {
+  if (!isReactionNoticeMessage(msg)) return null;
+  const text = fixEncoding(msg?.text || msg?.content || '').trim();
+  const match = text.match(/^(?:(.+?)\s+)?reacted\s+(.+?)\s+to your message(?:[.:].*)?$/i);
+  if (!match) return null;
+  return {
+    actor: (match[1] || msg.senderName || msg.sender_name || '').trim(),
+    reaction: (match[2] || '').trim(),
+    timestamp: msg.timestamp_ms || msg.timestamp || 0,
+  };
+}
+
+// ── Exported functions ─────────────────────────────────────────────
+
+export function isReactionNoticeMessage(msg: MessengerMessage): boolean {
+  const text = fixEncoding(msg?.text || msg?.content || '').trim();
+  if (!text) return false;
+  if (getMessageMediaItems(msg).length > 0) return false;
+  return /^(?:.+?\s+)?reacted\s+.+?\s+to your message(?:[.:].*)?$/i.test(text);
+}
+
+export function enrichReactionTimestamps(messages: MessengerMessage[]): void {
+  if (!Array.isArray(messages)) return;
+
+  messages.forEach((msg, index) => {
+    const notice = parseReactionNotice(msg);
+    if (!notice || !notice.timestamp || !notice.reaction) return;
+
+    for (let i = index - 1; i >= 0; i--) {
+      const target = messages[i];
+      if (!target || isReactionNoticeMessage(target) || !Array.isArray(target.reactions)) continue;
+
+      const noticeActor = normalizeReactionValue(notice.actor);
+      const noticeReaction = normalizeReactionValue(notice.reaction);
+
+      // First try: exact actor + emoji match without existing timestamp
+      let match: Reaction | undefined = target.reactions.find(r => {
+        const sameActor = !noticeActor || normalizeReactionValue(r.actor) === noticeActor;
+        return sameActor && normalizeReactionValue(r.reaction) === noticeReaction && !getReactionTimestamp(r);
+      });
+
+      // Fallback: emoji-only match without existing timestamp
+      if (!match) {
+        match = target.reactions.find(r =>
+          normalizeReactionValue(r.reaction) === noticeReaction && !getReactionTimestamp(r)
+        );
+      }
+
+      if (match) {
+        match.__timestamp = notice.timestamp;
+        break;
+      }
+    }
+  });
+}
+
+export function getReactionTimestamp(reaction: Reaction): number {
+  return reaction?.timestamp || reaction?.timestamp_ms || reaction?.__timestamp || 0;
+}
