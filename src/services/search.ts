@@ -2,7 +2,6 @@ import type { MessengerMessage, SearchIndexEntry, SearchResult } from '../types/
 import { escapeHtml } from './storage';
 import { fixEncoding } from './parser';
 import { isReactionNoticeMessage } from './reactions';
-import { getMessageMediaItems } from './media';
 
 // ── Internal helpers ───────────────────────────────────────────────
 

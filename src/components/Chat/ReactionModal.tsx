@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import type { MessengerMessage } from '../../types/messenger';
 import { getReactionTimestamp } from '../../services/reactions';
 
