@@ -29,7 +29,6 @@
     --sidebar-width: clamp(260px, 24vw, 480px);
     --info-panel-width: 320px;
     --hover-overlay: rgba(0,0,0,0.04);
-    --hover-overlay-dark: rgba(255,255,255,0.04);
 }
 
 .dark {
@@ -43,4 +42,5 @@
     --them-bg: #0f2a3a;
     --highlight: rgba(255, 221, 64, 0.32);
     --border: #1b2330;
+    --hover-overlay: rgba(255,255,255,0.04);
 }

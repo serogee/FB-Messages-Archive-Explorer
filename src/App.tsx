@@ -93,7 +93,9 @@ export default function App() {
         requestsList={archive.requestsList}
         activeEntry={chat.activeEntry}
         rootHandle={archive.rootHandle}
+        originalRootHandle={archive.originalRootHandle}
         loading={archive.loading}
+        error={archive.error}
         sidebarView={sidebarView}
         setSidebarView={setSidebarView}
         activeTab={activeTab}

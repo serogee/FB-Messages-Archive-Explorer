@@ -94,15 +94,6 @@ export function buildSearchIndex(
     const messageText = getMessageText(m);
     if (messageText) parts.push(messageText);
 
-    const sender = m.senderName || m.sender_name || '';
-    if (sender) parts.push(sender);
-
-    if (m.reactions?.length) {
-      parts.push(m.reactions.map(r => r.reaction + ' ' + (r.actor || '')).join(' '));
-    }
-
-    getMessageMediaItems(m).forEach(mi => { if (mi?.uri) parts.push(mi.uri); });
-
     const text = parts.join(' ');
     idx.push({
       text,

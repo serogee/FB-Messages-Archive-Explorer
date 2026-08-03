@@ -37,12 +37,10 @@ export function createMediaState(): MediaState {
 export function addMediaToIndex(
   state: MediaState,
   path: string,
-  url: string,
-  type: string
+  entry: MediaEntry
 ): void {
   const normalizedPath = normalizeMediaPath(path);
   const basename = getMediaBasename(path);
-  const entry: MediaEntry = { url, type };
 
   if (normalizedPath) {
     state.pathIndex.add(normalizedPath);
@@ -89,7 +87,8 @@ export function getMessageMediaItems(msg: MessengerMessage): MediaItem[] {
     msg?.videos || [],
     msg?.audio || [],
     msg?.audio_files || [],
-    msg?.gifs || []
+    msg?.gifs || [],
+    msg?.files || []
   );
 }
 
@@ -140,13 +139,10 @@ export async function processMediaFromDirectory(
     }
     for await (const [name, entry] of subdirHandle.entries()) {
       if (entry.kind === 'file') {
-        const mediaType = getMediaType(name);
-        if (mediaType !== 'unknown') {
-          fileHandles.push({
-            handle: entry as FileSystemFileHandle,
-            path: `${subdirName}/${name}`,
-          });
-        }
+        fileHandles.push({
+          handle: entry as FileSystemFileHandle,
+          path: `${subdirName}/${name}`,
+        });
       }
     }
   }
@@ -161,12 +157,10 @@ export async function processMediaFromDirectory(
     await Promise.all(
       batch.map(async ({ handle, path }) => {
         try {
-          const file = await handle.getFile();
-          const url = URL.createObjectURL(file);
-          const type = getMediaType(file.name);
-          state.files[path] = url;
+          const type = getMediaType(handle.name);
+          const entry: MediaEntry = { handle, type };
           state.types[path] = type;
-          addMediaToIndex(state, path, url, type);
+          addMediaToIndex(state, path, entry);
         } catch { /* ignore individual failures */ }
         done++;
         onProgress?.(done, total);

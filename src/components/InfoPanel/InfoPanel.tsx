@@ -64,7 +64,7 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
     }));
 
   const foundTotal = photos + videos + audio + gifs + files;
-  const mediaFound = Object.keys(_mediaState.files).length;
+  const mediaFound = _mediaState.pathIndex.size;
 
   return {
     visibleCount, minTs, maxTs, memberStats, memberCounts,

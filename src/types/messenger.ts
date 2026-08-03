@@ -126,7 +126,8 @@ export interface SearchResult {
 // ── Media lookup ───────────────────────────────────────────────────
 
 export interface MediaEntry {
-  url: string;
+  url?: string;
+  handle?: FileSystemFileHandle;
   type: string;
 }
 

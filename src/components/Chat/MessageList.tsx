@@ -37,6 +37,13 @@ function findPreviousVisibleIndex(messages: Messages, fromIndex: number): number
   return -1;
 }
 
+function findNextVisibleIndex(messages: Messages, fromIndex: number): number {
+  for (let i = fromIndex + 1; i < messages.length; i++) {
+    if (!isReactionNoticeMessage(messages[i])) return i;
+  }
+  return -1;
+}
+
 function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages: Messages): number {
   let visibleCount = 0, mediaCount = 0, separatorCount = 0;
   messages.forEach((msg, localIdx) => {
@@ -152,6 +159,26 @@ const MessageChunk = React.memo(function MessageChunk({
     const sender = msg.senderName || msg.sender_name || 'Unknown';
     const isMe = sender === selectedPerspective;
 
+    let isFirstInClump = showSeparator;
+    const prevIdx = findPreviousVisibleIndex(allMessages, globalIdx);
+    if (prevIdx >= 0 && !showSeparator) {
+      const prevMsg = allMessages[prevIdx];
+      const prevSender = prevMsg.senderName || prevMsg.sender_name || 'Unknown';
+      if (prevSender !== sender) isFirstInClump = true;
+    }
+
+    let isLastInClump = true;
+    const nextIdx = findNextVisibleIndex(allMessages, globalIdx);
+    if (nextIdx >= 0) {
+      const nextMsg = allMessages[nextIdx];
+      const nextSender = nextMsg.senderName || nextMsg.sender_name || 'Unknown';
+      const currTime = getMessageTimestamp(msg) || 0;
+      const nextTime = getMessageTimestamp(nextMsg) || 0;
+      if (nextSender === sender && Math.abs(nextTime - currTime) <= TIME_GAP_MS) {
+        isLastInClump = false;
+      }
+    }
+
     items.push(
       <MessageBubble
         key={globalIdx}
@@ -163,6 +190,8 @@ const MessageChunk = React.memo(function MessageChunk({
         mediaState={mediaState}
         highlightQuery={highlightQuery}
         msgIndex={globalIdx}
+        isFirstInClump={isFirstInClump}
+        isLastInClump={isLastInClump}
       />
     );
   });

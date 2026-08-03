@@ -8,8 +8,38 @@ import {
   deleteChat as deleteChatFs,
 } from '../services/fileSystem';
 
+async function resolveMessagesRoot(handle: FileSystemDirectoryHandle): Promise<FileSystemDirectoryHandle | null> {
+  const commonPaths = [
+    [], // Maybe they selected 'messages' directly
+    ['messages'], // E.g. inside facebook-xyz folder
+    ['your_facebook_activity', 'messages'], // Newer Facebook export format
+    ['your_instagram_activity', 'messages'] // Just in case
+  ];
+
+  for (const path of commonPaths) {
+    try {
+      let current = handle;
+      for (const segment of path) {
+        current = await current.getDirectoryHandle(segment);
+      }
+      // Check if it's the right place by looking for inbox or archived_threads
+      let isValid = false;
+      try { await current.getDirectoryHandle('inbox'); isValid = true; } catch {}
+      if (!isValid) {
+        try { await current.getDirectoryHandle('archived_threads'); isValid = true; } catch {}
+      }
+      if (isValid) return current;
+    } catch {
+      // Path doesn't exist, try next
+    }
+  }
+
+  return null;
+}
+
 export function useArchive(): {
   rootHandle: FileSystemDirectoryHandle | null;
+  originalRootHandle: FileSystemDirectoryHandle | null;
   inboxList: ChatListEntry[];
   archivedList: ChatListEntry[];
   requestsList: ChatListEntry[];
@@ -21,6 +51,7 @@ export function useArchive(): {
   updateFolderSize: (entry: ChatListEntry, size: number) => void;
 } {
   const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [originalRootHandle, setOriginalRootHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [inboxList, setInboxList] = useState<ChatListEntry[]>([]);
   const [archivedList, setArchivedList] = useState<ChatListEntry[]>([]);
   const [requestsList, setRequestsList] = useState<ChatListEntry[]>([]);
@@ -58,12 +89,19 @@ export function useArchive(): {
     setLoading(true);
     try {
       const handle = requestWrite ? await pickFolderWithWriteAccess() : await pickMessagesFolder();
-      setRootHandle(handle);
+      
+      const messagesRoot = await resolveMessagesRoot(handle);
+      if (!messagesRoot) {
+        throw new Error("Could not find messages in this folder. Make sure you selected an extracted Facebook archive.");
+      }
+
+      setOriginalRootHandle(handle);
+      setRootHandle(messagesRoot);
       const [inbox, archived, requests, e2ee] = await Promise.all([
-        listChatFolders(handle, 'inbox', 'inbox'),
-        listChatFolders(handle, 'archived_threads', 'archived'),
-        listChatFolders(handle, 'message_requests', 'requests'),
-        listChatFolders(handle, 'e2ee_cutover', 'e2ee'),
+        listChatFolders(messagesRoot, 'inbox', 'inbox'),
+        listChatFolders(messagesRoot, 'archived_threads', 'archived'),
+        listChatFolders(messagesRoot, 'message_requests', 'requests'),
+        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee'),
       ]);
       // Merge e2ee into inbox and re-sort by lastTimestamp descending
       const mergedInbox = [...inbox, ...e2ee].sort((a, b) => {
@@ -128,7 +166,7 @@ export function useArchive(): {
   }, []);
 
   return {
-    rootHandle, inboxList, archivedList, requestsList, loading, error,
+    rootHandle, originalRootHandle, inboxList, archivedList, requestsList, loading, error,
     openFolder, openFolderWithWriteAccess, deleteChat, updateFolderSize,
   };
 }

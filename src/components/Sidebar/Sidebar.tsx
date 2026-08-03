@@ -16,7 +16,9 @@ interface SidebarProps {
   requestsList: ChatListEntry[];
   activeEntry: ChatListEntry | null;
   rootHandle: FileSystemDirectoryHandle | null;
+  originalRootHandle: FileSystemDirectoryHandle | null;
   loading: boolean;
+  error: string | null;
   sidebarView: 'chats' | 'settings' | 'archived' | 'requests';
   setSidebarView: (view: 'chats' | 'settings' | 'archived' | 'requests') => void;
   activeTab: 'chats' | 'settings';
@@ -35,7 +37,7 @@ interface SidebarProps {
 export function Sidebar({
   settings, setSetting,
   inboxList, archivedList, requestsList,
-  activeEntry, rootHandle, loading,
+  activeEntry, rootHandle, originalRootHandle, loading, error,
   sidebarView, setSidebarView,
   activeTab, setActiveTab,
   onSelectChat, onOpenFolder, onDeleteChat,
@@ -94,7 +96,14 @@ export function Sidebar({
       <div className="settings" role="tabpanel">
         {/* Chats tab */}
         {sidebarView === 'chats' && !rootHandle && (
-          <FolderPicker onOpenFolder={onOpenFolder} />
+          <>
+            <FolderPicker onOpenFolder={onOpenFolder} />
+            {error && (
+              <div className="sidebar-error-alert" style={{ margin: '12px 16px', padding: '12px', background: '#fee2e2', color: '#991b1b', borderRadius: '6px', fontSize: '13px', border: '1px solid #f87171' }}>
+                <strong>Error:</strong> {error}
+              </div>
+            )}
+          </>
         )}
         {sidebarView === 'chats' && rootHandle && loading && (
           <div className="chat-list-loading">Loading chats...</div>
@@ -118,7 +127,7 @@ export function Sidebar({
             selectedPerspective={selectedPerspective}
             setSelectedPerspective={setSelectedPerspective}
             onOpenFolder={onOpenFolder}
-            rootHandle={rootHandle}
+            rootHandle={originalRootHandle || rootHandle}
           />
         )}
 

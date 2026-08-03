@@ -144,13 +144,22 @@ export async function loadChatMessages(
       parsedFiles.push(parseMessengerJsonContent(content));
     } catch { /* skip failed files */ }
     onProgress?.(i + 1, total);
+    
+    // Yield to the main thread every few files to prevent UI freezing
+    if (i % 2 === 0) {
+      await new Promise(r => setTimeout(r, 0));
+    }
   }
 
   if (!parsedFiles.length) {
     throw new Error('No readable message files found in this chat folder.');
   }
 
+  // Yield before heavy memory operations
+  await new Promise(r => setTimeout(r, 10));
   const merged = mergeMessengerData(parsedFiles);
+  
+  await new Promise(r => setTimeout(r, 10));
   return normalizeMessengerData(merged);
 }
 
