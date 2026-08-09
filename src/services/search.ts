@@ -93,6 +93,29 @@ export function buildSearchIndex(
     const messageText = getMessageText(m);
     if (messageText) parts.push(messageText);
 
+    const mediaArrays = [
+      m.photos,
+      m.videos,
+      m.audio,
+      m.audio_files,
+      m.gifs,
+      m.files,
+      m.media,
+    ];
+
+    for (const arr of mediaArrays) {
+      if (arr) {
+        for (const item of arr) {
+          const name = item.filename || item.name || item.path || item.uri;
+          if (name) {
+            const decoded = fixEncoding(name);
+            const baseName = decoded.split(/[/\\]/).pop();
+            if (baseName) parts.push(baseName);
+          }
+        }
+      }
+    }
+
     const text = parts.join(' ');
     idx.push({
       text,
@@ -115,19 +138,32 @@ export async function performSearch(
   const normalizedQuery = normalizeForSearch(query);
   if (!normalizedQuery) return results;
 
-  const BATCH = 500;
-  for (let i = 0; i < index.length; i += BATCH) {
+  let lastYieldTime = performance.now();
+  const YIELD_INTERVAL_MS = 15;
+
+  for (let i = 0; i < index.length; i++) {
     if (signal?.aborted) {
       const err = new Error('Aborted');
       err.name = 'AbortError';
       throw err;
     }
-    const batch = index.slice(i, i + BATCH);
-    for (const item of batch) {
-      if (item.normalized.includes(normalizedQuery)) results.push({ item });
+
+    const item = index[i];
+    if (item.normalized.includes(normalizedQuery)) {
+      results.push({ item });
     }
-    if (onProgress) onProgress(Math.min(100, Math.round(((i + BATCH) / index.length) * 100)));
-    await new Promise<void>(r => setTimeout(r, 0));
+
+    // Check elapsed time periodically to avoid excessive performance.now() calls
+    if (i % 500 === 0) {
+      const now = performance.now();
+      if (now - lastYieldTime > YIELD_INTERVAL_MS) {
+        if (onProgress) onProgress(Math.min(100, Math.round(((i + 1) / index.length) * 100)));
+        await new Promise<void>(r => setTimeout(r, 0));
+        lastYieldTime = performance.now();
+      }
+    }
   }
+
+  if (onProgress) onProgress(100);
   return results;
 }

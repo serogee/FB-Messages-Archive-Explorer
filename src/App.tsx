@@ -95,6 +95,7 @@ export default function App() {
         rootHandle={archive.rootHandle}
         originalRootHandle={archive.originalRootHandle}
         loading={archive.loading}
+        loadProgress={archive.loadProgress}
         error={archive.error}
         sidebarView={sidebarView}
         setSidebarView={setSidebarView}
@@ -125,10 +126,12 @@ export default function App() {
       <ChatView
         ref={chatViewRef}
         chatData={chat.chatData}
+        activeEntry={chat.activeEntry}
         mediaState={chat.mediaState}
         mediaLoading={chat.mediaLoading}
         mediaProgress={chat.mediaProgress}
         msgProgress={chat.msgProgress}
+        msgStatusText={chat.msgStatusText}
         selectedPerspective={chat.selectedPerspective}
         settings={settings}
         loading={chat.loading}
@@ -148,13 +151,15 @@ export default function App() {
         tabIndex={0}
       />
 
-      {/* Info panel */}
-      <InfoPanel
-        chatData={chat.chatData}
-        mediaState={chat.mediaState}
-        selectedPerspective={chat.selectedPerspective}
-        onSelectPerspective={chat.setSelectedPerspective}
-      />
+      {settings.infoPanelOpen && (
+        <InfoPanel
+          chatData={chat.chatData}
+          activeEntry={chat.activeEntry}
+          mediaState={chat.mediaState}
+          selectedPerspective={chat.selectedPerspective}
+          onSelectPerspective={chat.setSelectedPerspective}
+        />
+      )}
 
       {/* Modals */}
       {deleteTarget && (

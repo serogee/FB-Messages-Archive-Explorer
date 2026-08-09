@@ -28,20 +28,31 @@ export async function pickFolderWithWriteAccess(): Promise<FileSystemDirectoryHa
 export async function listChatFolders(
   parentHandle: FileSystemDirectoryHandle,
   subfolderName: 'inbox' | 'archived_threads' | 'message_requests' | 'e2ee_cutover',
-  source: 'inbox' | 'archived' | 'requests' | 'e2ee'
+  source: 'inbox' | 'archived' | 'requests' | 'e2ee',
+  onProgress?: (done: number, total: number) => void
 ): Promise<ChatListEntry[]> {
   let subfolderDir: FileSystemDirectoryHandle;
   try {
     subfolderDir = await parentHandle.getDirectoryHandle(subfolderName);
   } catch {
+    if (onProgress) onProgress(0, 0);
     return [];
   }
 
   const entries: ChatListEntry[] = [];
+  const handles: { name: string; handle: FileSystemDirectoryHandle }[] = [];
 
   for await (const [name, handle] of subfolderDir.entries()) {
-    if (handle.kind !== 'directory') continue;
-    const chatDir = handle as FileSystemDirectoryHandle;
+    if (handle.kind === 'directory') {
+      handles.push({ name, handle: handle as FileSystemDirectoryHandle });
+    }
+  }
+
+  const total = handles.length;
+  if (onProgress) onProgress(0, total);
+
+  for (let i = 0; i < handles.length; i++) {
+    const { name, handle: chatDir } = handles[i];
 
     try {
       // Read message_1.json header
@@ -106,6 +117,12 @@ export async function listChatFolders(
     } catch {
       // Skip unreadable folders
     }
+
+    if (onProgress) onProgress(i + 1, total);
+    // Yield occasionally to prevent UI freezes
+    if (i % 10 === 0) {
+      await new Promise(r => setTimeout(r, 0));
+    }
   }
 
   // Sort by lastTimestamp descending; entries with no timestamp go last
@@ -123,8 +140,12 @@ export async function listChatFolders(
 
 export async function loadChatMessages(
   chatDirHandle: FileSystemDirectoryHandle,
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (progress: number, statusText: string) => void
 ): Promise<MessengerThread> {
+  // Yield immediately to let the browser paint the loading state
+  await new Promise(r => setTimeout(r, 10));
+  onProgress?.(0, "Scanning files...");
+
   // Collect all file names
   const fileNames: string[] = [];
   for await (const [name, handle] of chatDirHandle.entries()) {
@@ -143,7 +164,9 @@ export async function loadChatMessages(
       const content = await file.text();
       parsedFiles.push(parseMessengerJsonContent(content));
     } catch { /* skip failed files */ }
-    onProgress?.(i + 1, total);
+    
+    // Scale file reading to 85% of the total progress
+    onProgress?.(total > 0 ? (0.85 * (i + 1) / total) : 0, "Reading messages...");
     
     // Yield to the main thread every few files to prevent UI freezing
     if (i % 2 === 0) {
@@ -155,10 +178,11 @@ export async function loadChatMessages(
     throw new Error('No readable message files found in this chat folder.');
   }
 
-  // Yield before heavy memory operations
+  onProgress?.(0.85, "Merging data...");
   await new Promise(r => setTimeout(r, 10));
   const merged = mergeMessengerData(parsedFiles);
   
+  onProgress?.(0.90, "Sorting messages...");
   await new Promise(r => setTimeout(r, 10));
   return normalizeMessengerData(merged);
 }

@@ -86,8 +86,7 @@
 }
 .sidebar-search-results.hidden { display:none; }
 .search-result-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
-.search-result-item:hover { background: var(--hover-overlay); }
-.dark .search-result-item:hover { background: var(--hover-overlay-dark); }
+.search-result-item:hover, .search-result-item.active { background: var(--hover-overlay); }
 .search-result-item .snippet { font-size: 13px; color: var(--text); line-height: 1.4; }
 .search-result-item .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .search-result-item.search-no-results { cursor: default; color: var(--muted); font-size: 13px; text-align: center; padding: 16px 10px; }

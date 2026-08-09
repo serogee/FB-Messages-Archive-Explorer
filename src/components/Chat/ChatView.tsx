@@ -1,5 +1,5 @@
 import { useRef, useImperativeHandle, forwardRef } from 'react';
-import type { MessengerThread, MediaState } from '../../types/messenger';
+import type { MessengerThread, MediaState, ChatListEntry } from '../../types/messenger';
 import type { Settings } from '../../hooks/useSettings';
 import type { useSearch } from '../../hooks/useSearch';
 import { DateNavigator } from './DateNavigator';
@@ -7,10 +7,12 @@ import { MessageList, type MessageListHandle } from './MessageList';
 
 interface ChatViewProps {
   chatData: MessengerThread | null;
+  activeEntry: ChatListEntry | null;
   mediaState: MediaState;
   mediaLoading: boolean;
   mediaProgress: number;
   msgProgress: number;
+  msgStatusText: string;
   selectedPerspective: string;
   settings: Settings;
   loading: boolean;
@@ -43,10 +45,12 @@ function ProgressBar({ value, label }: { value: number; label: string }) {
 export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView(
   {
     chatData,
+    activeEntry,
     mediaState,
     mediaLoading,
     mediaProgress,
     msgProgress,
+    msgStatusText,
     selectedPerspective,
     settings,
     loading,
@@ -80,8 +84,8 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     <div className="chat-container">
       {/* Header */}
       <div className={`chat-header ${settings.autoCollapseDateNav ? 'date-nav-auto' : ''}`}>
-        <h3 title={chatData?.title || ''}>
-          {chatData?.title || (loading ? 'Loading...' : 'Select a chat')}
+        <h3 title={chatData?.title || activeEntry?.title || ''}>
+          {chatData?.title || activeEntry?.title || (loading ? 'Loading...' : 'Select a chat')}
         </h3>
 
         {/* Date navigator (inline in header) */}
@@ -112,7 +116,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
       {/* Loading messages state */}
       {loading && (
         <div id="loading">
-          <ProgressBar value={msgProgress} label="Loading messages" />
+          <ProgressBar value={msgProgress} label={msgStatusText || "Loading messages"} />
         </div>
       )}
 
@@ -131,7 +135,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
           mediaState={mediaState}
           selectedPerspective={selectedPerspective}
           settings={settings}
-          highlightQuery={search.query}
+          highlightQuery={search.activeQuery}
           onScrollSync={() => {}}
         />
       )}

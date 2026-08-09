@@ -18,6 +18,7 @@ interface SidebarProps {
   rootHandle: FileSystemDirectoryHandle | null;
   originalRootHandle: FileSystemDirectoryHandle | null;
   loading: boolean;
+  loadProgress: { done: number; total: number } | null;
   error: string | null;
   sidebarView: 'chats' | 'settings' | 'archived' | 'requests';
   setSidebarView: (view: 'chats' | 'settings' | 'archived' | 'requests') => void;
@@ -37,7 +38,7 @@ interface SidebarProps {
 export function Sidebar({
   settings, setSetting,
   inboxList, archivedList, requestsList,
-  activeEntry, rootHandle, originalRootHandle, loading, error,
+  activeEntry, rootHandle, originalRootHandle, loading, loadProgress, error,
   sidebarView, setSidebarView,
   activeTab, setActiveTab,
   onSelectChat, onOpenFolder, onDeleteChat,
@@ -106,7 +107,21 @@ export function Sidebar({
           </>
         )}
         {sidebarView === 'chats' && rootHandle && loading && (
-          <div className="chat-list-loading">Loading chats...</div>
+          <div className="chat-list-loading" style={{ alignItems: 'stretch', padding: '32px 24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <span>Loading chats...</span>
+              {loadProgress && loadProgress.total > 0 && (
+                <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text)' }}>
+                  {loadProgress.done} / {loadProgress.total}
+                </span>
+              )}
+            </div>
+            {loadProgress && loadProgress.total > 0 && (
+              <div style={{ width: '100%', height: '6px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: 'var(--accent)', width: `${Math.round((loadProgress.done / loadProgress.total) * 100)}%` }} />
+              </div>
+            )}
+          </div>
         )}
         {sidebarView === 'chats' && rootHandle && !loading && (
           <ChatList

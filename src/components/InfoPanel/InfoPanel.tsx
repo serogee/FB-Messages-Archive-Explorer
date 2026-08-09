@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { MessengerThread, MessengerMessage, MediaState } from '../../types/messenger';
+import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
 import { formatInfoNumber, formatInfoDate } from '../../services/storage';
 import { getMessageTimestamp } from '../../services/parser';
 import { getMessageAttachmentReferences } from '../../services/media';
@@ -7,6 +7,7 @@ import { isReactionNoticeMessage } from '../../services/reactions';
 
 interface InfoPanelProps {
   chatData: MessengerThread | null;
+  activeEntry: ChatListEntry | null;
   mediaState: MediaState;
   selectedPerspective: string;
   onSelectPerspective: (name: string) => void;
@@ -72,7 +73,7 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
   };
 }
 
-export function InfoPanel({ chatData, mediaState, selectedPerspective, onSelectPerspective }: InfoPanelProps) {
+export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspective, onSelectPerspective }: InfoPanelProps) {
   const stats = useMemo(() => {
     if (!chatData) return null;
     return computeStats(chatData.messages, mediaState);
@@ -81,11 +82,15 @@ export function InfoPanel({ chatData, mediaState, selectedPerspective, onSelectP
   return (
     <div className="chat-info-panel" id="chatInfoPanel" aria-hidden={!chatData ? 'true' : 'false'}>
       <div className="info-panel-header">
-        <strong>{chatData?.title || 'Chat Info'}</strong>
+        <strong>{chatData?.title || activeEntry?.title || 'Chat Info'}</strong>
       </div>
       <div className="info-panel-content">
         {!chatData || !stats ? (
-          <p className="info-empty">Open a chat to see details.</p>
+          activeEntry ? (
+            <p className="info-empty">Loading chat details...</p>
+          ) : (
+            <p className="info-empty">Open a chat to see details.</p>
+          )
         ) : (
           <>
             {/* Section 1: Chat Info */}

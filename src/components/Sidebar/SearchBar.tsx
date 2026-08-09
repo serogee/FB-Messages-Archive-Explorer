@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { useSearch } from '../../hooks/useSearch';
 import { highlightText } from '../../services/search';
 import { formatInfoDate } from '../../services/storage';
@@ -9,20 +9,32 @@ interface SearchBarProps {
 }
 
 export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
-  const { query, setQuery, results, isSearching, progress, isWideSearch, setIsWideSearch, startSearch, clearSearch } = search;
+  const { activeQuery, results, isSearching, progress, isWideSearch, setIsWideSearch, startSearch, clearSearch } = search;
+  const [localQuery, setLocalQuery] = useState(activeQuery);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const hasQuery = query.trim().length > 0;
+  const hasQuery = localQuery.trim().length > 0;
   const hasResults = results.length > 0;
   const searchDone = !isSearching && hasQuery && (hasResults || progress >= 100);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') startSearch();
-    if (e.key === 'Escape') clearSearch();
+    if (e.key === 'Enter') startSearch(localQuery);
+    if (e.key === 'Escape') {
+      setLocalQuery('');
+      clearSearch();
+    }
   };
 
-  const handleResultClick = (msgIdx: number) => {
+  const handleClear = () => {
+    setLocalQuery('');
+    clearSearch();
+    setActiveIndex(null);
+  };
+
+  const handleResultClick = (msgIdx: number, listIdx: number) => {
+    setActiveIndex(listIdx);
     if (onJumpToMessage) onJumpToMessage(msgIdx);
   };
 
@@ -35,8 +47,8 @@ export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
           className="sidebar-search-input"
           type="search"
           placeholder={isWideSearch ? 'Search all chats...' : 'Search current chat...'}
-          value={query}
-          onChange={e => setQuery(e.target.value)}
+          value={localQuery}
+          onChange={e => setLocalQuery(e.target.value)}
           onKeyDown={handleKeyDown}
           aria-label="Search messages"
           id="sidebarSearchInput"
@@ -53,7 +65,7 @@ export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
         {hasQuery && (
           <button
             className="sidebar-clear-btn"
-            onClick={clearSearch}
+            onClick={handleClear}
             aria-label="Clear search"
             title="Clear search"
           >
@@ -80,19 +92,19 @@ export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
           ) : (
             results.slice(0, 50).map((r, i) => {
               const snippet = r.item.text.slice(0, 200);
-              const highlighted = highlightText(snippet, query);
+              const highlighted = highlightText(snippet, activeQuery);
               const time = formatInfoDate(r.item.timestamp);
               return (
                 <div
                   key={i}
-                  className="search-result-item"
+                  className={`search-result-item${activeIndex === i ? ' active' : ''}`}
                   role="option"
-                  aria-selected={false}
+                  aria-selected={activeIndex === i}
                   data-msg-idx={r.item.idx}
                   data-chat-folder={r.item.chatFolderName}
                   tabIndex={0}
-                  onClick={() => handleResultClick(r.item.idx)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleResultClick(r.item.idx); }}
+                  onClick={() => handleResultClick(r.item.idx, i)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleResultClick(r.item.idx, i); }}
                 >
                   <div className="snippet" dangerouslySetInnerHTML={{ __html: highlighted }} />
                   <div className="meta">

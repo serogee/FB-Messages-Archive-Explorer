@@ -44,6 +44,7 @@ export function useArchive(): {
   archivedList: ChatListEntry[];
   requestsList: ChatListEntry[];
   loading: boolean;
+  loadProgress: { done: number; total: number } | null;
   error: string | null;
   openFolder: (requestWrite?: boolean) => Promise<void>;
   openFolderWithWriteAccess: () => Promise<void>;
@@ -56,6 +57,7 @@ export function useArchive(): {
   const [archivedList, setArchivedList] = useState<ChatListEntry[]>([]);
   const [requestsList, setRequestsList] = useState<ChatListEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadProgress, setLoadProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Keep a ref to current lists so lazy size computation always works with latest state
@@ -87,6 +89,7 @@ export function useArchive(): {
   const openFolder = useCallback(async (requestWrite?: boolean) => {
     setError(null);
     setLoading(true);
+    setLoadProgress({ done: 0, total: 0 });
     try {
       const handle = requestWrite ? await pickFolderWithWriteAccess() : await pickMessagesFolder();
       
@@ -97,11 +100,30 @@ export function useArchive(): {
 
       setOriginalRootHandle(handle);
       setRootHandle(messagesRoot);
+
+      // Track progress across the 4 folders
+      const progresses = [
+        { done: 0, total: 0 },
+        { done: 0, total: 0 },
+        { done: 0, total: 0 },
+        { done: 0, total: 0 }
+      ];
+      const updateProgress = (idx: number, done: number, total: number) => {
+        progresses[idx] = { done, total };
+        let sumDone = 0;
+        let sumTotal = 0;
+        for (const p of progresses) {
+          sumDone += p.done;
+          sumTotal += p.total;
+        }
+        setLoadProgress({ done: sumDone, total: sumTotal });
+      };
+
       const [inbox, archived, requests, e2ee] = await Promise.all([
-        listChatFolders(messagesRoot, 'inbox', 'inbox'),
-        listChatFolders(messagesRoot, 'archived_threads', 'archived'),
-        listChatFolders(messagesRoot, 'message_requests', 'requests'),
-        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee'),
+        listChatFolders(messagesRoot, 'inbox', 'inbox', (d, t) => updateProgress(0, d, t)),
+        listChatFolders(messagesRoot, 'archived_threads', 'archived', (d, t) => updateProgress(1, d, t)),
+        listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t)),
+        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t)),
       ]);
       // Merge e2ee into inbox and re-sort by lastTimestamp descending
       const mergedInbox = [...inbox, ...e2ee].sort((a, b) => {
@@ -123,6 +145,7 @@ export function useArchive(): {
       }
     } finally {
       setLoading(false);
+      setLoadProgress(null);
     }
   }, [startLazySizeComputation]);
 
@@ -166,7 +189,7 @@ export function useArchive(): {
   }, []);
 
   return {
-    rootHandle, originalRootHandle, inboxList, archivedList, requestsList, loading, error,
+    rootHandle, originalRootHandle, inboxList, archivedList, requestsList, loading, loadProgress, error,
     openFolder, openFolderWithWriteAccess, deleteChat, updateFolderSize,
   };
 }

@@ -4,21 +4,24 @@ import { buildSearchIndex, performSearch } from '../services/search';
 import { isReactionNoticeMessage } from '../services/reactions';
 import { loadChatMessages } from '../services/fileSystem';
 
+// Global cache for wide search to persist across component re-renders
+const globalWideIndexCache = new Map<string, SearchIndexEntry[]>();
+
 export function useSearch(
   chatData: MessengerThread | null,
   archiveList: ChatListEntry[]
 ): {
-  query: string;
-  setQuery: (q: string) => void;
+  activeQuery: string;
   results: SearchResult[];
   isSearching: boolean;
   progress: number;
   isWideSearch: boolean;
   setIsWideSearch: (wide: boolean) => void;
-  startSearch: () => Promise<void>;
+  startSearch: (q: string) => Promise<void>;
   clearSearch: () => void;
+  clearWideSearchCache: () => void;
 } {
-  const [query, setQuery] = useState('');
+  const [activeQuery, setActiveQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -39,8 +42,8 @@ export function useSearch(
     }
   }, [chatData]);
 
-  const startSearch = useCallback(async () => {
-    if (!query.trim()) return;
+  const startSearch = useCallback(async (searchQuery: string) => {
+    if (!searchQuery.trim()) return;
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -52,6 +55,7 @@ export function useSearch(
     setIsSearching(true);
     setProgress(0);
     setResults([]);
+    setActiveQuery(searchQuery);
 
     try {
       if (!isWideSearch) {
@@ -68,7 +72,7 @@ export function useSearch(
           };
         }
         if (signal.aborted) return;
-        const found = await performSearch(query, indexCacheRef.current.index, setProgress, signal);
+        const found = await performSearch(searchQuery, indexCacheRef.current.index, setProgress, signal);
         if (signal.aborted) return;
         setResults(found);
       } else {
@@ -80,10 +84,14 @@ export function useSearch(
           if (signal.aborted) return;
           const entry = archiveList[i];
           try {
-            const data = await loadChatMessages(entry.dirHandle);
-            if (signal.aborted) return;
-            const index = buildSearchIndex(data.messages, isReactionNoticeMessage);
-            const found = await performSearch(query, index, undefined, signal);
+            let index = globalWideIndexCache.get(entry.folderName);
+            if (!index) {
+              const data = await loadChatMessages(entry.dirHandle);
+              if (signal.aborted) return;
+              index = buildSearchIndex(data.messages, isReactionNoticeMessage);
+              globalWideIndexCache.set(entry.folderName, index);
+            }
+            const found = await performSearch(searchQuery, index, undefined, signal);
             if (signal.aborted) return;
             // Annotate results with chat info
             found.forEach(r => {
@@ -115,18 +123,22 @@ export function useSearch(
         setProgress(100);
       }
     }
-  }, [query, isWideSearch, chatData, archiveList]);
+  }, [isWideSearch, chatData, archiveList]);
 
   const clearSearch = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    setQuery('');
+    setActiveQuery('');
     setResults([]);
     setProgress(0);
     setIsSearching(false);
   }, []);
 
-  return { query, setQuery, results, isSearching, progress, isWideSearch, setIsWideSearch, startSearch, clearSearch };
+  const clearWideSearchCache = useCallback(() => {
+    globalWideIndexCache.clear();
+  }, []);
+
+  return { activeQuery, results, isSearching, progress, isWideSearch, setIsWideSearch, startSearch, clearSearch, clearWideSearchCache };
 }

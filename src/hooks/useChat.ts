@@ -12,6 +12,7 @@ export function useChat(): {
   mediaLoading: boolean;
   mediaProgress: number;  // 0–1
   msgProgress: number;    // 0–1
+  msgStatusText: string;
   loading: boolean;
   selectedPerspective: string;
   setSelectedPerspective: (name: string) => void;
@@ -24,6 +25,7 @@ export function useChat(): {
   const [mediaLoading, setMediaLoading] = useState(false);
   const [mediaProgress, setMediaProgress] = useState(0);
   const [msgProgress, setMsgProgress] = useState(0);
+  const [msgStatusText, setMsgStatusText] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeEntry, setActiveEntry] = useState<ChatListEntry | null>(null);
   const [selectedPerspective, setSelectedPerspectiveState] = useState<string>(() => {
@@ -36,9 +38,15 @@ export function useChat(): {
   }, []);
 
   const loadChat = useCallback(async (entry: ChatListEntry) => {
+    setActiveEntry(entry);
+    setChatData(null);
     setLoading(true);
     setMsgProgress(0);
+    setMsgStatusText("");
     setMediaProgress(0);
+
+    // Yield to let React paint the selected highlight and clear the old chat
+    await new Promise(r => setTimeout(r, 10));
     try {
       // Revoke previous media
       setMediaState(prev => {
@@ -47,9 +55,14 @@ export function useChat(): {
       });
 
       // Load messages with progress
-      const data = await loadChatMessages(entry.dirHandle, (done, total) => {
-        setMsgProgress(total > 0 ? done / total : 1);
+      const data = await loadChatMessages(entry.dirHandle, (progress, statusText) => {
+        setMsgProgress(progress);
+        setMsgStatusText(statusText);
       });
+
+      setMsgProgress(0.95);
+      setMsgStatusText("Enriching data...");
+      await new Promise(r => setTimeout(r, 10));
 
       // Enrich reaction timestamps (mutates in-place)
       if (!data._reactionsEnriched) {
@@ -68,7 +81,6 @@ export function useChat(): {
       // Load media in background (don't block chat display)
       const newMediaState = createMediaState();
       setChatData(data);
-      setActiveEntry(entry);
       setLoading(false);
       setMsgProgress(1);
 
@@ -104,7 +116,7 @@ export function useChat(): {
   }, []);
 
   return {
-    chatData, mediaState, mediaLoading, mediaProgress, msgProgress,
+    chatData, mediaState, mediaLoading, mediaProgress, msgProgress, msgStatusText,
     loading, selectedPerspective, setSelectedPerspective, loadChat, clearChat, activeEntry,
   };
 }
