@@ -122,7 +122,8 @@ export function getMessageAttachmentReferences(
 export async function processMediaFromDirectory(
   dirHandle: FileSystemDirectoryHandle,
   state: MediaState,
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   const MEDIA_SUBDIRS = ['photos', 'videos', 'audio', 'gifs', 'files'];
   const BATCH_SIZE = 20;
@@ -130,7 +131,10 @@ export async function processMediaFromDirectory(
   // Collect all file handles from known media subdirectories
   const fileHandles: Array<{ handle: FileSystemFileHandle; path: string }> = [];
 
+  let lastYield = performance.now();
+
   for (const subdirName of MEDIA_SUBDIRS) {
+    if (signal?.aborted) return;
     let subdirHandle: FileSystemDirectoryHandle;
     try {
       subdirHandle = await dirHandle.getDirectoryHandle(subdirName);
@@ -138,21 +142,28 @@ export async function processMediaFromDirectory(
       continue; // subdir doesn't exist
     }
     for await (const [name, entry] of subdirHandle.entries()) {
+      if (signal?.aborted) return;
       if (entry.kind === 'file') {
         fileHandles.push({
           handle: entry as FileSystemFileHandle,
           path: `${subdirName}/${name}`,
         });
       }
+      if (performance.now() - lastYield > 16) {
+        await new Promise(r => setTimeout(r, 0));
+        lastYield = performance.now();
+      }
     }
   }
 
+  if (signal?.aborted) return;
   const total = fileHandles.length;
   let done = 0;
   onProgress?.(0, total);
 
   // Process in batches of 20
   for (let i = 0; i < fileHandles.length; i += BATCH_SIZE) {
+    if (signal?.aborted) return;
     const batch = fileHandles.slice(i, i + BATCH_SIZE);
     await Promise.all(
       batch.map(async ({ handle, path }) => {
@@ -166,5 +177,10 @@ export async function processMediaFromDirectory(
         onProgress?.(done, total);
       })
     );
+    // Yield event loop based on time to maximize speed without freezing
+    if (performance.now() - lastYield > 16) {
+      await new Promise(r => setTimeout(r, 0));
+      lastYield = performance.now();
+    }
   }
 }

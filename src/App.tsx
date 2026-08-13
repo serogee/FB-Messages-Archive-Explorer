@@ -101,12 +101,6 @@ export default function App() {
         pendingJumpIndexRef.current = null;
         setTimeout(() => chatViewRef.current?.jumpToMessage(idx), 50);
         setTimeout(() => chatViewRef.current?.jumpToMessage(idx), 200);
-      } else {
-        // Scroll immediately to push last chunk into view (triggers IntersectionObserver render),
-        // then re-scroll after the chunk has had time to actually render its content.
-        chatViewRef.current?.scrollToBottom();
-        setTimeout(() => chatViewRef.current?.scrollToBottom(), 50);
-        setTimeout(() => chatViewRef.current?.scrollToBottom(), 200);
       }
     }
     prevChatDataRef.current = chat.chatData;

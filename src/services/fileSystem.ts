@@ -140,7 +140,8 @@ export async function listChatFolders(
 
 export async function loadChatMessages(
   chatDirHandle: FileSystemDirectoryHandle,
-  onProgress?: (progress: number, statusText: string) => void
+  onProgress?: (progress: number, statusText: string) => void,
+  signal?: AbortSignal
 ): Promise<MessengerThread> {
   // Yield immediately to let the browser paint the loading state
   await new Promise(r => setTimeout(r, 10));
@@ -155,8 +156,10 @@ export async function loadChatMessages(
   const orderedNames = getOrderedMessageFileNames(fileNames);
   const parsedFiles: MessengerThread[] = [];
   const total = orderedNames.length;
+  let lastYield = performance.now();
 
   for (let i = 0; i < orderedNames.length; i++) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const name = orderedNames[i];
     try {
       const fileHandle = await chatDirHandle.getFileHandle(name);
@@ -168,9 +171,10 @@ export async function loadChatMessages(
     // Scale file reading to 85% of the total progress
     onProgress?.(total > 0 ? (0.85 * (i + 1) / total) : 0, "Reading messages...");
     
-    // Yield to the main thread every few files to prevent UI freezing
-    if (i % 2 === 0) {
+    // Yield to the main thread based on time to maximize speed
+    if (performance.now() - lastYield > 16) {
       await new Promise(r => setTimeout(r, 0));
+      lastYield = performance.now();
     }
   }
 
@@ -178,8 +182,10 @@ export async function loadChatMessages(
     throw new Error('No readable message files found in this chat folder.');
   }
 
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   onProgress?.(0.85, "Merging data...");
   await new Promise(r => setTimeout(r, 10));
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   const merged = mergeMessengerData(parsedFiles);
   
   onProgress?.(0.90, "Sorting messages...");

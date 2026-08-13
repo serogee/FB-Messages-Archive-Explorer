@@ -1,4 +1,4 @@
-import React, { memo, useState, useEffect } from 'react';
+import React, { memo, useState, useEffect, useRef } from 'react';
 import type { MessengerMessage, MediaState } from '../../types/messenger';
 import { getMessageTimestamp, fixEncoding } from '../../services/parser';
 import { findMediaFile, getMessageMediaItems, getMediaReferencePath, getMediaType } from '../../services/media';
@@ -31,17 +31,32 @@ function getReactionTimeText(ts: number): string {
 
 function LazyMedia({ mediaPath, mediaFile }: { mediaPath: string, mediaFile: ReturnType<typeof findMediaFile> }) {
   const [fileURL, setFileURL] = useState<string | null>(mediaFile?.url || null);
+  const containerRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let isMounted = true;
-    if (mediaFile && !mediaFile.url && mediaFile.handle) {
-      mediaFile.handle.getFile().then(file => {
-        const url = URL.createObjectURL(file);
-        mediaFile.url = url; // Cache it on the mediaFile object globally
-        if (isMounted) setFileURL(url);
-      }).catch(console.error);
-    }
-    return () => { isMounted = false; };
+    if (!mediaFile || mediaFile.url || !mediaFile.handle) return;
+    
+    const el = containerRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        observer.disconnect();
+        mediaFile.handle.getFile().then(file => {
+          const url = URL.createObjectURL(file);
+          mediaFile.url = url; // Cache it on the mediaFile object globally
+          if (isMounted) setFileURL(url);
+        }).catch(console.error);
+      }
+    }, { rootMargin: '500px' });
+
+    observer.observe(el);
+
+    return () => { 
+      isMounted = false; 
+      observer.disconnect();
+    };
   }, [mediaFile]);
 
   const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
@@ -64,7 +79,7 @@ function LazyMedia({ mediaPath, mediaFile }: { mediaPath: string, mediaFile: Ret
       ? <a href={fileURL} target="_blank" rel="noreferrer" className="media-preview">
           <img src={fileURL} alt="Image" className="preview" loading="lazy" onLoad={handleMediaLoad} />
         </a>
-      : <span className="placeholder">[ Image not found ]</span>;
+      : <span ref={containerRef} className="placeholder">[ Image not found ]</span>;
   }
   if (mediaType === 'video') {
     return fileURL
@@ -73,14 +88,14 @@ function LazyMedia({ mediaPath, mediaFile }: { mediaPath: string, mediaFile: Ret
             <source src={fileURL} type="video/mp4" />
           </video>
         </a>
-      : <span className="placeholder">[ Video not found ]</span>;
+      : <span ref={containerRef} className="placeholder">[ Video not found ]</span>;
   }
   if (mediaType === 'audio') {
     return fileURL
       ? <audio controls>
           <source src={fileURL} type="audio/mpeg" />
         </audio>
-      : <span className="placeholder">[ Audio not found ]</span>;
+      : <span ref={containerRef} className="placeholder">[ Audio not found ]</span>;
   }
   
   const filename = mediaPath.split('/').pop() || 'File attachment';
@@ -88,7 +103,7 @@ function LazyMedia({ mediaPath, mediaFile }: { mediaPath: string, mediaFile: Ret
     ? <a href={fileURL} target="_blank" rel="noreferrer" className="media-file-link" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: 'rgba(0,0,0,0.08)', borderRadius: '8px', textDecoration: 'none', color: 'inherit', fontWeight: '500', margin: '4px 0', fontSize: '14px', border: '1px solid rgba(0,0,0,0.1)' }}>
         {filename}
       </a>
-    : <span className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
+    : <span ref={containerRef} className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
 }
 
 export const MessageBubble = memo(function MessageBubble({

@@ -82,6 +82,7 @@ interface MessageChunkProps {
   mediaState: MediaState;
   highlightQuery: string;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
+  forceRender?: boolean;
 }
 
 const MessageChunk = React.memo(function MessageChunk({
@@ -94,9 +95,10 @@ const MessageChunk = React.memo(function MessageChunk({
   mediaState,
   highlightQuery,
   chatContainerRef,
+  forceRender,
 }: MessageChunkProps) {
   const chunkRef = useRef<HTMLDivElement>(null);
-  const [rendered, setRendered] = React.useState(false);
+  const [rendered, setRendered] = React.useState(!!forceRender);
 
   React.useEffect(() => {
     const el = chunkRef.current;
@@ -255,6 +257,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     scrollTimerRef.current = setTimeout(onScrollSync, 80);
   }, [onScrollSync]);
 
+  React.useLayoutEffect(() => {
+    if (chatData && chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatData]);
+
   if (!chatData) return null;
 
   const allMessages = chatData.messages;
@@ -275,6 +283,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
           mediaState={mediaState}
           highlightQuery={highlightQuery}
           chatContainerRef={chatContainerRef}
+          forceRender={i === chunks.length - 1}
         />
       ))}
     </div>

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { ChatListEntry, MessengerThread, MediaState } from '../types/messenger';
 import { loadChatMessages } from '../services/fileSystem';
 import { processMediaFromDirectory, createMediaState, revokeAllMedia } from '../services/media';
@@ -37,6 +37,8 @@ export function useChat(): {
     storageSet('selectedPerspective', name);
   }, []);
 
+  const mediaAbortControllerRef = useRef<AbortController | null>(null);
+
   const loadChat = useCallback(async (entry: ChatListEntry) => {
     setActiveEntry(entry);
     setChatData(null);
@@ -44,6 +46,12 @@ export function useChat(): {
     setMsgProgress(0);
     setMsgStatusText("");
     setMediaProgress(0);
+
+    if (mediaAbortControllerRef.current) {
+      mediaAbortControllerRef.current.abort();
+    }
+    const abortCtrl = new AbortController();
+    mediaAbortControllerRef.current = abortCtrl;
 
     // Yield to let React paint the selected highlight and clear the old chat
     await new Promise(r => setTimeout(r, 10));
@@ -54,11 +62,32 @@ export function useChat(): {
         return createMediaState();
       });
 
-      // Load messages with progress
+      // Start media loading concurrently in the background
+      const newMediaState = createMediaState();
+      setMediaLoading(true);
+      setMediaProgress(0);
+      const mediaPromise = processMediaFromDirectory(entry.dirHandle, newMediaState, (done, total) => {
+        setMediaProgress(total > 0 ? done / total : 1);
+      }, abortCtrl.signal)
+        .then(() => {
+          if (abortCtrl.signal.aborted) return;
+          setMediaState({ ...newMediaState });
+          setMediaLoading(false);
+          setMediaProgress(1);
+        })
+        .catch(() => {
+          if (abortCtrl.signal.aborted) return;
+          setMediaLoading(false);
+          setMediaProgress(1);
+        });
+
+      // Load messages with progress (await this)
       const data = await loadChatMessages(entry.dirHandle, (progress, statusText) => {
         setMsgProgress(progress);
         setMsgStatusText(statusText);
-      });
+      }, abortCtrl.signal);
+      
+      if (abortCtrl.signal.aborted) return;
 
       setMsgProgress(0.95);
       setMsgStatusText("Enriching data...");
@@ -78,31 +107,14 @@ export function useChat(): {
         : (participants[0] || '');
       setSelectedPerspectiveState(perspective);
 
-      // Load media in background (don't block chat display)
-      const newMediaState = createMediaState();
       setChatData(data);
       setLoading(false);
       setMsgProgress(1);
 
-      // Load media asynchronously after chat is shown
-      setMediaLoading(true);
-      setMediaProgress(0);
-      processMediaFromDirectory(entry.dirHandle, newMediaState, (done, total) => {
-        setMediaProgress(total > 0 ? done / total : 1);
-      })
-        .then(() => {
-          setMediaState({ ...newMediaState });
-          setMediaLoading(false);
-          setMediaProgress(1);
-        })
-        .catch(() => {
-          setMediaLoading(false);
-          setMediaProgress(1);
-        });
-
-    } catch (e) {
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setLoading(false);
-      console.error('Failed to load chat:', e);
+      console.error('Failed to load chat:', err);
     }
   }, []);
 
