@@ -44,6 +44,9 @@ This project is built with Vite, React, and TypeScript.
    npm run dev
    ```
 
+**DEMO**
+![Demo](screenshots/demo.png)
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more information. This project builds upon the foundations of [DuckCIT/Facebook-Messenger-JSON-Viewer](https://github.com/DuckCIT/Facebook-Messenger-JSON-Viewer).
