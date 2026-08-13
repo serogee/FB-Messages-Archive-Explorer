@@ -15,11 +15,12 @@ export default function App() {
   const { settings, setSetting } = useSettings();
   const archive = useArchive();
   const chat = useChat();
-  const search = useSearch(chat.chatData, archive.inboxList);
+  const search = useSearch(chat.chatData, [...archive.inboxList, ...archive.archivedList, ...archive.requestsList]);
 
   const [sidebarView, setSidebarView] = useState<'chats' | 'settings' | 'archived' | 'requests'>('chats');
   const [activeTab, setActiveTab] = useState<'chats' | 'settings'>('chats');
-  const [deleteTarget, setDeleteTarget] = useState<ChatListEntry | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ChatListEntry | ChatListEntry[] | null>(null);
+  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Resizable sidebar
   const { handleRef: sidebarHandleRef } = useResizable({
@@ -46,14 +47,26 @@ export default function App() {
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return;
     try {
-      await archive.deleteChat(deleteTarget);
-      // If the deleted chat is currently open, clear the view
-      if (chat.activeEntry?.folderName === deleteTarget.folderName) {
-        chat.clearChat();
+      if (Array.isArray(deleteTarget)) {
+        setDeleteProgress({ done: 0, total: deleteTarget.length });
+        await archive.deleteChats(deleteTarget, (done, total) => {
+          setDeleteProgress({ done, total });
+        });
+        
+        // Clear view if active chat was deleted
+        if (chat.activeEntry && deleteTarget.some(e => e.folderName === chat.activeEntry!.folderName)) {
+          chat.clearChat();
+        }
+      } else {
+        await archive.deleteChat(deleteTarget);
+        if (chat.activeEntry?.folderName === deleteTarget.folderName) {
+          chat.clearChat();
+        }
       }
     } catch (e) {
       console.error('Delete failed:', e);
     }
+    setDeleteProgress(null);
     setDeleteTarget(null);
   }, [deleteTarget, archive, chat]);
 
@@ -65,19 +78,36 @@ export default function App() {
   // Ref to ChatView for scrolling/jumping
   const chatViewRef = useRef<ChatViewHandle>(null);
 
-  const handleJumpToMessage = useCallback((index: number) => {
+  const pendingJumpIndexRef = useRef<number | null>(null);
+
+  const handleJumpToMessage = useCallback((index: number, folderName?: string) => {
+    if (folderName && folderName !== chat.activeEntry?.folderName) {
+      const entry = [...archive.inboxList, ...archive.archivedList, ...archive.requestsList].find(e => e.folderName === folderName);
+      if (entry) {
+        pendingJumpIndexRef.current = index;
+        chat.loadChat(entry);
+        return;
+      }
+    }
     chatViewRef.current?.jumpToMessage(index);
-  }, []);
+  }, [chat, archive]);
 
   // When chatData changes (new chat loaded), scroll to bottom
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {
     if (chat.chatData && chat.chatData !== prevChatDataRef.current) {
-      // Scroll immediately to push last chunk into view (triggers IntersectionObserver render),
-      // then re-scroll after the chunk has had time to actually render its content.
-      chatViewRef.current?.scrollToBottom();
-      setTimeout(() => chatViewRef.current?.scrollToBottom(), 50);
-      setTimeout(() => chatViewRef.current?.scrollToBottom(), 200);
+      if (pendingJumpIndexRef.current !== null) {
+        const idx = pendingJumpIndexRef.current;
+        pendingJumpIndexRef.current = null;
+        setTimeout(() => chatViewRef.current?.jumpToMessage(idx), 50);
+        setTimeout(() => chatViewRef.current?.jumpToMessage(idx), 200);
+      } else {
+        // Scroll immediately to push last chunk into view (triggers IntersectionObserver render),
+        // then re-scroll after the chunk has had time to actually render its content.
+        chatViewRef.current?.scrollToBottom();
+        setTimeout(() => chatViewRef.current?.scrollToBottom(), 50);
+        setTimeout(() => chatViewRef.current?.scrollToBottom(), 200);
+      }
     }
     prevChatDataRef.current = chat.chatData;
   }, [chat.chatData]);
@@ -96,6 +126,7 @@ export default function App() {
         originalRootHandle={archive.originalRootHandle}
         loading={archive.loading}
         loadProgress={archive.loadProgress}
+        sizeProgress={archive.sizeProgress}
         error={archive.error}
         sidebarView={sidebarView}
         setSidebarView={setSidebarView}
@@ -166,7 +197,10 @@ export default function App() {
         <DeleteConfirmModal
           entry={deleteTarget}
           onConfirm={handleDeleteConfirm}
-          onCancel={() => setDeleteTarget(null)}
+          onCancel={() => {
+            if (!deleteProgress) setDeleteTarget(null);
+          }}
+          progress={deleteProgress}
         />
       )}
       <TrustModal settings={settings} setSetting={setSetting} />

@@ -12,6 +12,8 @@
     padding:9px 5px;
     position:relative;
     z-index:40;
+    container-type: inline-size;
+    container-name: chat-header;
 }
 .chat-header h3 {
     flex:1 1 auto;
@@ -21,8 +23,38 @@
     white-space:nowrap;
 }
 .chat-header.date-nav-auto:not(:hover) .date-nav-track,
-.chat-header.date-nav-collapsed .date-nav-track {
+.date-nav-controls.manual-collapsed .date-nav-track,
+.date-nav-controls.manual-collapsed .date-nav-scale,
+.date-nav-controls.manual-collapsed .date-nav-steps {
     display:none;
+}
+
+@container chat-header (max-width: 750px) {
+    /* Compact Mode - Inactive */
+    .chat-header.date-nav-auto:not(:hover) .date-nav-scale,
+    .chat-header.date-nav-auto:not(:hover) .date-nav-steps {
+        display: none !important;
+    }
+    
+    .chat-header.date-nav-auto:not(:hover) .date-nav-controls,
+    .chat-header:not(.date-nav-auto) .date-nav-controls.manual-collapsed {
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+
+    /* Compact Mode - Active */
+    .chat-header.date-nav-auto:hover .date-nav-controls,
+    .chat-header:not(.date-nav-auto) .date-nav-controls:not(.manual-collapsed) {
+        max-width: none;
+        flex: 0 0 auto;
+    }
+}
+
+@container chat-header (max-width: 500px) {
+    /* Ultra-Compact Mode: completely hide the scale buttons so steps and date box can fit */
+    .date-nav-scale {
+        display: none !important;
+    }
 }
 
 /* Loading & Chunks */
@@ -372,7 +404,7 @@ img, video { max-width:100%; border-radius:10px; margin:5px; cursor:pointer; tra
 .date-nav-steps { display:flex; gap:4px; flex:0 0 auto; }
 .date-nav-steps button { width:38px; height:36px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); font-size:18px; line-height:1; cursor:pointer; font:inherit; }
 .date-nav-steps button:disabled { opacity:0.4; cursor:default; }
-.date-nav-current-box { flex:1 1 auto; min-width:118px; max-width:190px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); padding:7px 10px; box-sizing:border-box; cursor:pointer; font:inherit; min-height:36px; text-align:left; }
+.date-nav-current-box { flex:0 0 160px; width:160px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); padding:7px 10px; box-sizing:border-box; cursor:pointer; font:inherit; min-height:36px; text-align:left; }
 .date-nav-current-box:disabled { cursor:default; opacity:0.75; }
 .date-nav-current { color:var(--muted); font-size:13px; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 

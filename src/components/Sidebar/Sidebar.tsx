@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { Settings } from '../../hooks/useSettings';
 import type { ChatListEntry, MessengerThread, MediaState } from '../../types/messenger';
 import type { useSearch } from '../../hooks/useSearch';
@@ -19,6 +20,7 @@ interface SidebarProps {
   originalRootHandle: FileSystemDirectoryHandle | null;
   loading: boolean;
   loadProgress: { done: number; total: number } | null;
+  sizeProgress: { done: number; total: number } | null;
   error: string | null;
   sidebarView: 'chats' | 'settings' | 'archived' | 'requests';
   setSidebarView: (view: 'chats' | 'settings' | 'archived' | 'requests') => void;
@@ -26,19 +28,19 @@ interface SidebarProps {
   setActiveTab: (tab: 'chats' | 'settings') => void;
   onSelectChat: (entry: ChatListEntry) => Promise<void>;
   onOpenFolder: () => Promise<void>;
-  onDeleteChat: (entry: ChatListEntry) => void;
+  onDeleteChat: (entry: ChatListEntry | ChatListEntry[]) => void;
   search: ReturnType<typeof useSearch>;
   chatData: MessengerThread | null;
   mediaState: MediaState;
   selectedPerspective: string;
   setSelectedPerspective: (name: string) => void;
-  onJumpToMessage?: (index: number) => void;
+  onJumpToMessage?: (index: number, folderName?: string) => void;
 }
 
 export function Sidebar({
   settings, setSetting,
   inboxList, archivedList, requestsList,
-  activeEntry, rootHandle, originalRootHandle, loading, loadProgress, error,
+  activeEntry, rootHandle, originalRootHandle, loading, loadProgress, sizeProgress, error,
   sidebarView, setSidebarView,
   activeTab, setActiveTab,
   onSelectChat, onOpenFolder, onDeleteChat,
@@ -48,6 +50,56 @@ export function Sidebar({
   onJumpToMessage,
 }: SidebarProps) {
   const isSubView = sidebarView === 'archived' || sidebarView === 'requests';
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedChats, setSelectedChats] = useState<Set<string>>(new Set());
+
+  const handleToggleSelectChat = (folderName: string, select: boolean) => {
+    setSelectedChats((prev: Set<string>) => {
+      const next = new Set(prev);
+      if (select) next.add(folderName);
+      else next.delete(folderName);
+      return next;
+    });
+  };
+
+  const allChats = [...inboxList, ...archivedList, ...requestsList];
+
+  useEffect(() => {
+    if (selectionMode) {
+      const allFolderNames = new Set(allChats.map(c => c.folderName));
+      let changed = false;
+      const nextSelected = new Set<string>();
+      selectedChats.forEach(f => {
+        if (allFolderNames.has(f)) {
+          nextSelected.add(f);
+        } else {
+          changed = true;
+        }
+      });
+      if (changed) {
+        setSelectedChats(nextSelected);
+        if (nextSelected.size === 0) {
+          setSelectionMode(false);
+        }
+      }
+    }
+  }, [allChats, selectionMode, selectedChats]);
+
+  const handleToggleSelectMode = () => {
+    if (selectionMode) {
+      setSelectionMode(false);
+      setSelectedChats(new Set());
+    } else {
+      setSelectionMode(true);
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    const targets = allChats.filter(c => selectedChats.has(c.folderName));
+    if (targets.length > 0) {
+      onDeleteChat(targets);
+    }
+  };
 
   return (
     <div className="sub-container" id="sidebar">
@@ -62,6 +114,8 @@ export function Sidebar({
           hasArchived={archivedList.length > 0}
           onViewRequests={() => setSidebarView('requests')}
           hasRequests={requestsList.length > 0}
+          onToggleSelectMode={handleToggleSelectMode}
+          selectionModeActive={selectionMode}
         />
       </div>
       <hr />
@@ -126,10 +180,18 @@ export function Sidebar({
         {sidebarView === 'chats' && rootHandle && !loading && (
           <ChatList
             chatList={inboxList}
+            extraFilterLists={[
+              { label: 'Archived Threads', list: archivedList },
+              { label: 'Message Requests', list: requestsList }
+            ]}
             activeEntry={activeEntry}
+            sizeProgress={sizeProgress}
             onSelectChat={onSelectChat}
             onDeleteChat={onDeleteChat}
             deletionEnabled={settings.deletionEnabled}
+            selectionMode={selectionMode}
+            selectedChats={selectedChats}
+            onToggleSelectChat={handleToggleSelectChat}
           />
         )}
 
@@ -151,12 +213,16 @@ export function Sidebar({
           <ArchivedList
             chatList={archivedList}
             activeEntry={activeEntry}
+            sizeProgress={sizeProgress}
             onSelectChat={onSelectChat}
             onDeleteChat={onDeleteChat}
             deletionEnabled={settings.deletionEnabled}
             onBack={() => { setSidebarView('chats'); setActiveTab('chats'); }}
             label="Archived Threads"
             emptyText="No archived chats found."
+            selectionMode={selectionMode}
+            selectedChats={selectedChats}
+            onToggleSelectChat={handleToggleSelectChat}
           />
         )}
 
@@ -165,15 +231,35 @@ export function Sidebar({
           <ArchivedList
             chatList={requestsList}
             activeEntry={activeEntry}
+            sizeProgress={sizeProgress}
             onSelectChat={onSelectChat}
             onDeleteChat={onDeleteChat}
             deletionEnabled={settings.deletionEnabled}
             onBack={() => { setSidebarView('chats'); setActiveTab('chats'); }}
             label="Message Requests"
             emptyText="No message requests found."
+            selectionMode={selectionMode}
+            selectedChats={selectedChats}
+            onToggleSelectChat={handleToggleSelectChat}
           />
         )}
       </div>
+      
+      {selectionMode && (
+        <div className="sidebar-action-bar">
+          <span style={{ fontSize: '13px', fontWeight: 600 }}>{selectedChats.size} Selected</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="sidebar-action-btn cancel" onClick={handleToggleSelectMode}>Cancel</button>
+            <button 
+              className="sidebar-action-btn delete" 
+              onClick={handleDeleteSelected}
+              disabled={selectedChats.size === 0}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

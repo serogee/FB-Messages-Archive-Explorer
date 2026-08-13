@@ -40,15 +40,18 @@ async function resolveMessagesRoot(handle: FileSystemDirectoryHandle): Promise<F
 export function useArchive(): {
   rootHandle: FileSystemDirectoryHandle | null;
   originalRootHandle: FileSystemDirectoryHandle | null;
+
   inboxList: ChatListEntry[];
   archivedList: ChatListEntry[];
   requestsList: ChatListEntry[];
   loading: boolean;
   loadProgress: { done: number; total: number } | null;
+  sizeProgress: { done: number; total: number } | null;
   error: string | null;
   openFolder: (requestWrite?: boolean) => Promise<void>;
   openFolderWithWriteAccess: () => Promise<void>;
   deleteChat: (entry: ChatListEntry) => Promise<void>;
+  deleteChats: (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => Promise<void>;
   updateFolderSize: (entry: ChatListEntry, size: number) => void;
 } {
   const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -58,6 +61,7 @@ export function useArchive(): {
   const [requestsList, setRequestsList] = useState<ChatListEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadProgress, setLoadProgress] = useState<{ done: number; total: number } | null>(null);
+  const [sizeProgress, setSizeProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Keep a ref to current lists so lazy size computation always works with latest state
@@ -68,8 +72,13 @@ export function useArchive(): {
   archivedListRef.current = archivedList;
   requestsListRef.current = requestsList;
 
-  const startLazySizeComputation = useCallback((entries: ChatListEntry[], setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>) => {
+  const startLazySizeComputation = useCallback((entries: ChatListEntry[], setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>, onProgress?: (done: number) => void) => {
     // Process one folder at a time with a small delay to avoid blocking UI
+    let done = 0;
+    if (entries.length === 0 && onProgress) {
+      onProgress(0);
+      return;
+    }
     const processNext = (index: number) => {
       if (index >= entries.length) return;
       const entry = entries[index];
@@ -80,6 +89,8 @@ export function useArchive(): {
             prev.map(e => e.folderName === entry.folderName ? { ...e, folderSize: size } : e)
           );
         } catch { /* ignore */ }
+        done++;
+        if (onProgress) onProgress(done);
         processNext(index + 1);
       }, 0);
     };
@@ -135,9 +146,35 @@ export function useArchive(): {
       setInboxList(mergedInbox);
       setArchivedList(archived);
       setRequestsList(requests);
-      startLazySizeComputation(mergedInbox, setInboxList);
-      startLazySizeComputation(archived, setArchivedList);
-      startLazySizeComputation(requests, setRequestsList);
+      
+      const sizeProgresses = [
+        { done: 0, total: mergedInbox.length },
+        { done: 0, total: archived.length },
+        { done: 0, total: requests.length }
+      ];
+      const totalSizeToCompute = mergedInbox.length + archived.length + requests.length;
+      if (totalSizeToCompute > 0) {
+        setSizeProgress({ done: 0, total: totalSizeToCompute });
+      }
+
+      const updateSizeProgress = (idx: number, done: number) => {
+        sizeProgresses[idx].done = done;
+        let sumDone = 0;
+        let sumTotal = 0;
+        for (const p of sizeProgresses) {
+          sumDone += p.done;
+          sumTotal += p.total;
+        }
+        if (sumDone === sumTotal) {
+          setSizeProgress(null);
+        } else {
+          setSizeProgress({ done: sumDone, total: sumTotal });
+        }
+      };
+
+      startLazySizeComputation(mergedInbox, setInboxList, (d) => updateSizeProgress(0, d));
+      startLazySizeComputation(archived, setArchivedList, (d) => updateSizeProgress(1, d));
+      startLazySizeComputation(requests, setRequestsList, (d) => updateSizeProgress(2, d));
     } catch (e: unknown) {
       // User cancelled the picker — not an error worth surfacing
       if (e instanceof Error && e.name !== 'AbortError') {
@@ -178,6 +215,31 @@ export function useArchive(): {
     }
   }, [rootHandle]);
 
+  const deleteChats = useCallback(async (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => {
+    if (!rootHandle) throw new Error('No folder open');
+    
+    const foldersToRemove = new Set(entries.map(e => e.folderName));
+    
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const subfolderName =
+        entry.source === 'inbox'    ? 'inbox' :
+        entry.source === 'requests' ? 'message_requests' :
+        entry.source === 'e2ee'     ? 'e2ee_cutover' :
+        'archived_threads';
+      try {
+        await deleteChatFs(rootHandle, subfolderName, entry.folderName);
+      } catch (err) {
+        console.error(`Failed to delete ${entry.folderName}`, err);
+      }
+      if (onProgress) onProgress(i + 1, entries.length);
+    }
+
+    setInboxList(prev => prev.filter(e => !foldersToRemove.has(e.folderName)));
+    setRequestsList(prev => prev.filter(e => !foldersToRemove.has(e.folderName)));
+    setArchivedList(prev => prev.filter(e => !foldersToRemove.has(e.folderName)));
+  }, [rootHandle]);
+
   const updateFolderSize = useCallback((entry: ChatListEntry, size: number) => {
     if (entry.source === 'inbox' || entry.source === 'e2ee') {
       setInboxList(prev => prev.map(e => e.folderName === entry.folderName ? { ...e, folderSize: size } : e));
@@ -189,7 +251,7 @@ export function useArchive(): {
   }, []);
 
   return {
-    rootHandle, originalRootHandle, inboxList, archivedList, requestsList, loading, loadProgress, error,
-    openFolder, openFolderWithWriteAccess, deleteChat, updateFolderSize,
+    rootHandle, originalRootHandle, inboxList, archivedList, requestsList,    loading, loadProgress, sizeProgress, error,
+    openFolder, openFolderWithWriteAccess, deleteChat, deleteChats, updateFolderSize,
   };
 }

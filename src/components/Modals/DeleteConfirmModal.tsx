@@ -2,34 +2,75 @@ import type { ChatListEntry } from '../../types/messenger';
 import { formatFileSize } from '../../services/storage';
 
 interface DeleteConfirmModalProps {
-  entry: ChatListEntry;
+  entry: ChatListEntry | ChatListEntry[];
   onConfirm: () => void;
   onCancel: () => void;
+  progress?: { done: number; total: number } | null;
 }
 
-export function DeleteConfirmModal({ entry, onConfirm, onCancel }: DeleteConfirmModalProps) {
+export function DeleteConfirmModal({ entry, onConfirm, onCancel, progress }: DeleteConfirmModalProps) {
+  const isMultiple = Array.isArray(entry);
+  const title = isMultiple ? `Delete ${entry.length} Chats` : 'Delete Chat';
+  
+  let totalSize = 0;
+  if (isMultiple) {
+    totalSize = entry.reduce((acc, e) => acc + (e.folderSize || 0), 0);
+  } else {
+    totalSize = entry.folderSize || 0;
+  }
   return (
     <div className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
       <div className="delete-backdrop" onClick={onCancel} />
       <div className="delete-card">
-        <h3 id="deleteTitle">Delete Chat</h3>
+        <h3 id="deleteTitle">{title}</h3>
         <div className="delete-warning">
           <strong>This action is permanent and cannot be undone.</strong>
         </div>
-        <p className="delete-meta">
-          <strong>{entry.title}</strong>
-          {entry.folderSize > 0 && (
-            <> &nbsp;·&nbsp; {formatFileSize(entry.folderSize)}</>
-          )}
-          <br />
-          <span style={{ color: 'var(--muted)', fontSize: '12px' }}>Folder: {entry.folderName}</span>
-        </p>
+        {isMultiple ? (
+          <div className="delete-multiple-list">
+            <div style={{ maxHeight: '150px', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '6px', padding: '8px', marginBottom: '12px', background: 'var(--bg)' }}>
+              {entry.map((e, idx) => (
+                <div key={e.folderName} style={{ padding: '4px 0', borderBottom: idx < entry.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                  <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {e.title}
+                  </div>
+                  <div style={{ color: 'var(--muted)', fontSize: '12px' }}>
+                    Folder: {e.folderName}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="delete-meta">
+              <strong>{entry.length} chats selected</strong>
+              {totalSize > 0 && <> &nbsp;·&nbsp; {formatFileSize(totalSize)} total</>}
+            </p>
+          </div>
+        ) : (
+          <p className="delete-meta">
+            <strong>{entry.title}</strong>
+            {totalSize > 0 && <> &nbsp;·&nbsp; {formatFileSize(totalSize)}</>}
+            <br />
+            <span style={{ color: 'var(--muted)', fontSize: '12px' }}>Folder: {entry.folderName}</span>
+          </p>
+        )}
+        
+        {progress && (
+          <div style={{ marginTop: '16px', marginBottom: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px' }}>
+              <span>Deleting...</span>
+              <span>{progress.done} / {progress.total}</span>
+            </div>
+            <div style={{ width: '100%', height: '6px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ height: '100%', background: 'var(--accent)', width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+            </div>
+          </div>
+        )}
         <div className="delete-actions">
-          <button className="btn btn-secondary" onClick={onCancel}>
+          <button className="btn btn-secondary" onClick={onCancel} disabled={!!progress}>
             Cancel
           </button>
-          <button className="btn-danger" onClick={onConfirm} id="deleteConfirmBtn">
-            Delete permanently
+          <button className="btn-danger" onClick={onConfirm} id="deleteConfirmBtn" disabled={!!progress}>
+            {progress ? 'Deleting...' : 'Delete permanently'}
           </button>
         </div>
       </div>

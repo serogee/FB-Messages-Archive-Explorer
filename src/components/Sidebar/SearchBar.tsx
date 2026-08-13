@@ -5,7 +5,7 @@ import { formatInfoDate } from '../../services/storage';
 
 interface SearchBarProps {
   search: ReturnType<typeof useSearch>;
-  onJumpToMessage?: (index: number) => void;
+  onJumpToMessage?: (index: number, folderName?: string) => void;
 }
 
 export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
@@ -33,9 +33,9 @@ export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
     setActiveIndex(null);
   };
 
-  const handleResultClick = (msgIdx: number, listIdx: number) => {
+  const handleResultClick = (msgIdx: number, listIdx: number, folderName?: string) => {
     setActiveIndex(listIdx);
-    if (onJumpToMessage) onJumpToMessage(msgIdx);
+    if (onJumpToMessage) onJumpToMessage(msgIdx, folderName);
   };
 
   return (
@@ -103,8 +103,8 @@ export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
                   data-msg-idx={r.item.idx}
                   data-chat-folder={r.item.chatFolderName}
                   tabIndex={0}
-                  onClick={() => handleResultClick(r.item.idx, i)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleResultClick(r.item.idx, i); }}
+                  onClick={() => handleResultClick(r.item.idx, i, r.item.chatFolderName)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleResultClick(r.item.idx, i, r.item.chatFolderName); }}
                 >
                   <div className="snippet" dangerouslySetInnerHTML={{ __html: highlighted }} />
                   <div className="meta">

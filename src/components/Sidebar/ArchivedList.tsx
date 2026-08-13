@@ -10,6 +10,10 @@ interface ArchivedListProps {
   onBack: () => void;
   label: string;
   emptyText: string;
+  sizeProgress?: { done: number; total: number } | null;
+  selectionMode?: boolean;
+  selectedChats?: Set<string>;
+  onToggleSelectChat?: (folderName: string, select: boolean) => void;
 }
 
 export function ArchivedList({
@@ -21,6 +25,10 @@ export function ArchivedList({
   onBack,
   label,
   emptyText,
+  sizeProgress,
+  selectionMode,
+  selectedChats,
+  onToggleSelectChat
 }: ArchivedListProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -37,6 +45,10 @@ export function ArchivedList({
           onSelectChat={onSelectChat}
           onDeleteChat={onDeleteChat}
           deletionEnabled={deletionEnabled}
+          sizeProgress={sizeProgress}
+          selectionMode={selectionMode}
+          selectedChats={selectedChats}
+          onToggleSelectChat={onToggleSelectChat}
         />
       )}
     </div>

@@ -139,7 +139,7 @@ export function SettingsPanel({
   };
 
   return (
-    <div>
+    <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
       {/* Folder selection — always visible */}
       <div className="settings-section">
         <strong>Messages Folder</strong>

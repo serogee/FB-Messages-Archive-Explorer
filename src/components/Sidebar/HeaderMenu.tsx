@@ -4,9 +4,11 @@ interface HeaderMenuProps {
   hasArchived: boolean;
   onViewRequests: () => void;
   hasRequests: boolean;
+  onToggleSelectMode: () => void;
+  selectionModeActive: boolean;
 }
 
-export function HeaderMenu({ onViewArchived, hasArchived, onViewRequests, hasRequests }: HeaderMenuProps) {
+export function HeaderMenu({ onViewArchived, hasArchived, onViewRequests, hasRequests, onToggleSelectMode, selectionModeActive }: HeaderMenuProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -50,6 +52,13 @@ export function HeaderMenu({ onViewArchived, hasArchived, onViewRequests, hasReq
         >
           Message requests
           {!hasRequests && <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--muted)' }}>(none found)</span>}
+        </button>
+        <button
+          className="header-menu-item"
+          role="menuitem"
+          onClick={() => { setOpen(false); onToggleSelectMode(); }}
+        >
+          {selectionModeActive ? 'Cancel selection' : 'Select chats'}
         </button>
       </div>
     </div>

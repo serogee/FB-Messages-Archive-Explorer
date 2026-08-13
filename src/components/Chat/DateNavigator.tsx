@@ -84,6 +84,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
   const [scale, setScale] = useState<DateScale>('month');
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [buckets, setBuckets] = useState<BucketsByScale>({ month: [], week: [], day: [] });
+  const [manualCollapse, setManualCollapse] = useState(false);
   const syncingRef = useRef(false);
   const sliderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -207,7 +208,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
   if (!hasDates) return null;
 
   return (
-    <div className={`date-nav-controls${hasDates ? ' active' : ''}`} id="dateNavControls">
+    <div className={`date-nav-controls${hasDates ? ' active' : ''}${manualCollapse && !_settings.autoCollapseDateNav ? ' manual-collapsed' : ''}`} id="dateNavControls">
       {/* Scale buttons */}
       <div className="date-nav-scale">
         {(['month', 'week', 'day'] as DateScale[]).map(s => (
@@ -247,7 +248,9 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
       {/* Current box */}
       <button
         className="date-nav-current-box"
-        disabled
+        disabled={_settings.autoCollapseDateNav}
+        onClick={() => { if (!_settings.autoCollapseDateNav) setManualCollapse(v => !v); }}
+        title={!_settings.autoCollapseDateNav ? (manualCollapse ? 'Show date navigator' : 'Hide date navigator') : ''}
         id="dateNavCurrentBox"
         aria-live="polite"
       >
@@ -256,7 +259,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
         </span>
       </button>
 
-      {/* Track — shown when header hovered (CSS handles auto-collapse) */}
+      {/* Track — shown when header hovered (CSS handles auto-collapse), or toggled manually */}
       {scale === 'month' ? (
         <div className="date-nav-track" id="dateNavTrack" ref={trackRef}>
           {currentBuckets.map(bucket => (

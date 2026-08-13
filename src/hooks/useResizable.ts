@@ -101,11 +101,11 @@ export function useResizable(options: UseResizableOptions): {
         ghost.style.left = `${Math.round(containerRect.left + pendingWidth + handle.offsetWidth / 2)}px`;
       } else {
         pendingWidth = clampWidth(
-          containerRect.right - handleCenter - handle.offsetWidth / 2 - 20,
+          containerRect.right - handleCenter - handle.offsetWidth / 2,
           minWidth, maxWidthAbsolute, maxWidthFraction
         );
         const ghost = getOrCreateGhostLine();
-        ghost.style.left = `${Math.round(containerRect.right - pendingWidth - handle.offsetWidth / 2 - 20)}px`;
+        ghost.style.left = `${Math.round(containerRect.right - pendingWidth - handle.offsetWidth / 2)}px`;
       }
     };
 
