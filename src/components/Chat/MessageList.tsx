@@ -133,20 +133,22 @@ const MessageChunk = React.memo(function MessageChunk({
         const chunkRect = chunkRef.current.getBoundingClientRect();
         const containerRect = container.getBoundingClientRect();
         
-        const isAtBottom = Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 10;
+        const isAtBottom = container.dataset.isAtBottom === 'true';
         
         let isAboveAnchor = false;
         if (isAtBottom) {
-          isAboveAnchor = true;
-        } else if (scrollDir === 'down') {
-          if (chunkRect.top < containerRect.top) isAboveAnchor = true;
-        } else {
-          if (chunkRect.top < containerRect.bottom) isAboveAnchor = true;
-        }
-
-        if (isAboveAnchor) {
-          container.scrollTop += delta;
+          container.scrollTop = container.scrollHeight;
           container.dataset.lastScrollTop = String(container.scrollTop);
+        } else {
+          if (scrollDir === 'down') {
+            if (chunkRect.top < containerRect.top) isAboveAnchor = true;
+          } else {
+            if (chunkRect.top < containerRect.bottom) isAboveAnchor = true;
+          }
+          if (isAboveAnchor) {
+            container.scrollTop += delta;
+            container.dataset.lastScrollTop = String(container.scrollTop);
+          }
         }
       }
     }
@@ -294,12 +296,16 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       if (st > lastSt) container.dataset.scrollDir = 'down';
       else if (st < lastSt) container.dataset.scrollDir = 'up';
       container.dataset.lastScrollTop = String(st);
+      
+      const isAtBottom = Math.abs(container.scrollHeight - st - container.clientHeight) < 20;
+      container.dataset.isAtBottom = String(isAtBottom);
     }
   }, [onScrollSync]);
 
   React.useLayoutEffect(() => {
     if (chatData && chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+      chatContainerRef.current.dataset.isAtBottom = 'true';
     }
   }, [chatData]);
 

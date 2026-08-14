@@ -94,20 +94,23 @@ function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, 
           const containerRect = container.getBoundingClientRect();
           const elRect = el.getBoundingClientRect();
           
-          const isAtBottom = Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 10;
+          const isAtBottom = container.dataset.isAtBottom === 'true';
 
           let isAboveAnchor = false;
           if (isAtBottom) {
-            isAboveAnchor = true; // Always adjust to stay stuck to bottom
-          } else if (scrollDir === 'down') {
-            if (elRect.top < containerRect.top) isAboveAnchor = true; // Anchor on top
-          } else {
-            if (elRect.top < containerRect.bottom) isAboveAnchor = true; // Anchor on bottom
-          }
-
-          if (isAboveAnchor) {
-            container.scrollTop += delta;
+            container.scrollTop = container.scrollHeight;
             container.dataset.lastScrollTop = String(container.scrollTop);
+          } else {
+            if (scrollDir === 'down') {
+              if (elRect.top < containerRect.top) isAboveAnchor = true; // Anchor on top
+            } else {
+              if (elRect.top < containerRect.bottom) isAboveAnchor = true; // Anchor on bottom
+            }
+
+            if (isAboveAnchor) {
+              container.scrollTop += delta;
+              container.dataset.lastScrollTop = String(container.scrollTop);
+            }
           }
         }
       }
