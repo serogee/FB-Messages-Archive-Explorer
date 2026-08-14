@@ -123,6 +123,35 @@ const MessageChunk = React.memo(function MessageChunk({
     return () => observer.disconnect();
   }, [rendered, chatContainerRef]);
 
+  React.useLayoutEffect(() => {
+    if (rendered && chunkRef.current && chatContainerRef.current) {
+      const actualHeight = chunkRef.current.offsetHeight;
+      const delta = actualHeight - estimatedHeight;
+      if (delta !== 0) {
+        const container = chatContainerRef.current;
+        const scrollDir = container.dataset.scrollDir || 'up';
+        const chunkRect = chunkRef.current.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        
+        const isAtBottom = Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 10;
+        
+        let isAboveAnchor = false;
+        if (isAtBottom) {
+          isAboveAnchor = true;
+        } else if (scrollDir === 'down') {
+          if (chunkRect.top < containerRect.top) isAboveAnchor = true;
+        } else {
+          if (chunkRect.top < containerRect.bottom) isAboveAnchor = true;
+        }
+
+        if (isAboveAnchor) {
+          container.scrollTop += delta;
+          container.dataset.lastScrollTop = String(container.scrollTop);
+        }
+      }
+    }
+  }, [rendered, estimatedHeight, chatContainerRef]);
+
 
 
   if (!rendered) {
@@ -216,8 +245,6 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-
-
   useImperativeHandle(ref, () => ({
     jumpToMessage: async (index: number) => {
       const container = chatContainerRef.current;
@@ -259,6 +286,15 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const handleScroll = useCallback(() => {
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     scrollTimerRef.current = setTimeout(onScrollSync, 80);
+
+    const container = chatContainerRef.current;
+    if (container) {
+      const st = container.scrollTop;
+      const lastSt = Number(container.dataset.lastScrollTop || st);
+      if (st > lastSt) container.dataset.scrollDir = 'down';
+      else if (st < lastSt) container.dataset.scrollDir = 'up';
+      container.dataset.lastScrollTop = String(st);
+    }
   }, [onScrollSync]);
 
   React.useLayoutEffect(() => {

@@ -1,4 +1,5 @@
 import type { MediaItem, MediaState, MediaEntry, MessengerMessage } from '../types/messenger';
+import { blobCache } from './blobCache';
 
 // ── Internal helpers ───────────────────────────────────────────────
 
@@ -70,6 +71,9 @@ export function findMediaFile(state: MediaState, path: string): MediaEntry | nul
 }
 
 export function revokeAllMedia(state: MediaState): void {
+  // Clear the global LRU cache — this revokes blob URLs tracked by the cache
+  blobCache.clear();
+  // Also revoke any blob URLs stored directly on state.files (legacy path)
   for (const url of Object.values(state.files)) {
     try { URL.revokeObjectURL(url); } catch { /* ignore */ }
   }

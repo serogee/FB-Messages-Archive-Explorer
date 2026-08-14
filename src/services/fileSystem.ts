@@ -1,5 +1,5 @@
 import type { ChatListEntry, MessengerThread } from '../types/messenger';
-import { parseMessengerJsonContent, mergeMessengerData, normalizeMessengerData, getOrderedMessageFileNames, getMessageTimestamp } from './parser';
+import { parseMessengerJsonContent, getOrderedMessageFileNames, getMessageTimestamp } from './parser';
 import { processMediaFromDirectory, createMediaState } from './media';
 import type { MediaState } from '../types/messenger';
 
@@ -154,43 +154,62 @@ export async function loadChatMessages(
   }
 
   const orderedNames = getOrderedMessageFileNames(fileNames);
-  const parsedFiles: MessengerThread[] = [];
-  const total = orderedNames.length;
-  let lastYield = performance.now();
+  if (!orderedNames.length) {
+    throw new Error('No readable message files found in this chat folder.');
+  }
 
+  const files: File[] = [];
   for (let i = 0; i < orderedNames.length; i++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const name = orderedNames[i];
     try {
       const fileHandle = await chatDirHandle.getFileHandle(name);
-      const file = await fileHandle.getFile();
-      const content = await file.text();
-      parsedFiles.push(parseMessengerJsonContent(content));
-    } catch { /* skip failed files */ }
-    
-    // Scale file reading to 85% of the total progress
-    onProgress?.(total > 0 ? (0.85 * (i + 1) / total) : 0, "Reading messages...");
-    
-    // Yield to the main thread based on time to maximize speed
-    if (performance.now() - lastYield > 16) {
-      await new Promise(r => setTimeout(r, 0));
-      lastYield = performance.now();
-    }
+      files.push(await fileHandle.getFile());
+    } catch { /* skip */ }
+    // Scanning files is fast, but update progress so user knows it's working
+    onProgress?.(0.05 * (i + 1) / orderedNames.length, "Preparing files...");
   }
 
-  if (!parsedFiles.length) {
+  if (!files.length) {
     throw new Error('No readable message files found in this chat folder.');
   }
 
-  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  onProgress?.(0.85, "Merging data...");
-  await new Promise(r => setTimeout(r, 10));
-  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  const merged = mergeMessengerData(parsedFiles);
-  
-  onProgress?.(0.90, "Sorting messages...");
-  await new Promise(r => setTimeout(r, 10));
-  return normalizeMessengerData(merged);
+  onProgress?.(0.10, "Processing data in background...");
+
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./parserWorker.ts', import.meta.url), { type: 'module' });
+    
+    const abortHandler = () => {
+      worker.terminate();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    
+    if (signal) {
+      if (signal.aborted) {
+        abortHandler();
+        return;
+      }
+      signal.addEventListener('abort', abortHandler);
+    }
+    
+    worker.onmessage = (e) => {
+      if (signal) signal.removeEventListener('abort', abortHandler);
+      if (e.data.type === 'success') {
+        resolve(e.data.data);
+      } else {
+        reject(new Error(e.data.error || 'Worker parsing failed'));
+      }
+      worker.terminate();
+    };
+    
+    worker.onerror = (e) => {
+      if (signal) signal.removeEventListener('abort', abortHandler);
+      reject(new Error(`Worker error: ${e.message}`));
+      worker.terminate();
+    };
+    
+    worker.postMessage({ files });
+  });
 }
 
 // ── Compute folder size ────────────────────────────────────────────

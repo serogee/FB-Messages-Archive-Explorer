@@ -66,7 +66,7 @@ export function useChat(): {
       const newMediaState = createMediaState();
       setMediaLoading(true);
       setMediaProgress(0);
-      const mediaPromise = processMediaFromDirectory(entry.dirHandle, newMediaState, (done, total) => {
+      processMediaFromDirectory(entry.dirHandle, newMediaState, (done, total) => {
         setMediaProgress(total > 0 ? done / total : 1);
       }, abortCtrl.signal)
         .then(() => {
@@ -90,19 +90,8 @@ export function useChat(): {
       if (abortCtrl.signal.aborted) return;
 
       setMsgProgress(0.95);
-      setMsgStatusText("Enriching data...");
+      setMsgStatusText("Loading messages...");
       await new Promise(r => setTimeout(r, 10));
-
-      // Enrich reaction timestamps (mutates in-place)
-      if (!data._reactionsEnriched) {
-        await enrichReactionTimestamps(
-          data.messages,
-          (progress) => setMsgProgress(0.95 + progress * 0.04),
-          abortCtrl.signal
-        );
-        if (abortCtrl.signal.aborted) return;
-        data._reactionsEnriched = true;
-      }
 
       // Set perspective — try stored, fall back to first participant
       const participants = getParticipantNames(data);
@@ -112,9 +101,24 @@ export function useChat(): {
         : (participants[0] || '');
       setSelectedPerspectiveState(perspective);
 
+      // Show messages immediately — enrich reactions in background
       setChatData(data);
       setLoading(false);
       setMsgProgress(1);
+
+      // Enrich reaction timestamps in background (deferred, non-blocking)
+      if (!data._reactionsEnriched) {
+        const enrichAbort = abortCtrl;
+        requestAnimationFrame(() => {
+          if (enrichAbort.signal.aborted) return;
+          enrichReactionTimestamps(data.messages, undefined, enrichAbort.signal)
+            .then(() => {
+              if (enrichAbort.signal.aborted) return;
+              data._reactionsEnriched = true;
+            })
+            .catch(() => { /* aborted or error, ignore */ });
+        });
+      }
 
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return;

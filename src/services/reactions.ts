@@ -58,7 +58,7 @@ export async function enrichReactionTimestamps(
 
     const msg = messages[index];
     const notice = parseReactionNotice(msg);
-    if (!notice || !notice.timestamp || !notice.reaction) return;
+    if (!notice || !notice.timestamp || !notice.reaction) continue;
 
     for (let i = index - 1; i >= 0; i--) {
       const target = messages[i];

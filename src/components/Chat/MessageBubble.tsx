@@ -2,6 +2,7 @@ import React, { memo, useState, useEffect, useRef } from 'react';
 import type { MessengerMessage, MediaState } from '../../types/messenger';
 import { getMessageTimestamp, fixEncoding } from '../../services/parser';
 import { findMediaFile, getMessageMediaItems, getMediaReferencePath, getMediaType } from '../../services/media';
+import { blobCache } from '../../services/blobCache';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
@@ -31,24 +32,38 @@ function getReactionTimeText(ts: number): string {
 }
 
 function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, mediaFile: ReturnType<typeof findMediaFile>, onMediaClick?: () => void }) {
-  const [fileURL, setFileURL] = useState<string | null>(mediaFile?.url || null);
-  const containerRef = useRef<HTMLElement>(null);
+  const [fileURL, setFileURL] = useState<string | null>(() => {
+    if (!mediaFile) return null;
+    return blobCache.get(mediaFile) || mediaFile.url || null;
+  });
+  const mediaRef = useRef<HTMLElement | null>(null);
+  const prevHeight = useRef<number | null>(null);
 
+  // 1. Intersection Observer for lazy loading
   useEffect(() => {
     let isMounted = true;
-    if (!mediaFile || mediaFile.url || !mediaFile.handle) return;
-    
-    const el = containerRef.current;
+    if (!mediaFile || !mediaFile.handle || fileURL) return;
+
+    const cached = blobCache.get(mediaFile);
+    if (cached) {
+      setFileURL(cached);
+      return;
+    }
+    if (mediaFile.url) {
+      blobCache.put(mediaFile, mediaFile.url);
+      setFileURL(mediaFile.url);
+      return;
+    }
+
+    const el = mediaRef.current;
     if (!el) return;
 
     const observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting) {
         observer.disconnect();
-        mediaFile.handle.getFile().then(file => {
-          const url = URL.createObjectURL(file);
-          mediaFile.url = url; // Cache it on the mediaFile object globally
-          if (isMounted) setFileURL(url);
-        }).catch(console.error);
+        blobCache.getOrCreate(mediaFile).then(url => {
+          if (isMounted && url) setFileURL(url);
+        });
       }
     }, { rootMargin: '500px' });
 
@@ -58,56 +73,92 @@ function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, 
       isMounted = false; 
       observer.disconnect();
     };
-  }, [mediaFile]);
+  }, [mediaFile, fileURL]);
+
+  // 2. Resize Observer for robust scroll anchoring
+  useEffect(() => {
+    const el = mediaRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const newHeight = entry.borderBoxSize ? entry.borderBoxSize[0].blockSize : entry.contentRect.height;
+      
+      const oldHeight = prevHeight.current;
+      if (oldHeight !== null && oldHeight !== newHeight) {
+        const delta = newHeight - oldHeight;
+        const container = el.closest('#chat') as HTMLElement;
+        
+        if (container) {
+          const scrollDir = container.dataset.scrollDir || 'up';
+          const containerRect = container.getBoundingClientRect();
+          const elRect = el.getBoundingClientRect();
+          
+          const isAtBottom = Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 10;
+
+          let isAboveAnchor = false;
+          if (isAtBottom) {
+            isAboveAnchor = true; // Always adjust to stay stuck to bottom
+          } else if (scrollDir === 'down') {
+            if (elRect.top < containerRect.top) isAboveAnchor = true; // Anchor on top
+          } else {
+            if (elRect.top < containerRect.bottom) isAboveAnchor = true; // Anchor on bottom
+          }
+
+          if (isAboveAnchor) {
+            container.scrollTop += delta;
+            container.dataset.lastScrollTop = String(container.scrollTop);
+          }
+        }
+      }
+      prevHeight.current = newHeight;
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []); // Empty dependency array: NEVER unbind, the wrapper is permanent
 
   const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
   const mediaType = ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath));
 
-  const handleMediaLoad = (e: React.SyntheticEvent<HTMLElement>) => {
-    const container = e.currentTarget.closest('#chat');
-    if (container) {
-      const mediaHeight = (e.currentTarget as HTMLElement).offsetHeight || 0;
-      // If we are within the media height + 200px of the bottom, stick to bottom on media load
-      const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + mediaHeight + 200;
-      if (isAtBottom) {
-        container.scrollTop = container.scrollHeight;
-      }
-    }
-  };
-
+  let content: React.ReactNode;
   if (mediaType === 'image') {
-    return fileURL
+    content = fileURL
       ? <div className="media-preview" onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
-          <img src={fileURL} alt="Image" className="preview" loading="lazy" onLoad={handleMediaLoad} />
+          <img src={fileURL} alt="Image" className="preview" />
         </div>
-      : <span ref={containerRef} className="placeholder">[ Image not found ]</span>;
-  }
-  if (mediaType === 'video') {
-    return fileURL
+      : <span className="placeholder">[ Image not found ]</span>;
+  } else if (mediaType === 'video') {
+    content = fileURL
       ? <div className="media-preview" onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
-          <video controls className="preview-video" onLoadedData={handleMediaLoad} onClick={(e) => { e.preventDefault(); onMediaClick?.(); }}>
+          <video controls className="preview-video" onClick={(e) => { e.preventDefault(); onMediaClick?.(); }}>
             <source src={fileURL} type="video/mp4" />
           </video>
         </div>
-      : <span ref={containerRef} className="placeholder">[ Video not found ]</span>;
-  }
-  if (mediaType === 'audio') {
-    return fileURL
+      : <span className="placeholder">[ Video not found ]</span>;
+  } else if (mediaType === 'audio') {
+    content = fileURL
       ? <div className="media-audio-wrap">
           <audio controls>
             <source src={fileURL} type="audio/mpeg" />
           </audio>
           {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} title="Open in viewer">⛶</button>}
         </div>
-      : <span ref={containerRef} className="placeholder">[ Audio not found ]</span>;
+      : <span className="placeholder">[ Audio not found ]</span>;
+  } else {
+    const filename = mediaPath.split('/').pop() || 'File attachment';
+    content = fileURL
+      ? <div className="media-file-link" onClick={onMediaClick} role="button" tabIndex={0} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: 'rgba(0,0,0,0.08)', borderRadius: '8px', textDecoration: 'none', color: 'inherit', fontWeight: '500', margin: '4px 0', fontSize: '14px', border: '1px solid rgba(0,0,0,0.1)', cursor: 'pointer' }}>
+          {filename}
+        </div>
+      : <span className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
   }
-  
-  const filename = mediaPath.split('/').pop() || 'File attachment';
-  return fileURL
-    ? <div className="media-file-link" onClick={onMediaClick} role="button" tabIndex={0} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: 'rgba(0,0,0,0.08)', borderRadius: '8px', textDecoration: 'none', color: 'inherit', fontWeight: '500', margin: '4px 0', fontSize: '14px', border: '1px solid rgba(0,0,0,0.1)', cursor: 'pointer' }}>
-        {filename}
-      </div>
-    : <span ref={containerRef} className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
+
+  return (
+    <div ref={mediaRef as React.RefObject<HTMLDivElement>} className="lazy-media-wrapper">
+      {content}
+    </div>
+  );
 }
 
 export const MessageBubble = memo(function MessageBubble({

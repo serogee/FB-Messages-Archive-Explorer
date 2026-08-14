@@ -1,8 +1,9 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
 import type { MessengerThread, MediaState, ResolvedAttachment } from '../../types/messenger';
 import type { Settings } from '../../hooks/useSettings';
 import { useAttachments, type AttachmentCategory } from '../../hooks/useAttachments';
 import { findMediaFile } from '../../services/media';
+import { blobCache } from '../../services/blobCache';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
 
 // Shared IntersectionObserver for all gallery thumbnails to avoid creating thousands of observers
@@ -117,8 +118,14 @@ function GalleryThumbnail({
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
     if (!entry) return;
 
-    // Non-video items with a cached URL: show immediately, no observer needed
-    if (entry.url && attachment.category !== 'videos') {
+    // Non-video items with a cached blob URL: show immediately, no observer needed
+    const cached = blobCache.get(entry);
+    if (cached && attachment.category !== 'videos') {
+      setUrl(cached);
+      return;
+    }
+    if (!cached && entry.url && attachment.category !== 'videos') {
+      blobCache.put(entry, entry.url);
       setUrl(entry.url);
       return;
     }
@@ -132,16 +139,15 @@ function GalleryThumbnail({
 
     observerCallbacks.set(el, {
       load: () => {
-        if (entry.url) {
-          if (isMounted) setUrl(entry.url);
+        const cachedUrl = blobCache.get(entry);
+        if (cachedUrl) {
+          if (isMounted) setUrl(cachedUrl);
           return;
         }
         if (!entry.handle) return;
-        entry.handle.getFile().then(file => {
-          const blobUrl = URL.createObjectURL(file);
-          entry.url = blobUrl;
-          if (isMounted) setUrl(blobUrl);
-        }).catch(() => {});
+        blobCache.getOrCreate(entry).then(blobUrl => {
+          if (isMounted && blobUrl) setUrl(blobUrl);
+        });
       },
       unload: () => {
         if (isMounted && attachment.category === 'videos') {
@@ -256,8 +262,9 @@ export function AttachmentGallery({
     }
   }, [defaultTab]);
 
-  // Reset observers when gallery unmounts so they get recreated with the correct root
-  useEffect(() => {
+  // Reset observers on mount/unmount.
+  // useLayoutEffect ensures reset runs BEFORE children's useEffect (which sets up observers).
+  useLayoutEffect(() => {
     resetObservers();
     return () => resetObservers();
   }, []);

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { ResolvedAttachment } from '../../types/messenger';
 import { findMediaFile } from '../../services/media';
+import { blobCache } from '../../services/blobCache';
 import type { MediaState } from '../../types/messenger';
 
 interface MediaViewerProps {
@@ -20,14 +21,17 @@ function useResolvedUrl(attachment: ResolvedAttachment | null, mediaState: Media
 
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
     if (!entry) { setUrl(null); return; }
-    if (entry.url) { setUrl(entry.url); return; }
+
+    // Check blob cache first, then entry.url
+    const cached = blobCache.get(entry);
+    if (cached) { setUrl(cached); return; }
+    if (entry.url) { blobCache.put(entry, entry.url); setUrl(entry.url); return; }
+
     if (entry.handle) {
       let cancelled = false;
-      entry.handle.getFile().then(file => {
-        const blobUrl = URL.createObjectURL(file);
-        entry.url = blobUrl;
+      blobCache.getOrCreate(entry).then(blobUrl => {
         if (!cancelled) setUrl(blobUrl);
-      }).catch(() => { if (!cancelled) setUrl(null); });
+      });
       return () => { cancelled = true; };
     }
     setUrl(null);

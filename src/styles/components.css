@@ -133,4 +133,92 @@
 .member-stat.selectable.selected { background: rgba(0,132,255,0.08); border-radius: 6px; }
 .member-chip.selectable.selected { background: var(--accent); color: white; border-color: var(--accent); }
 
+/* ── Error Boundary ─────────────────────────────────────────────── */
+.error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--text);
+}
 
+.error-boundary-card {
+  max-width: 480px;
+  width: 100%;
+  padding: 40px 32px;
+  border-radius: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  text-align: center;
+}
+
+.error-boundary-icon { font-size: 48px; margin-bottom: 16px; }
+
+.error-boundary-card h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+
+.error-boundary-message {
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: 24px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.error-boundary-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.error-boundary-btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: background 120ms, border-color 120ms;
+}
+
+.error-boundary-btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.error-boundary-btn-primary:hover { filter: brightness(1.1); }
+
+.error-boundary-btn-secondary {
+  background: var(--panel-bg);
+  color: var(--text);
+}
+.error-boundary-btn-secondary:hover { background: var(--hover-overlay); }
+
+.error-boundary-details {
+  text-align: left;
+  font-size: 12px;
+  color: var(--muted);
+}
+.error-boundary-details summary {
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.error-boundary-details pre {
+  max-height: 200px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

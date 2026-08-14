@@ -10,10 +10,23 @@ import './styles/sidebar.css';
 import './styles/modals.css';
 import './styles/media-viewer.css';
 import './styles/attachment-gallery.css';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
 
+// ── Global error handlers ──────────────────────────────────────────
+window.onerror = (_message, _source, _lineno, _colno, error) => {
+  console.error('[Global] Uncaught error:', error);
+};
+
+window.onunhandledrejection = (event: PromiseRejectionEvent) => {
+  console.error('[Global] Unhandled promise rejection:', event.reason);
+};
+
+// ── Render ─────────────────────────────────────────────────────────
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
