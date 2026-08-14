@@ -82,6 +82,17 @@ export interface AttachmentCounts {
   total: number;
 }
 
+// ── Resolved attachment (for media viewer / gallery) ───────────────
+
+export interface ResolvedAttachment {
+  mediaPath: string;
+  category: 'photos' | 'videos' | 'audio' | 'gifs' | 'files';
+  messageIndex: number;
+  timestamp: number;
+  sender: string;
+  mediaEntry: MediaEntry | null;
+}
+
 // ── Date navigator ─────────────────────────────────────────────────
 
 export type DateScale = 'month' | 'week' | 'day';

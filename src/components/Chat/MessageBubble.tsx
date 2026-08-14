@@ -18,6 +18,7 @@ interface MessageBubbleProps {
   msgIndex: number;
   isFirstInClump: boolean;
   isLastInClump: boolean;
+  onMediaClick?: (mediaPath: string, msgIndex: number) => void;
 }
 
 function formatTimestamp(ts: number): string {
@@ -29,7 +30,7 @@ function getReactionTimeText(ts: number): string {
   return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function LazyMedia({ mediaPath, mediaFile }: { mediaPath: string, mediaFile: ReturnType<typeof findMediaFile> }) {
+function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, mediaFile: ReturnType<typeof findMediaFile>, onMediaClick?: () => void }) {
   const [fileURL, setFileURL] = useState<string | null>(mediaFile?.url || null);
   const containerRef = useRef<HTMLElement>(null);
 
@@ -76,33 +77,36 @@ function LazyMedia({ mediaPath, mediaFile }: { mediaPath: string, mediaFile: Ret
 
   if (mediaType === 'image') {
     return fileURL
-      ? <a href={fileURL} target="_blank" rel="noreferrer" className="media-preview">
+      ? <div className="media-preview" onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
           <img src={fileURL} alt="Image" className="preview" loading="lazy" onLoad={handleMediaLoad} />
-        </a>
+        </div>
       : <span ref={containerRef} className="placeholder">[ Image not found ]</span>;
   }
   if (mediaType === 'video') {
     return fileURL
-      ? <a href={fileURL} target="_blank" rel="noreferrer" className="media-preview">
-          <video controls className="preview-video" onLoadedData={handleMediaLoad}>
+      ? <div className="media-preview" onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
+          <video controls className="preview-video" onLoadedData={handleMediaLoad} onClick={(e) => { e.preventDefault(); onMediaClick?.(); }}>
             <source src={fileURL} type="video/mp4" />
           </video>
-        </a>
+        </div>
       : <span ref={containerRef} className="placeholder">[ Video not found ]</span>;
   }
   if (mediaType === 'audio') {
     return fileURL
-      ? <audio controls>
-          <source src={fileURL} type="audio/mpeg" />
-        </audio>
+      ? <div className="media-audio-wrap">
+          <audio controls>
+            <source src={fileURL} type="audio/mpeg" />
+          </audio>
+          {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} title="Open in viewer">⛶</button>}
+        </div>
       : <span ref={containerRef} className="placeholder">[ Audio not found ]</span>;
   }
   
   const filename = mediaPath.split('/').pop() || 'File attachment';
   return fileURL
-    ? <a href={fileURL} target="_blank" rel="noreferrer" className="media-file-link" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: 'rgba(0,0,0,0.08)', borderRadius: '8px', textDecoration: 'none', color: 'inherit', fontWeight: '500', margin: '4px 0', fontSize: '14px', border: '1px solid rgba(0,0,0,0.1)' }}>
+    ? <div className="media-file-link" onClick={onMediaClick} role="button" tabIndex={0} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: 'rgba(0,0,0,0.08)', borderRadius: '8px', textDecoration: 'none', color: 'inherit', fontWeight: '500', margin: '4px 0', fontSize: '14px', border: '1px solid rgba(0,0,0,0.1)', cursor: 'pointer' }}>
         {filename}
-      </a>
+      </div>
     : <span ref={containerRef} className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
 }
 
@@ -117,6 +121,7 @@ export const MessageBubble = memo(function MessageBubble({
   msgIndex,
   isFirstInClump,
   isLastInClump,
+  onMediaClick,
 }: MessageBubbleProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -159,7 +164,7 @@ export const MessageBubble = memo(function MessageBubble({
             {mediaItems.map((media, i) => {
               const mediaPath = getMediaReferencePath(media);
               const mediaFile = findMediaFile(mediaState, mediaPath);
-              return <LazyMedia key={i} mediaPath={mediaPath} mediaFile={mediaFile} />;
+              return <LazyMedia key={i} mediaPath={mediaPath} mediaFile={mediaFile} onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined} />;
             })}
 
             {/* Reactions (Floating Bubble) */}

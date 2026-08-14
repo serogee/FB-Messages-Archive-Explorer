@@ -10,6 +10,7 @@ import { InfoPanel } from './components/InfoPanel/InfoPanel';
 import { TrustModal } from './components/Modals/TrustModal';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
 import type { ChatListEntry } from './types/messenger';
+import type { AttachmentCategory } from './hooks/useAttachments';
 
 export default function App() {
   const { settings, setSetting } = useSettings();
@@ -21,6 +22,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'chats' | 'settings'>('chats');
   const [deleteTarget, setDeleteTarget] = useState<ChatListEntry | ChatListEntry[] | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // Attachment gallery state
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryDefaultTab, setGalleryDefaultTab] = useState<AttachmentCategory>('all');
 
   // Resizable sidebar
   const { handleRef: sidebarHandleRef } = useResizable({
@@ -92,10 +97,11 @@ export default function App() {
     chatViewRef.current?.jumpToMessage(index);
   }, [chat, archive]);
 
-  // When chatData changes (new chat loaded), scroll to bottom
+  // When chatData changes (new chat loaded), scroll to bottom and close gallery
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {
     if (chat.chatData && chat.chatData !== prevChatDataRef.current) {
+      setGalleryOpen(false);
       if (pendingJumpIndexRef.current !== null) {
         const idx = pendingJumpIndexRef.current;
         pendingJumpIndexRef.current = null;
@@ -105,6 +111,12 @@ export default function App() {
     }
     prevChatDataRef.current = chat.chatData;
   }, [chat.chatData]);
+
+  // Gallery open handler (from InfoPanel)
+  const handleOpenGallery = useCallback((tab?: string) => {
+    setGalleryDefaultTab((tab as AttachmentCategory) || 'all');
+    setGalleryOpen(true);
+  }, []);
 
   return (
     <div className={`container ${settings.infoPanelOpen ? 'info-open' : ''}`}>
@@ -164,6 +176,9 @@ export default function App() {
         onToggleInfoPanel={() => setSetting('infoPanelOpen', !settings.infoPanelOpen as typeof settings.infoPanelOpen)}
         search={search}
         onSelectPerspective={chat.setSelectedPerspective}
+        galleryOpen={galleryOpen}
+        galleryDefaultTab={galleryDefaultTab}
+        onCloseGallery={() => setGalleryOpen(false)}
       />
 
       {/* Info panel resize handle */}
@@ -183,6 +198,7 @@ export default function App() {
           mediaState={chat.mediaState}
           selectedPerspective={chat.selectedPerspective}
           onSelectPerspective={chat.setSelectedPerspective}
+          onOpenGallery={handleOpenGallery}
         />
       )}
 

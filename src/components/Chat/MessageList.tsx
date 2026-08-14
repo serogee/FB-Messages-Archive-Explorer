@@ -22,6 +22,7 @@ interface MessageListProps {
   settings: Settings;
   highlightQuery: string;
   onScrollSync: () => void;
+  onMediaClick?: (mediaPath: string, msgIndex: number) => void;
 }
 
 export interface MessageListHandle {
@@ -82,6 +83,7 @@ interface MessageChunkProps {
   mediaState: MediaState;
   highlightQuery: string;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
+  onMediaClick?: (mediaPath: string, msgIndex: number) => void;
   forceRender?: boolean;
 }
 
@@ -95,6 +97,7 @@ const MessageChunk = React.memo(function MessageChunk({
   mediaState,
   highlightQuery,
   chatContainerRef,
+  onMediaClick,
   forceRender,
 }: MessageChunkProps) {
   const chunkRef = useRef<HTMLDivElement>(null);
@@ -194,6 +197,7 @@ const MessageChunk = React.memo(function MessageChunk({
         msgIndex={globalIdx}
         isFirstInClump={isFirstInClump}
         isLastInClump={isLastInClump}
+        onMediaClick={onMediaClick}
       />
     );
   });
@@ -206,7 +210,7 @@ const MessageChunk = React.memo(function MessageChunk({
 });
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(function MessageList(
-  { chatData, mediaState, selectedPerspective, settings, highlightQuery, onScrollSync },
+  { chatData, mediaState, selectedPerspective, settings, highlightQuery, onScrollSync, onMediaClick },
   ref
 ) {
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -283,6 +287,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
           mediaState={mediaState}
           highlightQuery={highlightQuery}
           chatContainerRef={chatContainerRef}
+          onMediaClick={onMediaClick}
           forceRender={i === chunks.length - 1}
         />
       ))}

@@ -72,6 +72,9 @@ export function useResizable(options: UseResizableOptions): {
       const ghost = getOrCreateGhostLine();
       ghost.classList.remove('active');
       applyWidth(pendingWidth, true);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -83,7 +86,10 @@ export function useResizable(options: UseResizableOptions): {
       ghost.style.left = `${Math.round(handleRect.left + handleRect.width / 2)}px`;
       ghost.classList.add('active');
       container?.classList.add('resizing');
-      handle.setPointerCapture(e.pointerId);
+      // Do not use setPointerCapture, bind directly to window for smoother dragging
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', stopResize);
+      window.addEventListener('pointercancel', stopResize);
       e.preventDefault();
     };
 
@@ -123,19 +129,16 @@ export function useResizable(options: UseResizableOptions): {
     };
 
     handle.addEventListener('pointerdown', onPointerDown);
-    handle.addEventListener('pointermove', onPointerMove);
-    handle.addEventListener('pointerup', stopResize);
-    handle.addEventListener('pointercancel', stopResize);
     handle.addEventListener('keydown', onKeyDown);
     window.addEventListener('resize', onWindowResize);
 
     return () => {
       handle.removeEventListener('pointerdown', onPointerDown);
-      handle.removeEventListener('pointermove', onPointerMove);
-      handle.removeEventListener('pointerup', stopResize);
-      handle.removeEventListener('pointercancel', stopResize);
       handle.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', onWindowResize);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
     };
   }, [applyWidth, minWidth, maxWidthAbsolute, maxWidthFraction, side]);
 

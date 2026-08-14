@@ -95,7 +95,12 @@ export function useChat(): {
 
       // Enrich reaction timestamps (mutates in-place)
       if (!data._reactionsEnriched) {
-        enrichReactionTimestamps(data.messages);
+        await enrichReactionTimestamps(
+          data.messages,
+          (progress) => setMsgProgress(0.95 + progress * 0.04),
+          abortCtrl.signal
+        );
+        if (abortCtrl.signal.aborted) return;
         data._reactionsEnriched = true;
       }
 

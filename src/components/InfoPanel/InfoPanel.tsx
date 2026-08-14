@@ -11,6 +11,7 @@ interface InfoPanelProps {
   mediaState: MediaState;
   selectedPerspective: string;
   onSelectPerspective: (name: string) => void;
+  onOpenGallery?: (tab?: string) => void;
 }
 
 interface MemberStat {
@@ -73,7 +74,7 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
   };
 }
 
-export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspective, onSelectPerspective }: InfoPanelProps) {
+export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery }: InfoPanelProps) {
   const stats = useMemo(() => {
     if (!chatData) return null;
     return computeStats(chatData.messages, mediaState);
@@ -118,16 +119,29 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
 
             {/* Section 2: Attachments */}
             <div className="info-section">
-              <strong>Attachments</strong>
+              <strong
+                className={onOpenGallery ? 'info-section-clickable' : ''}
+                onClick={() => onOpenGallery?.('all')}
+                role={onOpenGallery ? 'button' : undefined}
+                tabIndex={onOpenGallery ? 0 : undefined}
+                title="View all attachments"
+              >Attachments</strong>
               <div className="info-list">
                 {[
-                  { label: 'Photos', count: stats.attachments.photos },
-                  { label: 'Videos', count: stats.attachments.videos },
-                  { label: 'Audio', count: stats.attachments.audio },
-                  { label: 'GIFs', count: stats.attachments.gifs },
-                  { label: 'Files', count: stats.attachments.files },
-                ].map(({ label, count }: { label: string; count: number }) => (
-                  <div key={label} className="info-row">
+                  { label: 'Photos', count: stats.attachments.photos, tab: 'photos' },
+                  { label: 'Videos', count: stats.attachments.videos, tab: 'videos' },
+                  { label: 'Audio', count: stats.attachments.audio, tab: 'audio' },
+                  { label: 'GIFs', count: stats.attachments.gifs, tab: 'gifs' },
+                  { label: 'Files', count: stats.attachments.files, tab: 'files' },
+                ].map(({ label, count, tab }: { label: string; count: number; tab: string }) => (
+                  <div
+                    key={label}
+                    className={`info-row ${onOpenGallery ? 'info-row-clickable' : ''}`}
+                    onClick={() => onOpenGallery?.(tab)}
+                    role={onOpenGallery ? 'button' : undefined}
+                    tabIndex={onOpenGallery ? 0 : undefined}
+                    title={`View ${label.toLowerCase()}`}
+                  >
                     <span>{label}</span>
                     <span className="attachment-count">
                       {formatInfoNumber(count)}

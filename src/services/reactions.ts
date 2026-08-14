@@ -36,10 +36,27 @@ export function isReactionNoticeMessage(msg: MessengerMessage): boolean {
   return /^(?:.+?\s+)?reacted\s+.+?\s+to your message(?:[.:].*)?$/i.test(text);
 }
 
-export function enrichReactionTimestamps(messages: MessengerMessage[]): void {
+export async function enrichReactionTimestamps(
+  messages: MessengerMessage[],
+  onProgress?: (progress: number) => void,
+  signal?: AbortSignal
+): Promise<void> {
   if (!Array.isArray(messages)) return;
 
-  messages.forEach((msg, index) => {
+  let lastYieldTime = performance.now();
+  const total = messages.length;
+
+  for (let index = 0; index < total; index++) {
+    if (signal?.aborted) return;
+
+    if (performance.now() - lastYieldTime > 16) {
+      if (onProgress) onProgress(index / total);
+      await new Promise(r => setTimeout(r, 0));
+      lastYieldTime = performance.now();
+      if (signal?.aborted) return;
+    }
+
+    const msg = messages[index];
     const notice = parseReactionNotice(msg);
     if (!notice || !notice.timestamp || !notice.reaction) return;
 
@@ -68,7 +85,7 @@ export function enrichReactionTimestamps(messages: MessengerMessage[]): void {
         break;
       }
     }
-  });
+  }
 }
 
 export function getReactionTimestamp(reaction: Reaction): number {

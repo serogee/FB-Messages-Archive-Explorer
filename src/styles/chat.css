@@ -473,3 +473,32 @@ img, video { max-width:100%; border-radius:10px; margin:5px; cursor:pointer; tra
 .highlight-target { box-shadow:0 0 0 3px rgba(24,119,242,0.15); border-radius:12px; }
 .temporary-highlight { animation: highlightFlash 2s ease both; }
 @keyframes highlightFlash { from{ box-shadow:0 0 0 6px rgba(24,119,242,0.25);} to{ box-shadow:0 0 0 0 rgba(24,119,242,0);} }
+
+/* Clickable info panel rows */
+.info-section-clickable { cursor: pointer; transition: color 0.15s; }
+.info-section-clickable:hover { color: var(--accent); }
+.info-row-clickable { cursor: pointer; padding: 6px 8px; margin: -6px -8px; border-radius: 6px; transition: background 0.15s; }
+.info-row-clickable:hover { background: var(--hover-overlay); }
+
+/* Audio wrap with expand button */
+.media-audio-wrap { display: flex; align-items: center; gap: 6px; }
+.media-audio-expand {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 6px;
+    background: rgba(0,0,0,0.05);
+    color: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+    font: inherit;
+    font-size: 14px;
+}
+.media-audio-expand:hover { background: rgba(0,0,0,0.1); }
+.dark .media-audio-expand { border-color: rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); }
+.dark .media-audio-expand:hover { background: rgba(255,255,255,0.1); }

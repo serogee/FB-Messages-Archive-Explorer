@@ -1,0 +1,76 @@
+import { useMemo } from 'react';
+import type { MessengerThread, MediaState, ResolvedAttachment } from '../types/messenger';
+import { getMessageAttachmentReferences, findMediaFile } from '../services/media';
+import { getMessageTimestamp } from '../services/parser';
+import { isReactionNoticeMessage } from '../services/reactions';
+
+export type AttachmentCategory = 'all' | 'photos' | 'videos' | 'audio' | 'gifs' | 'files';
+
+export function useAttachments(
+  chatData: MessengerThread | null,
+  mediaState: MediaState
+): {
+  all: ResolvedAttachment[];
+  byCategory: Record<Exclude<AttachmentCategory, 'all'>, ResolvedAttachment[]>;
+  getFiltered: (category: AttachmentCategory) => ResolvedAttachment[];
+  findIndex: (mediaPath: string, messageIndex: number) => number;
+} {
+  const all = useMemo<ResolvedAttachment[]>(() => {
+    if (!chatData) return [];
+
+    const result: ResolvedAttachment[] = [];
+    const seen = new Set<string>();
+
+    for (let i = 0; i < chatData.messages.length; i++) {
+      const msg = chatData.messages[i];
+      if (isReactionNoticeMessage(msg)) continue;
+
+      const ts = getMessageTimestamp(msg) || 0;
+      const refs = getMessageAttachmentReferences(msg);
+
+      for (const { path, category } of refs) {
+        const key = `${category}:${path.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        result.push({
+          mediaPath: path,
+          category: category as ResolvedAttachment['category'],
+          messageIndex: i,
+          timestamp: ts,
+          sender: msg.senderName || msg.sender_name || 'Unknown',
+          mediaEntry: findMediaFile(mediaState, path),
+        });
+      }
+    }
+
+    return result;
+  }, [chatData, mediaState]);
+
+  const byCategory = useMemo(() => {
+    const groups: Record<Exclude<AttachmentCategory, 'all'>, ResolvedAttachment[]> = {
+      photos: [],
+      videos: [],
+      audio: [],
+      gifs: [],
+      files: [],
+    };
+    for (const att of all) {
+      groups[att.category].push(att);
+    }
+    return groups;
+  }, [all]);
+
+  const getFiltered = (category: AttachmentCategory): ResolvedAttachment[] => {
+    return category === 'all' ? all : byCategory[category];
+  };
+
+  const findIndex = (mediaPath: string, messageIndex: number): number => {
+    const pathLower = mediaPath.toLowerCase();
+    return all.findIndex(
+      a => a.mediaPath.toLowerCase() === pathLower && a.messageIndex === messageIndex
+    );
+  };
+
+  return { all, byCategory, getFiltered, findIndex };
+}
