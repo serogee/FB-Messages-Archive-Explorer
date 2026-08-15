@@ -114,7 +114,7 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      {selectionMode && (
+      {selectionMode && entry.archiveFormat !== 'flat' && (
         <div className="chat-item-checkbox">
           <input 
             type="checkbox" 
@@ -162,7 +162,7 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
                 >
                   Copy folder path
                 </button>
-                {deletionEnabled && (
+                {deletionEnabled && entry.archiveFormat !== 'flat' && (
                   <button
                     className="danger"
                     onClick={e => { e.stopPropagation(); setDropdownOpen(false); onDelete(); }}

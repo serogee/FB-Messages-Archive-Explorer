@@ -4,11 +4,12 @@ import {
   pickMessagesFolder,
   pickFolderWithWriteAccess,
   listChatFolders,
+  listFlatChatFiles,
   computeFolderSize,
   deleteChat as deleteChatFs,
 } from '../services/fileSystem';
 
-async function resolveMessagesRoot(handle: FileSystemDirectoryHandle): Promise<FileSystemDirectoryHandle | null> {
+async function resolveMessagesRoot(handle: FileSystemDirectoryHandle): Promise<{ handle: FileSystemDirectoryHandle, format: 'nested' | 'flat' } | null> {
   const commonPaths = [
     [], // Maybe they selected 'messages' directly
     ['messages'], // E.g. inside facebook-xyz folder
@@ -22,13 +23,20 @@ async function resolveMessagesRoot(handle: FileSystemDirectoryHandle): Promise<F
       for (const segment of path) {
         current = await current.getDirectoryHandle(segment);
       }
-      // Check if it's the right place by looking for inbox or archived_threads
-      let isValid = false;
-      try { await current.getDirectoryHandle('inbox'); isValid = true; } catch {}
-      if (!isValid) {
-        try { await current.getDirectoryHandle('archived_threads'); isValid = true; } catch {}
+      // Check if it's the nested format by looking for inbox or archived_threads
+      let isValidNested = false;
+      try { await current.getDirectoryHandle('inbox'); isValidNested = true; } catch {}
+      if (!isValidNested) {
+        try { await current.getDirectoryHandle('archived_threads'); isValidNested = true; } catch {}
       }
-      if (isValid) return current;
+      if (isValidNested) return { handle: current, format: 'nested' };
+      
+      // Check if it's the flat format by looking for .json files
+      for await (const [name, entry] of current.entries()) {
+        if (entry.kind === 'file' && name.toLowerCase().endsWith('.json')) {
+          return { handle: current, format: 'flat' };
+        }
+      }
     } catch {
       // Path doesn't exist, try next
     }
@@ -102,75 +110,90 @@ export function useArchive(): {
     try {
       const handle = requestWrite ? await pickFolderWithWriteAccess() : await pickMessagesFolder();
       
-      const messagesRoot = await resolveMessagesRoot(handle);
-      if (!messagesRoot) {
+      const resolved = await resolveMessagesRoot(handle);
+      if (!resolved) {
         throw new Error("Could not find messages in this folder. Make sure you selected an extracted Facebook archive.");
       }
+      const messagesRoot = resolved.handle;
+      const format = resolved.format;
 
       setOriginalRootHandle(handle);
       setRootHandle(messagesRoot);
 
-      const progresses = [
-        { done: 0, total: 0 },
-        { done: 0, total: 0 },
-        { done: 0, total: 0 },
-        { done: 0, total: 0 }
-      ];
-      const updateProgress = (idx: number, done: number, total: number) => {
-        progresses[idx] = { done, total };
-        let sumDone = 0;
-        let sumTotal = 0;
-        for (const p of progresses) {
-          sumDone += p.done;
-          sumTotal += p.total;
-        }
-        setLoadProgress({ done: sumDone, total: sumTotal });
-      };
+      if (format === 'flat') {
+        const progresses = [{ done: 0, total: 0 }];
+        const updateProgress = (idx: number, done: number, total: number) => {
+          progresses[idx] = { done, total };
+          setLoadProgress({ done: progresses[0].done, total: progresses[0].total });
+        };
+        const flatChats = await listFlatChatFiles(messagesRoot, (d, t) => updateProgress(0, d, t));
+        setInboxList(flatChats);
+        setArchivedList([]);
+        setRequestsList([]);
+        setSizeProgress(null);
+      } else {
+        const progresses = [
+          { done: 0, total: 0 },
+          { done: 0, total: 0 },
+          { done: 0, total: 0 },
+          { done: 0, total: 0 }
+        ];
+        const updateProgress = (idx: number, done: number, total: number) => {
+          progresses[idx] = { done, total };
+          let sumDone = 0;
+          let sumTotal = 0;
+          for (const p of progresses) {
+            sumDone += p.done;
+            sumTotal += p.total;
+          }
+          setLoadProgress({ done: sumDone, total: sumTotal });
+        };
 
-      const [inbox, archived, requests, e2ee] = await Promise.all([
-        listChatFolders(messagesRoot, 'inbox', 'inbox', (d, t) => updateProgress(0, d, t)),
-        listChatFolders(messagesRoot, 'archived_threads', 'archived', (d, t) => updateProgress(1, d, t)),
-        listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t)),
-        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t)),
-      ]);
-      const mergedInbox = [...inbox, ...e2ee].sort((a, b) => {
-        if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
-        if (a.lastTimestamp == null) return 1;
-        if (b.lastTimestamp == null) return -1;
-        return b.lastTimestamp - a.lastTimestamp;
-      });
-      setInboxList(mergedInbox);
-      setArchivedList(archived);
-      setRequestsList(requests);
-      
-      const sizeProgresses = [
-        { done: 0, total: mergedInbox.length },
-        { done: 0, total: archived.length },
-        { done: 0, total: requests.length }
-      ];
-      const totalSizeToCompute = mergedInbox.length + archived.length + requests.length;
-      if (totalSizeToCompute > 0) {
-        setSizeProgress({ done: 0, total: totalSizeToCompute });
+        const [inbox, archived, requests, e2ee] = await Promise.all([
+          listChatFolders(messagesRoot, 'inbox', 'inbox', (d, t) => updateProgress(0, d, t)),
+          listChatFolders(messagesRoot, 'archived_threads', 'archived', (d, t) => updateProgress(1, d, t)),
+          listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t)),
+          listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t)),
+        ]);
+        const mergedInbox = [...inbox, ...e2ee].sort((a, b) => {
+          if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
+          if (a.lastTimestamp == null) return 1;
+          if (b.lastTimestamp == null) return -1;
+          return b.lastTimestamp - a.lastTimestamp;
+        });
+        setInboxList(mergedInbox);
+        setArchivedList(archived);
+        setRequestsList(requests);
+        
+        const sizeProgresses = [
+          { done: 0, total: mergedInbox.length },
+          { done: 0, total: archived.length },
+          { done: 0, total: requests.length }
+        ];
+        const totalSizeToCompute = mergedInbox.length + archived.length + requests.length;
+        if (totalSizeToCompute > 0) {
+          setSizeProgress({ done: 0, total: totalSizeToCompute });
+        }
+
+        const updateSizeProgress = (idx: number, done: number) => {
+          sizeProgresses[idx].done = done;
+          let sumDone = 0;
+          let sumTotal = 0;
+          for (const p of sizeProgresses) {
+            sumDone += p.done;
+            sumTotal += p.total;
+          }
+          if (sumDone === sumTotal) {
+            setSizeProgress(null);
+          } else {
+            setSizeProgress({ done: sumDone, total: sumTotal });
+          }
+        };
+
+        startLazySizeComputation(mergedInbox, setInboxList, (d) => updateSizeProgress(0, d));
+        startLazySizeComputation(archived, setArchivedList, (d) => updateSizeProgress(1, d));
+        startLazySizeComputation(requests, setRequestsList, (d) => updateSizeProgress(2, d));
       }
-
-      const updateSizeProgress = (idx: number, done: number) => {
-        sizeProgresses[idx].done = done;
-        let sumDone = 0;
-        let sumTotal = 0;
-        for (const p of sizeProgresses) {
-          sumDone += p.done;
-          sumTotal += p.total;
-        }
-        if (sumDone === sumTotal) {
-          setSizeProgress(null);
-        } else {
-          setSizeProgress({ done: sumDone, total: sumTotal });
-        }
-      };
-
-      startLazySizeComputation(mergedInbox, setInboxList, (d) => updateSizeProgress(0, d));
-      startLazySizeComputation(archived, setArchivedList, (d) => updateSizeProgress(1, d));
-      startLazySizeComputation(requests, setRequestsList, (d) => updateSizeProgress(2, d));
     } catch (e: unknown) {
       // User cancelled the picker — not an error worth surfacing
       if (e instanceof Error && e.name !== 'AbortError') {
@@ -196,6 +219,7 @@ export function useArchive(): {
 
   const deleteChat = useCallback(async (entry: ChatListEntry) => {
     if (!rootHandle) throw new Error('No folder open');
+    if (entry.archiveFormat === 'flat') throw new Error('Delete not supported for flat format');
     const subfolderName =
       entry.source === 'inbox'    ? 'inbox' :
       entry.source === 'requests' ? 'message_requests' :
@@ -213,6 +237,7 @@ export function useArchive(): {
 
   const deleteChats = useCallback(async (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => {
     if (!rootHandle) throw new Error('No folder open');
+    if (entries.some(e => e.archiveFormat === 'flat')) throw new Error('Delete not supported for flat format');
     
     const foldersToRemove = new Set(entries.map(e => e.folderName));
     

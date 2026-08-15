@@ -243,3 +243,151 @@ export async function loadChatMedia(
   await processMediaFromDirectory(chatDirHandle, state);
   return state;
 }
+
+// ── Flat Format Support ─────────────────────────────────────────────
+
+export async function listFlatChatFiles(
+  parentHandle: FileSystemDirectoryHandle,
+  onProgress?: (done: number, total: number) => void
+): Promise<ChatListEntry[]> {
+  const entries: ChatListEntry[] = [];
+  const fileHandles: { name: string; handle: FileSystemFileHandle }[] = [];
+
+  for await (const [name, handle] of parentHandle.entries()) {
+    if (handle.kind === 'file' && name.toLowerCase().endsWith('.json')) {
+      fileHandles.push({ name, handle: handle as FileSystemFileHandle });
+    }
+  }
+
+  const total = fileHandles.length;
+  if (onProgress) onProgress(0, total);
+
+  let sharedMediaHandle: FileSystemDirectoryHandle | undefined;
+  try {
+    sharedMediaHandle = await parentHandle.getDirectoryHandle('media');
+  } catch {
+    // Might not exist or be named differently, skip
+  }
+
+  for (let i = 0; i < fileHandles.length; i++) {
+    const { name, handle: fileHandle } = fileHandles[i];
+
+    try {
+      const file = await fileHandle.getFile();
+      const content = await file.text();
+      const parsed = parseMessengerJsonContent(content);
+
+      const participants = (parsed.participants || []).map(p => p.name).filter(Boolean);
+
+      const msgs = parsed.messages || [];
+      const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+      const isGroup = participants.length > 2;
+
+      let lastMessage: string | undefined;
+      if (lastMsg) {
+        const textContent = ((lastMsg.content || lastMsg.text || '') as string).trim();
+        const senderFull = (lastMsg.senderName || lastMsg.sender_name || '').trim();
+        const firstName = senderFull.split(/\s+/)[0] || senderFull;
+
+        if (textContent) {
+          lastMessage = isGroup ? `${firstName}: ${textContent.slice(0, 100)}` : textContent.slice(0, 100);
+        } else {
+          const attachType =
+            (lastMsg.photos?.length) ? 'an image' :
+            (lastMsg.videos?.length) ? 'a video' :
+            (lastMsg.audio?.length || lastMsg.audio_files?.length) ? 'an audio message' :
+            (lastMsg.gifs?.length) ? 'a GIF' :
+            (lastMsg.files?.length) ? 'a file' :
+            (lastMsg.media?.length) ? 'an attachment' : null;
+          if (attachType) {
+            lastMessage = isGroup ? `${firstName} sent ${attachType}` : `Sent ${attachType}`;
+          }
+        }
+      }
+      const lastTimestamp = lastMsg ? getMessageTimestamp(lastMsg) ?? undefined : undefined;
+
+      entries.push({
+        folderName: name, // Use filename as folderName for unique ID
+        title: parsed.title || name,
+        participants,
+        lastMessage,
+        lastTimestamp,
+        messageCount: msgs.length,
+        folderSize: file.size, // For flat format, use file size
+        dirHandle: parentHandle,
+        jsonFileCount: 1,
+        source: 'inbox',
+        jsonFileName: name,
+        sharedMediaHandle,
+        archiveFormat: 'flat',
+      });
+    } catch {
+      // Skip unreadable files
+    }
+
+    if (onProgress) onProgress(i + 1, total);
+    if (i % 5 === 0) {
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  entries.sort((a, b) => {
+    if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
+    if (a.lastTimestamp == null) return 1;
+    if (b.lastTimestamp == null) return -1;
+    return b.lastTimestamp - a.lastTimestamp;
+  });
+
+  return entries;
+}
+
+export async function loadFlatChatMessage(
+  dirHandle: FileSystemDirectoryHandle,
+  jsonFileName: string,
+  onProgress?: (progress: number, statusText: string) => void,
+  signal?: AbortSignal
+): Promise<MessengerThread> {
+  await new Promise(r => setTimeout(r, 10));
+  onProgress?.(0, "Reading file...");
+
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const fileHandle = await dirHandle.getFileHandle(jsonFileName);
+  const file = await fileHandle.getFile();
+  
+  onProgress?.(0.5, "Processing data...");
+  
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./parserWorker.ts', import.meta.url), { type: 'module' });
+    
+    const abortHandler = () => {
+      worker.terminate();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    
+    if (signal) {
+      if (signal.aborted) {
+        abortHandler();
+        return;
+      }
+      signal.addEventListener('abort', abortHandler);
+    }
+    
+    worker.onmessage = (e) => {
+      if (signal) signal.removeEventListener('abort', abortHandler);
+      if (e.data.type === 'success') {
+        resolve(e.data.data);
+      } else {
+        reject(new Error(e.data.error || 'Worker parsing failed'));
+      }
+      worker.terminate();
+    };
+    
+    worker.onerror = (e) => {
+      if (signal) signal.removeEventListener('abort', abortHandler);
+      reject(new Error(`Worker error: ${e.message}`));
+      worker.terminate();
+    };
+    
+    worker.postMessage({ files: [file] });
+  });
+}

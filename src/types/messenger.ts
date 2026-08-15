@@ -69,6 +69,12 @@ export interface ChatListEntry {
   dirHandle: FileSystemDirectoryHandle;
   jsonFileCount: number;
   source: 'inbox' | 'archived' | 'requests' | 'e2ee';
+  /** For flat format: the JSON filename (e.g. "Chatname_123.json") */
+  jsonFileName?: string;
+  /** For flat format: handle to the shared media/ folder */
+  sharedMediaHandle?: FileSystemDirectoryHandle;
+  /** Which archive format this entry belongs to */
+  archiveFormat?: 'nested' | 'flat';
 }
 
 // ── Attachment counts ──────────────────────────────────────────────

@@ -67,16 +67,27 @@ function normalizeDisplayEncoding(data: MessengerThread): MessengerThread {
 // ── Parse a single JSON file ───────────────────────────────────────
 
 export function parseMessengerJsonContent(content: string): MessengerThread {
-  let data: MessengerThread;
+  let data: any;
   try {
     data = JSON.parse(content);
   } catch {
     data = JSON.parse(decodeLegacyMessengerJsonContent(content));
   }
-  if (content.includes('"thread_path"')) {
+  
+  // Normalize flat format
+  if (data.threadName && !data.thread_path) {
+    data.title = data.threadName;
+    data.thread_path = `inbox/${data.threadName}`; // synthetic
+    
+    // Normalize participants from string[] to { name: string }[]
+    if (Array.isArray(data.participants) && data.participants.length > 0 && typeof data.participants[0] === 'string') {
+      data.participants = data.participants.map((name: string) => ({ name }));
+    }
+  } else if (content.includes('"thread_path"')) {
     data.messages = (data.messages || []).reverse();
   }
-  return normalizeDisplayEncoding(data);
+  
+  return normalizeDisplayEncoding(data as MessengerThread);
 }
 
 // ── Get message file number ────────────────────────────────────────

@@ -184,3 +184,59 @@ export async function processMediaFromDirectory(
     }
   }
 }
+
+export async function processMediaFromFlatDirectory(
+  dirHandle: FileSystemDirectoryHandle,
+  state: MediaState,
+  onProgress?: (done: number, total: number) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const BATCH_SIZE = 20;
+  const fileHandles: Array<{ handle: FileSystemFileHandle; path: string }> = [];
+
+  let lastYield = performance.now();
+
+  try {
+    for await (const [name, entry] of dirHandle.entries()) {
+      if (signal?.aborted) return;
+      if (entry.kind === 'file') {
+        fileHandles.push({
+          handle: entry as FileSystemFileHandle,
+          path: `./media/${name}`,
+        });
+      }
+      if (performance.now() - lastYield > 16) {
+        await new Promise(r => setTimeout(r, 0));
+        lastYield = performance.now();
+      }
+    }
+  } catch {
+    // Directory unreadable or error
+  }
+
+  if (signal?.aborted) return;
+  const total = fileHandles.length;
+  let done = 0;
+  onProgress?.(0, total);
+
+  for (let i = 0; i < fileHandles.length; i += BATCH_SIZE) {
+    if (signal?.aborted) return;
+    const batch = fileHandles.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async ({ handle, path }) => {
+        try {
+          const type = getMediaType(handle.name);
+          const entry: MediaEntry = { handle, type };
+          state.types[path] = type;
+          addMediaToIndex(state, path, entry);
+        } catch { /* ignore individual failures */ }
+        done++;
+        onProgress?.(done, total);
+      })
+    );
+    if (performance.now() - lastYield > 16) {
+      await new Promise(r => setTimeout(r, 0));
+      lastYield = performance.now();
+    }
+  }
+}
