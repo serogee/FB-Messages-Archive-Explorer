@@ -4,7 +4,6 @@ import { buildSearchIndex, performSearch } from '../services/search';
 import { isReactionNoticeMessage } from '../services/reactions';
 import { loadChatMessages } from '../services/fileSystem';
 
-// Global cache for wide search to persist across component re-renders
 const globalWideIndexCache = new Map<string, SearchIndexEntry[]>();
 
 export function useSearch(
@@ -27,7 +26,6 @@ export function useSearch(
   const [progress, setProgress] = useState(0);
   const [isWideSearch, setIsWideSearch] = useState(false);
 
-  // Cache the narrow search index for the current chat
   const indexCacheRef = useRef<{ data: MessengerThread | null; index: SearchIndexEntry[] }>({
     data: null,
     index: [],
@@ -35,10 +33,9 @@ export function useSearch(
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Rebuild cache when chatData changes
   useEffect(() => {
     if (chatData !== indexCacheRef.current.data) {
-      indexCacheRef.current = { data: chatData, index: [] }; // reset, build lazily on search
+      indexCacheRef.current = { data: chatData, index: [] };
     }
   }, [chatData]);
 
@@ -59,12 +56,10 @@ export function useSearch(
 
     try {
       if (!isWideSearch) {
-        // Narrow search: current chat only
         if (!chatData?.messages) {
           setIsSearching(false);
           return;
         }
-        // Build/reuse index
         if (indexCacheRef.current.data !== chatData || !indexCacheRef.current.index.length) {
           indexCacheRef.current = {
             data: chatData,
@@ -76,7 +71,6 @@ export function useSearch(
         if (signal.aborted) return;
         setResults(found);
       } else {
-        // Wide search: all chats in archive
         const allResults: SearchResult[] = [];
         const total = archiveList.length;
 
@@ -93,7 +87,7 @@ export function useSearch(
             }
             const found = await performSearch(searchQuery, index, undefined, signal);
             if (signal.aborted) return;
-            // Annotate results with chat info
+            
             found.forEach(r => {
               allResults.push({
                 item: {
@@ -113,7 +107,6 @@ export function useSearch(
       }
     } catch (e: any) {
       if (e.name === 'AbortError') {
-        // Ignored, search aborted
         return;
       }
       console.error(e);

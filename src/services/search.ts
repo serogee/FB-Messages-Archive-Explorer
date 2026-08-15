@@ -153,7 +153,6 @@ export async function performSearch(
       results.push({ item });
     }
 
-    // Check elapsed time periodically to avoid excessive performance.now() calls
     if (i % 500 === 0) {
       const now = performance.now();
       if (now - lastYieldTime > YIELD_INTERVAL_MS) {

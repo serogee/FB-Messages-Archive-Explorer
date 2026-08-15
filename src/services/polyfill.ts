@@ -76,7 +76,6 @@ export function createVirtualFileSystem(files: FileList | File[]): FileSystemDir
     
     let currentDir = root;
     
-    // Traverse/create directories
     for (let j = 0; j < parts.length - 1; j++) {
       const part = parts[j];
       let nextDir = currentDir['children'].get(part);
@@ -89,7 +88,6 @@ export function createVirtualFileSystem(files: FileList | File[]): FileSystemDir
       currentDir = nextDir as VirtualDirectoryHandle;
     }
     
-    // Create file node
     const fileName = parts[parts.length - 1];
     currentDir.addChild(fileName, new VirtualFileHandle(fileName, file));
   }

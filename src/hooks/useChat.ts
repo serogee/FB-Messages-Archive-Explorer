@@ -53,16 +53,13 @@ export function useChat(): {
     const abortCtrl = new AbortController();
     mediaAbortControllerRef.current = abortCtrl;
 
-    // Yield to let React paint the selected highlight and clear the old chat
     await new Promise(r => setTimeout(r, 10));
     try {
-      // Revoke previous media
       setMediaState(prev => {
         revokeAllMedia(prev);
         return createMediaState();
       });
 
-      // Start media loading concurrently in the background
       const newMediaState = createMediaState();
       setMediaLoading(true);
       setMediaProgress(0);
@@ -81,7 +78,6 @@ export function useChat(): {
           setMediaProgress(1);
         });
 
-      // Load messages with progress (await this)
       const data = await loadChatMessages(entry.dirHandle, (progress, statusText) => {
         setMsgProgress(progress);
         setMsgStatusText(statusText);
@@ -93,7 +89,6 @@ export function useChat(): {
       setMsgStatusText("Loading messages...");
       await new Promise(r => setTimeout(r, 10));
 
-      // Set perspective — try stored, fall back to first participant
       const participants = getParticipantNames(data);
       const stored = storageGet('selectedPerspective');
       const perspective = (stored && participants.includes(stored))
@@ -101,12 +96,10 @@ export function useChat(): {
         : (participants[0] || '');
       setSelectedPerspectiveState(perspective);
 
-      // Show messages immediately — enrich reactions in background
       setChatData(data);
       setLoading(false);
       setMsgProgress(1);
-
-      // Enrich reaction timestamps in background (deferred, non-blocking)
+      
       if (!data._reactionsEnriched) {
         const enrichAbort = abortCtrl;
         requestAnimationFrame(() => {

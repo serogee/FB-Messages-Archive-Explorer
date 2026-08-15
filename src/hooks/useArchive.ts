@@ -64,7 +64,6 @@ export function useArchive(): {
   const [sizeProgress, setSizeProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Keep a ref to current lists so lazy size computation always works with latest state
   const inboxListRef = useRef<ChatListEntry[]>([]);
   const archivedListRef = useRef<ChatListEntry[]>([]);
   const requestsListRef = useRef<ChatListEntry[]>([]);
@@ -73,7 +72,6 @@ export function useArchive(): {
   requestsListRef.current = requestsList;
 
   const startLazySizeComputation = useCallback((entries: ChatListEntry[], setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>, onProgress?: (done: number) => void) => {
-    // Process one folder at a time with a small delay to avoid blocking UI
     let done = 0;
     if (entries.length === 0 && onProgress) {
       onProgress(0);
@@ -112,7 +110,6 @@ export function useArchive(): {
       setOriginalRootHandle(handle);
       setRootHandle(messagesRoot);
 
-      // Track progress across the 4 folders
       const progresses = [
         { done: 0, total: 0 },
         { done: 0, total: 0 },
@@ -136,7 +133,6 @@ export function useArchive(): {
         listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t)),
         listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t)),
       ]);
-      // Merge e2ee into inbox and re-sort by lastTimestamp descending
       const mergedInbox = [...inbox, ...e2ee].sort((a, b) => {
         if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
         if (a.lastTimestamp == null) return 1;

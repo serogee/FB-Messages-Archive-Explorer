@@ -55,13 +55,11 @@ export async function listChatFolders(
     const { name, handle: chatDir } = handles[i];
 
     try {
-      // Read message_1.json header
       const fileHandle = await chatDir.getFileHandle('message_1.json');
       const file = await fileHandle.getFile();
       const content = await file.text();
       const parsed = parseMessengerJsonContent(content);
 
-      // Extract participants
       const participants = (parsed.participants || []).map(p => p.name).filter(Boolean);
 
       // Last message: after parseMessengerJsonContent the messages are reversed so
@@ -79,7 +77,6 @@ export async function listChatFolders(
         if (textContent) {
           lastMessage = isGroup ? `${firstName}: ${textContent.slice(0, 100)}` : textContent.slice(0, 100);
         } else {
-          // Detect attachment type
           const attachType =
             (lastMsg.photos?.length) ? 'an image' :
             (lastMsg.videos?.length) ? 'a video' :
@@ -94,7 +91,6 @@ export async function listChatFolders(
       }
       const lastTimestamp = lastMsg ? getMessageTimestamp(lastMsg) ?? undefined : undefined;
 
-      // Count JSON files
       let jsonFileCount = 0;
       for await (const [entryName, entryHandle] of chatDir.entries()) {
         if (entryHandle.kind === 'file' && /message_\d+\.json$/i.test(entryName)) {
@@ -125,7 +121,6 @@ export async function listChatFolders(
     }
   }
 
-  // Sort by lastTimestamp descending; entries with no timestamp go last
   entries.sort((a, b) => {
     if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
     if (a.lastTimestamp == null) return 1;
@@ -147,7 +142,6 @@ export async function loadChatMessages(
   await new Promise(r => setTimeout(r, 10));
   onProgress?.(0, "Scanning files...");
 
-  // Collect all file names
   const fileNames: string[] = [];
   for await (const [name, handle] of chatDirHandle.entries()) {
     if (handle.kind === 'file') fileNames.push(name);

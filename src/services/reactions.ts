@@ -67,13 +67,11 @@ export async function enrichReactionTimestamps(
       const noticeActor = normalizeReactionValue(notice.actor);
       const noticeReaction = normalizeReactionValue(notice.reaction);
 
-      // First try: exact actor + emoji match without existing timestamp
       let match: Reaction | undefined = target.reactions.find(r => {
         const sameActor = !noticeActor || normalizeReactionValue(r.actor) === noticeActor;
         return sameActor && normalizeReactionValue(r.reaction) === noticeReaction && !getReactionTimestamp(r);
       });
 
-      // Fallback: emoji-only match without existing timestamp
       if (!match) {
         match = target.reactions.find(r =>
           normalizeReactionValue(r.reaction) === noticeReaction && !getReactionTimestamp(r)

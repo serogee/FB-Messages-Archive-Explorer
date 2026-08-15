@@ -71,9 +71,7 @@ export function findMediaFile(state: MediaState, path: string): MediaEntry | nul
 }
 
 export function revokeAllMedia(state: MediaState): void {
-  // Clear the global LRU cache — this revokes blob URLs tracked by the cache
   blobCache.clear();
-  // Also revoke any blob URLs stored directly on state.files (legacy path)
   for (const url of Object.values(state.files)) {
     try { URL.revokeObjectURL(url); } catch { /* ignore */ }
   }
@@ -132,7 +130,6 @@ export async function processMediaFromDirectory(
   const MEDIA_SUBDIRS = ['photos', 'videos', 'audio', 'gifs', 'files'];
   const BATCH_SIZE = 20;
 
-  // Collect all file handles from known media subdirectories
   const fileHandles: Array<{ handle: FileSystemFileHandle; path: string }> = [];
 
   let lastYield = performance.now();
@@ -143,7 +140,7 @@ export async function processMediaFromDirectory(
     try {
       subdirHandle = await dirHandle.getDirectoryHandle(subdirName);
     } catch {
-      continue; // subdir doesn't exist
+      continue;
     }
     for await (const [name, entry] of subdirHandle.entries()) {
       if (signal?.aborted) return;
@@ -165,7 +162,6 @@ export async function processMediaFromDirectory(
   let done = 0;
   onProgress?.(0, total);
 
-  // Process in batches of 20
   for (let i = 0; i < fileHandles.length; i += BATCH_SIZE) {
     if (signal?.aborted) return;
     const batch = fileHandles.slice(i, i + BATCH_SIZE);

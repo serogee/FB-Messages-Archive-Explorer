@@ -51,7 +51,6 @@ export function useSettings(): {
 } {
   const [settings, setSettings] = useState<Settings>(loadSettings);
 
-  // Apply dark mode on initial load and changes
   useEffect(() => {
     if (settings.darkMode) {
       document.documentElement.classList.add('dark');
@@ -60,7 +59,6 @@ export function useSettings(): {
     }
   }, [settings.darkMode]);
 
-  // Apply sidebar/info panel widths as CSS custom properties
   useEffect(() => {
     document.documentElement.style.setProperty('--sidebar-width', `${settings.sidebarWidth}px`);
   }, [settings.sidebarWidth]);

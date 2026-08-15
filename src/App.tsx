@@ -23,11 +23,9 @@ export default function App() {
   const [deleteTarget, setDeleteTarget] = useState<ChatListEntry | ChatListEntry[] | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
 
-  // Attachment gallery state
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryDefaultTab, setGalleryDefaultTab] = useState<AttachmentCategory>('all');
 
-  // Resizable sidebar
   const { handleRef: sidebarHandleRef } = useResizable({
     minWidth: 260,
     maxWidthFraction: 0.55,
@@ -38,7 +36,6 @@ export default function App() {
     side: 'left',
   });
 
-  // Resizable info panel
   const { handleRef: infoHandleRef } = useResizable({
     minWidth: 340,
     maxWidthFraction: 0.45,
@@ -58,7 +55,6 @@ export default function App() {
           setDeleteProgress({ done, total });
         });
         
-        // Clear view if active chat was deleted
         if (chat.activeEntry && deleteTarget.some(e => e.folderName === chat.activeEntry!.folderName)) {
           chat.clearChat();
         }
@@ -75,12 +71,10 @@ export default function App() {
     setDeleteTarget(null);
   }, [deleteTarget, archive, chat]);
 
-  // Open folder: if deletion is enabled, request write access automatically
   const handleOpenFolder = useCallback(async () => {
     await archive.openFolder(settings.deletionEnabled);
   }, [settings.deletionEnabled, archive]);
 
-  // Ref to ChatView for scrolling/jumping
   const chatViewRef = useRef<ChatViewHandle>(null);
 
   const pendingJumpIndexRef = useRef<number | null>(null);
@@ -97,7 +91,6 @@ export default function App() {
     chatViewRef.current?.jumpToMessage(index);
   }, [chat, archive]);
 
-  // When chatData changes (new chat loaded), scroll to bottom and close gallery
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {
     if (chat.chatData && chat.chatData !== prevChatDataRef.current) {
@@ -112,7 +105,6 @@ export default function App() {
     prevChatDataRef.current = chat.chatData;
   }, [chat.chatData]);
 
-  // Gallery open handler (from InfoPanel)
   const handleOpenGallery = useCallback((tab?: string) => {
     setGalleryDefaultTab((tab as AttachmentCategory) || 'all');
     setGalleryOpen(true);

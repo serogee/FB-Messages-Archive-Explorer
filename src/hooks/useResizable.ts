@@ -8,7 +8,6 @@ interface UseResizableOptions {
   storageKey: string;
   initialWidth: number;
   onWidthChange: (width: number) => void;
-  /** 'left' for sidebar (width grows from left), 'right' for info panel (width grows from right) */
   side?: 'left' | 'right';
 }
 
@@ -35,7 +34,6 @@ export function useResizable(options: UseResizableOptions): {
   const { minWidth, maxWidthFraction, maxWidthAbsolute, storageKey, initialWidth, onWidthChange, side = 'left' } = options;
   const handleRef = useRef<HTMLDivElement | null>(null);
 
-  // Track current width in a ref so event listeners always see current value
   const storedWidth = Number(storageGet(storageKey));
   const initialClamped = clampWidth(
     Number.isFinite(storedWidth) && storedWidth > 0 ? storedWidth : initialWidth,
@@ -51,7 +49,6 @@ export function useResizable(options: UseResizableOptions): {
   }, [minWidth, maxWidthAbsolute, maxWidthFraction, storageKey, onWidthChange]);
 
   useEffect(() => {
-    // Apply initial width
     applyWidth(currentWidthRef.current);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -86,7 +83,6 @@ export function useResizable(options: UseResizableOptions): {
       ghost.style.left = `${Math.round(handleRect.left + handleRect.width / 2)}px`;
       ghost.classList.add('active');
       container?.classList.add('resizing');
-      // Do not use setPointerCapture, bind directly to window for smoother dragging
       window.addEventListener('pointermove', onPointerMove);
       window.addEventListener('pointerup', stopResize);
       window.addEventListener('pointercancel', stopResize);
