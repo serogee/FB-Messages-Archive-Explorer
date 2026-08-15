@@ -8,14 +8,12 @@ self.onmessage = async (e: MessageEvent<{ files: File[] }>) => {
       throw new Error('No files provided');
     }
     
-    // 1. Parse all files
     const parsedData: MessengerThread[] = [];
     for (const file of files) {
       const text = await file.text();
       parsedData.push(parseMessengerJsonContent(text));
     }
     
-    // 2. Merge data
     const base = { ...parsedData[0] };
     base.messages = parsedData.flatMap(data => Array.isArray(data.messages) ? data.messages : []);
 
@@ -28,7 +26,6 @@ self.onmessage = async (e: MessageEvent<{ files: File[] }>) => {
     });
     base.participants = Array.from(participantMap.values());
 
-    // 3. Sort chronologically
     base.messages = base.messages
       .map((msg, index) => ({ msg, index, timestamp: getMessageTimestamp(msg) }))
       .sort((a, b) => {
