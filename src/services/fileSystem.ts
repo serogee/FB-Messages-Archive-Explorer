@@ -29,7 +29,8 @@ export async function listChatFolders(
   parentHandle: FileSystemDirectoryHandle,
   subfolderName: 'inbox' | 'archived_threads' | 'message_requests' | 'e2ee_cutover',
   source: 'inbox' | 'archived' | 'requests' | 'e2ee',
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  signal?: AbortSignal
 ): Promise<ChatListEntry[]> {
   let subfolderDir: FileSystemDirectoryHandle;
   try {
@@ -43,6 +44,7 @@ export async function listChatFolders(
   const handles: { name: string; handle: FileSystemDirectoryHandle }[] = [];
 
   for await (const [name, handle] of subfolderDir.entries()) {
+    if (signal?.aborted) return entries;
     if (handle.kind === 'directory') {
       handles.push({ name, handle: handle as FileSystemDirectoryHandle });
     }
@@ -52,6 +54,7 @@ export async function listChatFolders(
   if (onProgress) onProgress(0, total);
 
   for (let i = 0; i < handles.length; i++) {
+    if (signal?.aborted) return entries;
     const { name, handle: chatDir } = handles[i];
 
     try {

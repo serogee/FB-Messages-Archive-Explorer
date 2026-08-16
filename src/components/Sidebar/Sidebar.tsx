@@ -154,7 +154,7 @@ export function Sidebar({
           <>
             <FolderPicker onOpenFolder={onOpenFolder} />
             {error && (
-              <div className="sidebar-error-alert" style={{ margin: '12px 16px', padding: '12px', background: '#fee2e2', color: '#991b1b', borderRadius: '6px', fontSize: '13px', border: '1px solid #f87171' }}>
+              <div className="sidebar-error-alert">
                 <strong>Error:</strong> {error}
               </div>
             )}

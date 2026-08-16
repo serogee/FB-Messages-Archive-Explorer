@@ -72,8 +72,11 @@ export default function App() {
   }, [deleteTarget, archive, chat]);
 
   const handleOpenFolder = useCallback(async () => {
-    await archive.openFolder(settings.deletionEnabled);
-  }, [settings.deletionEnabled, archive]);
+    const picked = await archive.openFolder(settings.deletionEnabled);
+    if (picked) {
+      chat.clearChat();
+    }
+  }, [settings.deletionEnabled, archive, chat]);
 
   const chatViewRef = useRef<ChatViewHandle>(null);
 

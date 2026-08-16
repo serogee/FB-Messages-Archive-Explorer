@@ -48,7 +48,7 @@ export function useArchive(): {
   loadProgress: { done: number; total: number } | null;
   sizeProgress: { done: number; total: number } | null;
   error: string | null;
-  openFolder: (requestWrite?: boolean) => Promise<void>;
+  openFolder: (requestWrite?: boolean) => Promise<boolean>;
   openFolderWithWriteAccess: () => Promise<void>;
   deleteChat: (entry: ChatListEntry) => Promise<void>;
   deleteChats: (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => Promise<void>;
@@ -63,6 +63,7 @@ export function useArchive(): {
   const [loadProgress, setLoadProgress] = useState<{ done: number; total: number } | null>(null);
   const [sizeProgress, setSizeProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const inboxListRef = useRef<ChatListEntry[]>([]);
   const archivedListRef = useRef<ChatListEntry[]>([]);
@@ -71,18 +72,21 @@ export function useArchive(): {
   archivedListRef.current = archivedList;
   requestsListRef.current = requestsList;
 
-  const startLazySizeComputation = useCallback((entries: ChatListEntry[], setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>, onProgress?: (done: number) => void) => {
+  const startLazySizeComputation = useCallback((entries: ChatListEntry[], setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>, onProgress?: (done: number) => void, signal?: AbortSignal) => {
     let done = 0;
     if (entries.length === 0 && onProgress) {
       onProgress(0);
       return;
     }
     const processNext = (index: number) => {
+      if (signal?.aborted) return;
       if (index >= entries.length) return;
       const entry = entries[index];
       setTimeout(async () => {
+        if (signal?.aborted) return;
         try {
           const size = await computeFolderSize(entry.dirHandle);
+          if (signal?.aborted) return;
           setList(prev =>
             prev.map(e => e.folderName === entry.folderName ? { ...e, folderSize: size } : e)
           );
@@ -95,12 +99,24 @@ export function useArchive(): {
     processNext(0);
   }, []);
 
-  const openFolder = useCallback(async (requestWrite?: boolean) => {
-    setError(null);
-    setLoading(true);
-    setLoadProgress({ done: 0, total: 0 });
+  const openFolder = useCallback(async (requestWrite?: boolean): Promise<boolean> => {
+    let abortCtrl: AbortController | null = null;
     try {
       const handle = requestWrite ? await pickFolderWithWriteAccess() : await pickMessagesFolder();
+      
+      setError(null);
+      setLoading(true);
+      setLoadProgress({ done: 0, total: 0 });
+
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      abortCtrl = new AbortController();
+      abortControllerRef.current = abortCtrl;
+      
+      setInboxList([]);
+      setArchivedList([]);
+      setRequestsList([]);
+      setRootHandle(null);
+      setOriginalRootHandle(null);
       
       const messagesRoot = await resolveMessagesRoot(handle);
       if (!messagesRoot) {
@@ -128,11 +144,12 @@ export function useArchive(): {
       };
 
       const [inbox, archived, requests, e2ee] = await Promise.all([
-        listChatFolders(messagesRoot, 'inbox', 'inbox', (d, t) => updateProgress(0, d, t)),
-        listChatFolders(messagesRoot, 'archived_threads', 'archived', (d, t) => updateProgress(1, d, t)),
-        listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t)),
-        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t)),
+        listChatFolders(messagesRoot, 'inbox', 'inbox', (d, t) => updateProgress(0, d, t), abortCtrl.signal),
+        listChatFolders(messagesRoot, 'archived_threads', 'archived', (d, t) => updateProgress(1, d, t), abortCtrl.signal),
+        listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t), abortCtrl.signal),
+        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t), abortCtrl.signal),
       ]);
+      if (abortCtrl.signal.aborted) return false;
       const mergedInbox = [...inbox, ...e2ee].sort((a, b) => {
         if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
         if (a.lastTimestamp == null) return 1;
@@ -168,17 +185,21 @@ export function useArchive(): {
         }
       };
 
-      startLazySizeComputation(mergedInbox, setInboxList, (d) => updateSizeProgress(0, d));
-      startLazySizeComputation(archived, setArchivedList, (d) => updateSizeProgress(1, d));
-      startLazySizeComputation(requests, setRequestsList, (d) => updateSizeProgress(2, d));
+      startLazySizeComputation(mergedInbox, setInboxList, (d) => updateSizeProgress(0, d), abortCtrl.signal);
+      startLazySizeComputation(archived, setArchivedList, (d) => updateSizeProgress(1, d), abortCtrl.signal);
+      startLazySizeComputation(requests, setRequestsList, (d) => updateSizeProgress(2, d), abortCtrl.signal);
+      return true;
     } catch (e: unknown) {
-      // User cancelled the picker — not an error worth surfacing
       if (e instanceof Error && e.name !== 'AbortError') {
         setError(e.message || 'Failed to open folder');
+        return true;
       }
+      return false;
     } finally {
-      setLoading(false);
-      setLoadProgress(null);
+      if (abortControllerRef.current === abortCtrl) {
+        setLoading(false);
+        setLoadProgress(null);
+      }
     }
   }, [startLazySizeComputation]);
 

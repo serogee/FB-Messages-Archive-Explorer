@@ -115,7 +115,9 @@ export function useChat(): {
 
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
-      setLoading(false);
+      if (mediaAbortControllerRef.current === abortCtrl) {
+        setLoading(false);
+      }
       console.error('Failed to load chat:', err);
     }
   }, []);
