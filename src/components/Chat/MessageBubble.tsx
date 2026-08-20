@@ -8,6 +8,53 @@ import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
 import { ReactionModal } from './ReactionModal';
 
+const lazyMediaLoadCallbacks = new Map<Element, () => void>();
+const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => void>();
+const lazyMediaVisibilityCallbacks = new Map<Element, (isVisible: boolean) => void>();
+let sharedLazyMediaObserver: IntersectionObserver | null = null;
+let sharedLazyMediaResizeObserver: ResizeObserver | null = null;
+let sharedLazyMediaVisibilityObserver: IntersectionObserver | null = null;
+
+function getSharedLazyMediaObserver() {
+  if (!sharedLazyMediaObserver) {
+    sharedLazyMediaObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+
+        const callback = lazyMediaLoadCallbacks.get(entry.target);
+        if (callback) callback();
+        sharedLazyMediaObserver?.unobserve(entry.target);
+        lazyMediaLoadCallbacks.delete(entry.target);
+      });
+    }, { rootMargin: '500px' });
+  }
+  return sharedLazyMediaObserver;
+}
+
+function getSharedLazyMediaResizeObserver() {
+  if (!sharedLazyMediaResizeObserver) {
+    sharedLazyMediaResizeObserver = new ResizeObserver((entries) => {
+      entries.forEach(entry => {
+        const callback = lazyMediaResizeCallbacks.get(entry.target);
+        if (callback) callback(entry);
+      });
+    });
+  }
+  return sharedLazyMediaResizeObserver;
+}
+
+function getSharedLazyMediaVisibilityObserver() {
+  if (!sharedLazyMediaVisibilityObserver) {
+    sharedLazyMediaVisibilityObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        const callback = lazyMediaVisibilityCallbacks.get(entry.target);
+        if (callback) callback(entry.isIntersecting);
+      });
+    }, { threshold: 0 });
+  }
+  return sharedLazyMediaVisibilityObserver;
+}
+
 interface MessageBubbleProps {
   msg: MessengerMessage;
   isMe: boolean;
@@ -38,8 +85,10 @@ function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, 
   });
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
+  const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
+  const mediaType = ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath));
 
-  // 1. Intersection Observer for lazy loading
+  // 1. Shared IntersectionObserver for lazy loading
   useEffect(() => {
     let isMounted = true;
     if (!mediaFile || !mediaFile.handle || fileURL) return;
@@ -58,30 +107,28 @@ function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, 
     const el = mediaRef.current;
     if (!el) return;
 
-    const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) {
-        observer.disconnect();
-        blobCache.getOrCreate(mediaFile).then(url => {
-          if (isMounted && url) setFileURL(url);
-        });
-      }
-    }, { rootMargin: '500px' });
-
+    const observer = getSharedLazyMediaObserver();
+    lazyMediaLoadCallbacks.set(el, () => {
+      blobCache.getOrCreate(mediaFile).then(url => {
+        if (isMounted && url) setFileURL(url);
+      });
+    });
     observer.observe(el);
 
     return () => { 
       isMounted = false; 
-      observer.disconnect();
+      observer.unobserve(el);
+      lazyMediaLoadCallbacks.delete(el);
     };
   }, [mediaFile, fileURL]);
 
-  // 2. Resize Observer for robust scroll anchoring
+  // 2. Shared ResizeObserver for robust scroll anchoring
   useEffect(() => {
     const el = mediaRef.current;
     if (!el) return;
 
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
+    const observer = getSharedLazyMediaResizeObserver();
+    lazyMediaResizeCallbacks.set(el, (entry) => {
       const newHeight = entry.borderBoxSize ? entry.borderBoxSize[0].blockSize : entry.contentRect.height;
       
       const oldHeight = prevHeight.current;
@@ -118,11 +165,32 @@ function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, 
     });
 
     observer.observe(el);
-    return () => observer.disconnect();
+    return () => {
+      observer.unobserve(el);
+      lazyMediaResizeCallbacks.delete(el);
+    };
   }, []); // Empty dependency array: NEVER unbind, the wrapper is permanent
 
-  const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
-  const mediaType = ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath));
+  useEffect(() => {
+    const el = mediaRef.current;
+    if (!el || mediaType !== 'video') return;
+
+    const observer = getSharedLazyMediaVisibilityObserver();
+    lazyMediaVisibilityCallbacks.set(el, (isVisible) => {
+      if (isVisible) return;
+
+      const video = el.querySelector('video');
+      if (video && !video.paused) {
+        video.pause();
+      }
+    });
+    observer.observe(el);
+
+    return () => {
+      observer.unobserve(el);
+      lazyMediaVisibilityCallbacks.delete(el);
+    };
+  }, [mediaType]);
 
   let content: React.ReactNode;
   if (mediaType === 'image') {
@@ -218,7 +286,14 @@ export const MessageBubble = memo(function MessageBubble({
             {mediaItems.map((media, i) => {
               const mediaPath = getMediaReferencePath(media);
               const mediaFile = findMediaFile(mediaState, mediaPath);
-              return <LazyMedia key={i} mediaPath={mediaPath} mediaFile={mediaFile} onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined} />;
+              return (
+                <LazyMedia
+                  key={i}
+                  mediaPath={mediaPath}
+                  mediaFile={mediaFile}
+                  onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
+                />
+              );
             })}
 
             {/* Reactions (Floating Bubble) */}
