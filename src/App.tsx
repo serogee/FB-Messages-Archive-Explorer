@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useSettings } from './hooks/useSettings';
 import { useArchive } from './hooks/useArchive';
 import { useChat } from './hooks/useChat';
@@ -19,7 +19,11 @@ export default function App() {
   const { settings, setSetting } = useSettings();
   const archive = useArchive();
   const chat = useChat();
-  const search = useSearch(chat.chatData, [...archive.inboxList, ...archive.archivedList, ...archive.requestsList]);
+  const archiveList = useMemo(
+    () => [...archive.inboxList, ...archive.archivedList, ...archive.requestsList],
+    [archive.inboxList, archive.archivedList, archive.requestsList]
+  );
+  const search = useSearch(chat.chatData, archiveList);
   const selection = useSelection();
   const attachments = useAttachments(chat.chatData, chat.mediaState);
 
@@ -92,7 +96,7 @@ export default function App() {
 
   const handleJumpToMessage = useCallback((index: number, folderName?: string) => {
     if (folderName && folderName !== chat.activeEntry?.folderName) {
-      const entry = [...archive.inboxList, ...archive.archivedList, ...archive.requestsList].find(e => e.folderName === folderName);
+      const entry = archiveList.find(e => e.folderName === folderName);
       if (entry) {
         pendingJumpIndexRef.current = index;
         chat.loadChat(entry);
@@ -101,7 +105,7 @@ export default function App() {
       }
     }
     chatViewRef.current?.jumpToMessage(index);
-  }, [chat, archive, selection]);
+  }, [chat, archiveList, selection]);
 
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {

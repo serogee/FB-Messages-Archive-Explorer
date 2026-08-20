@@ -36,6 +36,8 @@ export interface MessengerMessage {
   is_unsent?: boolean;
   is_geoblocked_for_viewer?: boolean;
   is_unsent_image_by_messenger_kid_parent?: boolean;
+  /** Runtime cache for repeated reaction-notice checks */
+  _isReactionNotice?: boolean;
 }
 
 // ── Thread (single conversation JSON) ──────────────────────────────

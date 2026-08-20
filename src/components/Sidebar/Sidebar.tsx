@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { Settings } from '../../hooks/useSettings';
 import type { ChatListEntry, MessengerThread, MediaState } from '../../types/messenger';
 import type { useSearch } from '../../hooks/useSearch';
@@ -62,7 +62,17 @@ export function Sidebar({
     });
   };
 
-  const allChats = [...inboxList, ...archivedList, ...requestsList];
+  const allChats = useMemo(
+    () => [...inboxList, ...archivedList, ...requestsList],
+    [inboxList, archivedList, requestsList]
+  );
+  const extraFilterLists = useMemo(
+    () => [
+      { label: 'Archived Threads', list: archivedList },
+      { label: 'Message Requests', list: requestsList }
+    ],
+    [archivedList, requestsList]
+  );
 
   useEffect(() => {
     if (selectionMode) {
@@ -180,10 +190,7 @@ export function Sidebar({
         {sidebarView === 'chats' && rootHandle && !loading && (
           <ChatList
             chatList={inboxList}
-            extraFilterLists={[
-              { label: 'Archived Threads', list: archivedList },
-              { label: 'Message Requests', list: requestsList }
-            ]}
+            extraFilterLists={extraFilterLists}
             activeEntry={activeEntry}
             sizeProgress={sizeProgress}
             onSelectChat={onSelectChat}

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { ChatListEntry } from '../../types/messenger';
 import { formatRelativeTime, formatFileSize } from '../../services/storage';
 
@@ -184,11 +184,13 @@ export function ChatList({ chatList, activeEntry, onSelectChat, onDeleteChat, de
   const [sortBy, setSortBy] = useState('recent');
   const lastSelectedRef = useRef<string | null>(null);
 
-  const applyFilterAndSort = (list: ChatListEntry[]) => {
+  const normalizedFilter = useMemo(() => filter.trim().toLowerCase(), [filter]);
+
+  const applyFilterAndSort = useCallback((list: ChatListEntry[]) => {
     const filtered = filter.trim()
       ? list.filter(e => 
-          e.title.toLowerCase().includes(filter.toLowerCase()) ||
-          e.folderName.toLowerCase().includes(filter.toLowerCase())
+          e.title.toLowerCase().includes(normalizedFilter) ||
+          e.folderName.toLowerCase().includes(normalizedFilter)
         )
       : [...list];
 
@@ -216,15 +218,20 @@ export function ChatList({ chatList, activeEntry, onSelectChat, onDeleteChat, de
       }
     });
     return filtered;
-  };
+  }, [filter, normalizedFilter, sortBy]);
 
-  const mainFiltered = applyFilterAndSort(chatList);
-  const extras = filter.trim() && extraFilterLists
+  const mainFiltered = useMemo(
+    () => applyFilterAndSort(chatList),
+    [applyFilterAndSort, chatList]
+  );
+  const extras = useMemo(() => normalizedFilter && extraFilterLists
     ? extraFilterLists.map(extra => ({
         label: extra.label,
         items: applyFilterAndSort(extra.list)
       })).filter(e => e.items.length > 0)
-    : [];
+    : [],
+    [applyFilterAndSort, extraFilterLists, normalizedFilter]
+  );
 
   const sizeDisabled = !!sizeProgress;
   const sizeTitle = sizeProgress ? `Calculating sizes (${Math.round((sizeProgress.done / sizeProgress.total) * 100)}%)...` : undefined;

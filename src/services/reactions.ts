@@ -30,10 +30,20 @@ function parseReactionNotice(
 // ── Exported functions ─────────────────────────────────────────────
 
 export function isReactionNoticeMessage(msg: MessengerMessage): boolean {
+  if (typeof msg._isReactionNotice === 'boolean') return msg._isReactionNotice;
+
   const text = fixEncoding(msg?.text || msg?.content || '').trim();
-  if (!text) return false;
-  if (getMessageMediaItems(msg).length > 0) return false;
-  return /^(?:.+?\s+)?reacted\s+.+?\s+to your message(?:[.:].*)?$/i.test(text);
+  if (!text) {
+    msg._isReactionNotice = false;
+    return false;
+  }
+  if (getMessageMediaItems(msg).length > 0) {
+    msg._isReactionNotice = false;
+    return false;
+  }
+
+  msg._isReactionNotice = /^(?:.+?\s+)?reacted\s+.+?\s+to your message(?:[.:].*)?$/i.test(text);
+  return msg._isReactionNotice;
 }
 
 export async function enrichReactionTimestamps(

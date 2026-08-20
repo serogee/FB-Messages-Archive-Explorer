@@ -4,7 +4,37 @@ import { buildSearchIndex, performSearch } from '../services/search';
 import { isReactionNoticeMessage } from '../services/reactions';
 import { loadChatMessages } from '../services/fileSystem';
 
-const globalWideIndexCache = new Map<string, SearchIndexEntry[]>();
+const WIDE_INDEX_CACHE_LIMIT = 50;
+const globalWideIndexCache = new Map<string, { dirHandle: FileSystemDirectoryHandle; index: SearchIndexEntry[] }>();
+
+function getWideIndexCacheKey(entry: ChatListEntry): string {
+  return `${entry.source}:${entry.folderName}`;
+}
+
+function getCachedWideIndex(entry: ChatListEntry): SearchIndexEntry[] | null {
+  const key = getWideIndexCacheKey(entry);
+  const cached = globalWideIndexCache.get(key);
+  if (!cached || cached.dirHandle !== entry.dirHandle) {
+    if (cached) globalWideIndexCache.delete(key);
+    return null;
+  }
+
+  globalWideIndexCache.delete(key);
+  globalWideIndexCache.set(key, cached);
+  return cached.index;
+}
+
+function setCachedWideIndex(entry: ChatListEntry, index: SearchIndexEntry[]) {
+  const key = getWideIndexCacheKey(entry);
+  globalWideIndexCache.delete(key);
+  globalWideIndexCache.set(key, { dirHandle: entry.dirHandle, index });
+
+  while (globalWideIndexCache.size > WIDE_INDEX_CACHE_LIMIT) {
+    const oldestKey = globalWideIndexCache.keys().next().value;
+    if (!oldestKey) break;
+    globalWideIndexCache.delete(oldestKey);
+  }
+}
 
 export function useSearch(
   chatData: MessengerThread | null,
@@ -78,12 +108,12 @@ export function useSearch(
           if (signal.aborted) return;
           const entry = archiveList[i];
           try {
-            let index = globalWideIndexCache.get(entry.folderName);
+            let index = getCachedWideIndex(entry);
             if (!index) {
               const data = await loadChatMessages(entry.dirHandle);
               if (signal.aborted) return;
               index = buildSearchIndex(data.messages, isReactionNoticeMessage);
-              globalWideIndexCache.set(entry.folderName, index);
+              setCachedWideIndex(entry, index);
             }
             const found = await performSearch(searchQuery, index, undefined, signal);
             if (signal.aborted) return;

@@ -74,25 +74,71 @@ export function useArchive(): {
 
   const startLazySizeComputation = useCallback((entries: ChatListEntry[], setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>, onProgress?: (done: number) => void, signal?: AbortSignal) => {
     let done = 0;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const pendingSizes = new Map<string, number>();
+
     if (entries.length === 0 && onProgress) {
       onProgress(0);
       return;
     }
+
+    const flushUpdates = () => {
+      flushTimer = null;
+      if (signal?.aborted) return;
+
+      const updates = new Map(pendingSizes);
+      pendingSizes.clear();
+
+      if (updates.size > 0) {
+        setList(prev =>
+          prev.map(e => {
+            const size = updates.get(e.folderName);
+            return size == null ? e : { ...e, folderSize: size };
+          })
+        );
+      }
+
+      if (onProgress) onProgress(done);
+    };
+
+    const scheduleFlush = (immediate = false) => {
+      if (flushTimer) {
+        if (!immediate) return;
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+
+      if (immediate || pendingSizes.size >= 20 || done >= entries.length) {
+        flushUpdates();
+      } else {
+        flushTimer = setTimeout(flushUpdates, 500);
+      }
+    };
+
+    signal?.addEventListener('abort', () => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      pendingSizes.clear();
+    }, { once: true });
+
     const processNext = (index: number) => {
       if (signal?.aborted) return;
-      if (index >= entries.length) return;
+      if (index >= entries.length) {
+        scheduleFlush(true);
+        return;
+      }
       const entry = entries[index];
       setTimeout(async () => {
         if (signal?.aborted) return;
         try {
           const size = await computeFolderSize(entry.dirHandle);
           if (signal?.aborted) return;
-          setList(prev =>
-            prev.map(e => e.folderName === entry.folderName ? { ...e, folderSize: size } : e)
-          );
+          pendingSizes.set(entry.folderName, size);
         } catch { /* ignore */ }
         done++;
-        if (onProgress) onProgress(done);
+        scheduleFlush(done >= entries.length);
         processNext(index + 1);
       }, 0);
     };
