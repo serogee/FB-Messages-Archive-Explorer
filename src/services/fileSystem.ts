@@ -15,11 +15,20 @@ export function isWriteAccessSupported(): boolean {
 
 // ── Folder pickers ─────────────────────────────────────────────────
 
+import { openFolderPolyfill } from './polyfill';
+
 export async function pickMessagesFolder(): Promise<FileSystemDirectoryHandle> {
+  if (!isFileSystemAccessSupported()) {
+    return openFolderPolyfill();
+  }
   return window.showDirectoryPicker({ id: 'messages-folder', mode: 'read' });
 }
 
 export async function pickFolderWithWriteAccess(): Promise<FileSystemDirectoryHandle> {
+  if (!isFileSystemAccessSupported()) {
+    // Write access is not supported via polyfill, but we can still read
+    return openFolderPolyfill();
+  }
   return window.showDirectoryPicker({ id: 'messages-folder', mode: 'readwrite' });
 }
 
