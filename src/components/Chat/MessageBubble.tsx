@@ -1,7 +1,7 @@
 import React, { memo, useState, useEffect, useRef } from 'react';
 import type { MessengerMessage, MediaState } from '../../types/messenger';
 import { getMessageTimestamp, fixEncoding } from '../../services/parser';
-import { findMediaFile, getMessageMediaItems, getMediaReferencePath, getMediaType } from '../../services/media';
+import { findMediaFile, getMediaReferencePath, getMediaType } from '../../services/media';
 import { blobCache } from '../../services/blobCache';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
@@ -78,7 +78,21 @@ function getReactionTimeText(ts: number): string {
   return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, mediaFile: ReturnType<typeof findMediaFile>, onMediaClick?: () => void }) {
+function getAudioSourceType(mediaPath: string): string {
+  return mediaPath.toLowerCase().endsWith('.mp4') ? 'audio/mp4' : 'audio/mpeg';
+}
+
+function LazyMedia({
+  mediaPath,
+  mediaFile,
+  preferredType,
+  onMediaClick,
+}: {
+  mediaPath: string;
+  mediaFile: ReturnType<typeof findMediaFile>;
+  preferredType?: 'image' | 'video' | 'audio';
+  onMediaClick?: () => void;
+}) {
   const [fileURL, setFileURL] = useState<string | null>(() => {
     if (!mediaFile) return null;
     return blobCache.get(mediaFile) || mediaFile.url || null;
@@ -86,7 +100,7 @@ function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, 
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
   const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
-  const mediaType = ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath));
+  const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
 
   // 1. Shared IntersectionObserver for lazy loading
   useEffect(() => {
@@ -211,7 +225,7 @@ function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, 
     content = fileURL
       ? <div className="media-audio-wrap">
           <audio controls className="media-audio-control">
-            <source src={fileURL} type="audio/mpeg" />
+            <source src={fileURL} type={getAudioSourceType(mediaPath)} />
           </audio>
           {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} title="Open in viewer">⛶</button>}
         </div>
@@ -250,7 +264,15 @@ export const MessageBubble = memo(function MessageBubble({
   const sender = msg.senderName || msg.sender_name || 'Unknown';
   const rawText = fixEncoding(msg?.text || msg?.content || '').trim();
   const timestamp = getMessageTimestamp(msg) || 0;
-  const mediaItems = getMessageMediaItems(msg);
+  const mediaItems = [
+    ...(msg.media || []).map(media => ({ media, preferredType: undefined })),
+    ...(msg.photos || []).map(media => ({ media, preferredType: 'image' as const })),
+    ...(msg.videos || []).map(media => ({ media, preferredType: 'video' as const })),
+    ...(msg.audio || []).map(media => ({ media, preferredType: 'audio' as const })),
+    ...(msg.audio_files || []).map(media => ({ media, preferredType: 'audio' as const })),
+    ...(msg.gifs || []).map(media => ({ media, preferredType: 'image' as const })),
+    ...(msg.files || []).map(media => ({ media, preferredType: undefined })),
+  ];
 
   const highlightedText = highlightQuery
     ? highlightText(rawText, highlightQuery)
@@ -283,7 +305,7 @@ export const MessageBubble = memo(function MessageBubble({
             )}
 
             {/* Media */}
-            {mediaItems.map((media, i) => {
+            {mediaItems.map(({ media, preferredType }, i) => {
               const mediaPath = getMediaReferencePath(media);
               const mediaFile = findMediaFile(mediaState, mediaPath);
               return (
@@ -291,6 +313,7 @@ export const MessageBubble = memo(function MessageBubble({
                   key={i}
                   mediaPath={mediaPath}
                   mediaFile={mediaFile}
+                  preferredType={preferredType}
                   onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
                 />
               );

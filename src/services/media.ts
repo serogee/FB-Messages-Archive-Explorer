@@ -104,6 +104,14 @@ function categorizeAttachment(path: string, preferredType?: string): string {
   return 'files';
 }
 
+function getMediaTypeFromDirectory(path: string): 'image' | 'video' | 'audio' | 'unknown' | null {
+  const topLevel = normalizeMediaPath(path).split('/')[0];
+  if (topLevel === 'photos' || topLevel === 'gifs') return 'image';
+  if (topLevel === 'videos') return 'video';
+  if (topLevel === 'audio') return 'audio';
+  return null;
+}
+
 export function getMessageAttachmentReferences(
   msg: MessengerMessage
 ): Array<{ path: string; category: string }> {
@@ -168,7 +176,7 @@ export async function processMediaFromDirectory(
     await Promise.all(
       batch.map(async ({ handle, path }) => {
         try {
-          const type = getMediaType(handle.name);
+          const type = getMediaTypeFromDirectory(path) || getMediaType(handle.name);
           const entry: MediaEntry = { handle, type };
           state.types[path] = type;
           addMediaToIndex(state, path, entry);
