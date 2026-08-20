@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { MoreVertical, ExternalLink, Download, X, ChevronLeft, ChevronRight, CheckSquare, Paperclip, Music, FileText } from 'lucide-react';
 import type { ResolvedAttachment } from '../../types/messenger';
 import { findMediaFile } from '../../services/media';
 import { blobCache } from '../../services/blobCache';
 import type { MediaState } from '../../types/messenger';
+import type { useSelection } from '../../hooks/useSelection';
+import { downloadSingle } from '../../services/saveAttachments';
 
 interface MediaViewerProps {
   attachments: ResolvedAttachment[];
@@ -11,6 +14,7 @@ interface MediaViewerProps {
   mediaState: MediaState;
   onClose: () => void;
   onJumpToMessage: (messageIndex: number) => void;
+  selection?: ReturnType<typeof useSelection>;
 }
 
 function useResolvedUrl(attachment: ResolvedAttachment | null, mediaState: MediaState): string | null {
@@ -54,6 +58,7 @@ export function MediaViewer({
   mediaState,
   onClose,
   onJumpToMessage,
+  selection,
 }: MediaViewerProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -89,10 +94,14 @@ export function MediaViewer({
       if (e.key === 'Escape') { onClose(); return; }
       if (e.key === 'ArrowLeft' && hasPrev) { goPrev(); return; }
       if (e.key === 'ArrowRight' && hasNext) { goNext(); return; }
+      if (e.key === ' ' && attachment && selection) {
+        e.preventDefault();
+        selection.toggle(attachment);
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose, hasPrev, hasNext, goPrev, goNext]);
+  }, [onClose, hasPrev, hasNext, goPrev, goNext, attachment, selection]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -128,24 +137,38 @@ export function MediaViewer({
           )}
         </div>
         <div className="media-viewer-actions">
+          {attachment && selection && (
+            <button
+              className={`media-viewer-btn media-viewer-select-toggle ${selection.isSelected(attachment) ? 'selected' : ''}`}
+              onClick={() => selection.toggle(attachment)}
+              title="Select (Space)"
+            >
+              {selection.isSelected(attachment) && <CheckSquare size={18} />}
+            </button>
+          )}
           <div className="media-viewer-menu-wrap" ref={menuRef}>
             <button
               className="media-viewer-btn media-viewer-menu-btn"
               onClick={() => setMenuOpen(!menuOpen)}
               aria-label="More options"
               title="More options"
-            >⋯</button>
+            >
+              <MoreVertical size={20} />
+            </button>
             {menuOpen && (
               <div className="media-viewer-menu-dropdown">
                 <button className="media-viewer-menu-item" onClick={handleJump}>
-                  <span className="media-viewer-menu-icon">↗</span>
+                  <ExternalLink size={16} className="media-viewer-menu-icon" />
                   Jump to message
                 </button>
-                {url && displayType !== 'audio' && (
-                  <a href={url} download={filename} className="media-viewer-menu-item" onClick={() => setMenuOpen(false)}>
-                    <span className="media-viewer-menu-icon">↓</span>
+                {attachment && (
+                  <button className="media-viewer-menu-item" onClick={() => {
+                    downloadSingle(attachment, mediaState);
+                    setMenuOpen(false);
+                  }}>
+                    <Download size={16} className="media-viewer-menu-icon" />
                     Download
-                  </a>
+                  </button>
                 )}
               </div>
             )}
@@ -155,29 +178,31 @@ export function MediaViewer({
             onClick={onClose}
             aria-label="Close"
             title="Close"
-          >✕</button>
+          >
+            <X size={20} />
+          </button>
         </div>
       </div>
 
       {/* Navigation arrows */}
       {hasPrev && (
         <button className="media-viewer-nav media-viewer-nav-prev" onClick={goPrev} aria-label="Previous">
-          ‹
+          <ChevronLeft size={36} />
         </button>
       )}
       {hasNext && (
         <button className="media-viewer-nav media-viewer-nav-next" onClick={goNext} aria-label="Next">
-          ›
+          <ChevronRight size={36} />
         </button>
       )}
 
       {/* Media display */}
-      <div className="media-viewer-content">
+      <div className={`media-viewer-content ${attachment && selection?.isSelected(attachment) ? 'viewer-selected' : ''}`}>
         {!attachment ? (
           <div className="media-viewer-empty">No attachment</div>
         ) : !url ? (
           <div className="media-viewer-placeholder">
-            <div className="media-viewer-file-icon">📎</div>
+            <div className="media-viewer-file-icon"><Paperclip size={48} /></div>
             <div className="media-viewer-file-name">{filename}</div>
             <div className="media-viewer-file-status">File not found</div>
           </div>
@@ -199,13 +224,13 @@ export function MediaViewer({
           />
         ) : displayType === 'audio' ? (
           <div className="media-viewer-audio-wrap">
-            <div className="media-viewer-audio-icon">🎵</div>
+            <div className="media-viewer-audio-icon"><Music size={48} /></div>
             <div className="media-viewer-file-name">{filename}</div>
             <audio key={currentIndex} controls autoPlay src={url} className="media-viewer-audio" />
           </div>
         ) : (
           <div className="media-viewer-placeholder">
-            <div className="media-viewer-file-icon">📄</div>
+            <div className="media-viewer-file-icon"><FileText size={48} /></div>
             <div className="media-viewer-file-name">{filename}</div>
             <a href={url} download={filename} className="media-viewer-download-btn">
               Download

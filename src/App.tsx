@@ -4,9 +4,12 @@ import { useArchive } from './hooks/useArchive';
 import { useChat } from './hooks/useChat';
 import { useSearch } from './hooks/useSearch';
 import { useResizable } from './hooks/useResizable';
+import { useSelection } from './hooks/useSelection';
+import { useAttachments } from './hooks/useAttachments';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatView, type ChatViewHandle } from './components/Chat/ChatView';
 import { InfoPanel } from './components/InfoPanel/InfoPanel';
+import { SelectionPanel } from './components/InfoPanel/SelectionPanel';
 import { TrustModal } from './components/Modals/TrustModal';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
 import type { ChatListEntry } from './types/messenger';
@@ -17,6 +20,8 @@ export default function App() {
   const archive = useArchive();
   const chat = useChat();
   const search = useSearch(chat.chatData, [...archive.inboxList, ...archive.archivedList, ...archive.requestsList]);
+  const selection = useSelection();
+  const attachments = useAttachments(chat.chatData, chat.mediaState);
 
   const [sidebarView, setSidebarView] = useState<'chats' | 'settings' | 'archived' | 'requests'>('chats');
   const [activeTab, setActiveTab] = useState<'chats' | 'settings'>('chats');
@@ -57,11 +62,13 @@ export default function App() {
         
         if (chat.activeEntry && deleteTarget.some(e => e.folderName === chat.activeEntry!.folderName)) {
           chat.clearChat();
+          selection.deselectAll();
         }
       } else {
         await archive.deleteChat(deleteTarget);
         if (chat.activeEntry?.folderName === deleteTarget.folderName) {
           chat.clearChat();
+          selection.deselectAll();
         }
       }
     } catch (e) {
@@ -69,14 +76,15 @@ export default function App() {
     }
     setDeleteProgress(null);
     setDeleteTarget(null);
-  }, [deleteTarget, archive, chat]);
+  }, [deleteTarget, archive, chat, selection]);
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await archive.openFolder(settings.deletionEnabled);
     if (picked) {
       chat.clearChat();
+      selection.deselectAll();
     }
-  }, [settings.deletionEnabled, archive, chat]);
+  }, [settings.deletionEnabled, archive, chat, selection]);
 
   const chatViewRef = useRef<ChatViewHandle>(null);
 
@@ -88,16 +96,18 @@ export default function App() {
       if (entry) {
         pendingJumpIndexRef.current = index;
         chat.loadChat(entry);
+        selection.deselectAll();
         return;
       }
     }
     chatViewRef.current?.jumpToMessage(index);
-  }, [chat, archive]);
+  }, [chat, archive, selection]);
 
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {
     if (chat.chatData && chat.chatData !== prevChatDataRef.current) {
       setGalleryOpen(false);
+      selection.deselectAll();
       if (pendingJumpIndexRef.current !== null) {
         const idx = pendingJumpIndexRef.current;
         pendingJumpIndexRef.current = null;
@@ -106,7 +116,7 @@ export default function App() {
       }
     }
     prevChatDataRef.current = chat.chatData;
-  }, [chat.chatData]);
+  }, [chat.chatData, selection]);
 
   const handleOpenGallery = useCallback((tab?: string) => {
     setGalleryDefaultTab((tab as AttachmentCategory) || 'all');
@@ -174,6 +184,7 @@ export default function App() {
         galleryOpen={galleryOpen}
         galleryDefaultTab={galleryDefaultTab}
         onCloseGallery={() => setGalleryOpen(false)}
+        selection={selection}
       />
 
       {/* Info panel resize handle */}
@@ -187,14 +198,24 @@ export default function App() {
       />
 
       {settings.infoPanelOpen && (
-        <InfoPanel
-          chatData={chat.chatData}
-          activeEntry={chat.activeEntry}
-          mediaState={chat.mediaState}
-          selectedPerspective={chat.selectedPerspective}
-          onSelectPerspective={chat.setSelectedPerspective}
-          onOpenGallery={handleOpenGallery}
-        />
+        galleryOpen && selection.selectedCount > 0 && chat.chatData ? (
+          <SelectionPanel 
+            chatData={chat.chatData}
+            mediaState={chat.mediaState}
+            selectedAttachments={selection.getSelectedAttachments(attachments.all)}
+            onDeselect={selection.toggle}
+            onClearSelection={selection.deselectAll}
+          />
+        ) : (
+          <InfoPanel
+            chatData={chat.chatData}
+            activeEntry={chat.activeEntry}
+            mediaState={chat.mediaState}
+            selectedPerspective={chat.selectedPerspective}
+            onSelectPerspective={chat.setSelectedPerspective}
+            onOpenGallery={handleOpenGallery}
+          />
+        )
       )}
 
       {/* Modals */}

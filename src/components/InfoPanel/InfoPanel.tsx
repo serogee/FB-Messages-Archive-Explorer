@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
+import { Image as ImageIcon, Film, Music, FileText, Smile } from 'lucide-react';
 import { formatInfoNumber, formatInfoDate } from '../../services/storage';
 import { getMessageTimestamp } from '../../services/parser';
 import { getMessageAttachmentReferences } from '../../services/media';
@@ -128,12 +129,12 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
               >Attachments</strong>
               <div className="info-list">
                 {[
-                  { label: 'Photos', count: stats.attachments.photos, tab: 'photos' },
-                  { label: 'Videos', count: stats.attachments.videos, tab: 'videos' },
-                  { label: 'Audio', count: stats.attachments.audio, tab: 'audio' },
-                  { label: 'GIFs', count: stats.attachments.gifs, tab: 'gifs' },
-                  { label: 'Files', count: stats.attachments.files, tab: 'files' },
-                ].map(({ label, count, tab }: { label: string; count: number; tab: string }) => (
+                  { label: 'Photos', count: stats.attachments.photos, tab: 'photos', Icon: ImageIcon },
+                  { label: 'Videos', count: stats.attachments.videos, tab: 'videos', Icon: Film },
+                  { label: 'Audio', count: stats.attachments.audio, tab: 'audio', Icon: Music },
+                  { label: 'GIFs', count: stats.attachments.gifs, tab: 'gifs', Icon: Smile },
+                  { label: 'Files', count: stats.attachments.files, tab: 'files', Icon: FileText },
+                ].map(({ label, count, tab, Icon }) => (
                   <div
                     key={label}
                     className={`info-row ${onOpenGallery ? 'info-row-clickable' : ''}`}
@@ -142,7 +143,10 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                     tabIndex={onOpenGallery ? 0 : undefined}
                     title={`View ${label.toLowerCase()}`}
                   >
-                    <span>{label}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Icon size={16} className="info-icon" />
+                      {label}
+                    </span>
                     <span className="attachment-count">
                       {formatInfoNumber(count)}
                     </span>

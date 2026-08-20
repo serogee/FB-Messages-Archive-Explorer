@@ -89,6 +89,32 @@
     background: rgba(255,255,255,0.2);
 }
 
+.media-viewer-select-toggle {
+    border: 2px solid rgba(255,255,255,0.6);
+    background: rgba(0,0,0,0.3);
+    font-size: 16px;
+    font-weight: 700;
+}
+.media-viewer-select-toggle:hover {
+    border-color: white;
+    background: rgba(255,255,255,0.15);
+}
+.media-viewer-select-toggle.selected {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+}
+.media-viewer-select-toggle.selected:hover {
+    background: var(--accent);
+    filter: brightness(1.15);
+}
+
+/* Blue glow around media when selected */
+.media-viewer-content.viewer-selected {
+    border-radius: 10px;
+    box-shadow: 0 0 0 3px var(--accent, #3ea6ff), 0 0 24px rgba(62,166,255,0.35);
+}
+
 .media-viewer-close-btn {
     font-size: 16px;
     font-weight: 600;

@@ -1,7 +1,9 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, memo } from 'react';
 import type { MessengerThread, MediaState, ResolvedAttachment } from '../../types/messenger';
+import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, Info } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import { useAttachments, type AttachmentCategory } from '../../hooks/useAttachments';
+import type { useSelection } from '../../hooks/useSelection';
 import { findMediaFile } from '../../services/media';
 import { blobCache } from '../../services/blobCache';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
@@ -87,6 +89,7 @@ interface AttachmentGalleryProps {
   onJumpToMessage: (messageIndex: number) => void;
   onToggleInfoPanel: () => void;
   defaultTab?: AttachmentCategory;
+  selection: ReturnType<typeof useSelection>;
 }
 
 const TABS: { key: AttachmentCategory; label: string }[] = [
@@ -102,15 +105,22 @@ function formatMonthYear(ts: number): string {
   return new Date(ts).toLocaleDateString([], { month: 'long', year: 'numeric' });
 }
 
-function GalleryThumbnail({
+interface GalleryThumbnailProps {
+  attachment: ResolvedAttachment;
+  mediaState: MediaState;
+  onClick: (e: React.MouseEvent) => void;
+  onDoubleClick: (e: React.MouseEvent) => void;
+  selectionMode: boolean;
+  isSelected: boolean;
+}
+
+const GalleryThumbnail = memo(function GalleryThumbnail({
   attachment,
   mediaState,
   onClick,
-}: {
-  attachment: ResolvedAttachment;
-  mediaState: MediaState;
-  onClick: () => void;
-}) {
+  onDoubleClick,
+  isSelected,
+}: GalleryThumbnailProps) {
   const [url, setUrl] = useState<string | null>(null);
   const containerRef = useRef<HTMLButtonElement>(null);
 
@@ -172,50 +182,67 @@ function GalleryThumbnail({
   const cat = attachment.category;
   const filename = attachment.mediaPath.split('/').pop() || 'File';
 
-  if (cat === 'photos' || cat === 'gifs') {
-    return (
-      <button ref={containerRef} className="gallery-thumb" onClick={onClick} title={filename}>
-        {url ? (
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (e.detail === 2) {
+      // Double click — cancel pending single click
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      onDoubleClick(e);
+    } else if (e.detail === 1) {
+      // Delay single click to see if double click follows
+      clickTimerRef.current = setTimeout(() => {
+        clickTimerRef.current = null;
+        onClick(e);
+      }, 200);
+    }
+  };
+
+  const wrapperClass = `gallery-thumb ${cat === 'audio' || cat === 'files' ? 'gallery-thumb-file' : ''} ${isSelected ? 'selected' : ''}`;
+
+  return (
+    <button ref={containerRef} className={wrapperClass} onClick={handleClick} title={filename}>
+      <div className="select-checkbox">
+        {isSelected && <Check size={14} />}
+      </div>
+      
+      {(cat === 'photos' || cat === 'gifs') ? (
+        url ? (
           <img src={url} alt={filename} className="gallery-thumb-img" loading="lazy" />
         ) : (
-          <div className="gallery-thumb-placeholder">📷</div>
-        )}
-      </button>
-    );
-  }
-
-  if (cat === 'videos') {
-    return (
-      <button ref={containerRef} className="gallery-thumb" onClick={onClick} title={filename}>
-        {url ? (
+          <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
+        )
+      ) : cat === 'videos' ? (
+        url ? (
           <>
             <video src={url} className="gallery-thumb-img" preload="metadata" muted />
-            <div className="gallery-thumb-play">▶</div>
+            <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>
           </>
         ) : (
-          <div className="gallery-thumb-placeholder">🎬</div>
-        )}
-      </button>
-    );
-  }
-
-  if (cat === 'audio') {
-    return (
-      <button ref={containerRef} className="gallery-thumb gallery-thumb-file" onClick={onClick} title={filename}>
-        <div className="gallery-thumb-icon">🎵</div>
-        <div className="gallery-thumb-name">{filename}</div>
-      </button>
-    );
-  }
-
-  // files
-  return (
-    <button ref={containerRef} className="gallery-thumb gallery-thumb-file" onClick={onClick} title={filename}>
-      <div className="gallery-thumb-icon">📄</div>
-      <div className="gallery-thumb-name">{filename}</div>
+          <div className="gallery-thumb-placeholder"><Film size={24} /></div>
+        )
+      ) : cat === 'audio' ? (
+        <>
+          <div className="gallery-thumb-icon"><Music size={24} /></div>
+          <div className="gallery-thumb-name">{filename}</div>
+        </>
+      ) : (
+        <>
+          <div className="gallery-thumb-icon"><FileText size={24} /></div>
+          <div className="gallery-thumb-name">{filename}</div>
+        </>
+      )}
     </button>
   );
-}
+}, (prev, next) => {
+  return prev.attachment === next.attachment &&
+         prev.mediaState === next.mediaState &&
+         prev.selectionMode === next.selectionMode &&
+         prev.isSelected === next.isSelected;
+});
 
 // Group attachments by month for date separators
 function groupByMonth(attachments: ResolvedAttachment[]): { label: string; items: ResolvedAttachment[] }[] {
@@ -239,7 +266,7 @@ function groupByMonth(attachments: ResolvedAttachment[]): { label: string; items
   return groups;
 }
 
-export function AttachmentGallery({
+const AttachmentGalleryBase = function AttachmentGallery({
   chatData,
   mediaState,
   settings: _settings,
@@ -248,6 +275,7 @@ export function AttachmentGallery({
   onJumpToMessage,
   onToggleInfoPanel,
   defaultTab = 'all',
+  selection,
 }: AttachmentGalleryProps) {
   const { all, getFiltered } = useAttachments(chatData, mediaState);
 
@@ -255,12 +283,22 @@ export function AttachmentGallery({
   const [activeTab, setActiveTab] = useState<AttachmentCategory>(defaultTab);
   const scrollPositions = useRef<Record<string, number>>({});
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  
+  const [selectionMode, setSelectionMode] = useState(false);
 
   useEffect(() => {
     if (defaultTab) {
       setActiveTab(defaultTab);
     }
   }, [defaultTab]);
+  
+  useEffect(() => {
+    if (selection.selectedCount > 0) {
+      setSelectionMode(true);
+    } else {
+      setSelectionMode(false);
+    }
+  }, [selection.selectedCount]);
 
   // Reset observers on mount/unmount.
   // useLayoutEffect ensures reset runs BEFORE children's useEffect (which sets up observers).
@@ -295,12 +333,25 @@ export function AttachmentGallery({
     setActiveTab(tab);
   }, [saveScrollPosition]);
 
-  const handleThumbnailClick = useCallback((attachment: ResolvedAttachment) => {
-    // Find index within the current filtered list (reversed for display, so we need original index)
+  const openViewer = useCallback((attachment: ResolvedAttachment) => {
     const filtered = getFiltered(activeTab);
     const idx = filtered.indexOf(attachment);
     setViewerState({ open: true, index: idx >= 0 ? idx : 0 });
   }, [activeTab, getFiltered]);
+
+  const handleThumbnailClick = useCallback((attachment: ResolvedAttachment) => {
+    if (selectionMode) {
+      selection.toggle(attachment);
+    } else {
+      openViewer(attachment);
+    }
+  }, [selectionMode, selection, openViewer]);
+  
+  const handleThumbnailDoubleClick = useCallback((attachment: ResolvedAttachment) => {
+    if (selectionMode) {
+      openViewer(attachment);
+    }
+  }, [selectionMode, openViewer]);
 
   const handleViewerJump = useCallback((messageIndex: number) => {
     setViewerState({ open: false, index: 0 });
@@ -328,9 +379,21 @@ export function AttachmentGallery({
           onClick={onClose}
           aria-label="Back to chat"
           title="Back to chat"
-        >←</button>
+        ><ArrowLeft size={18} /></button>
         <h3>Attachments</h3>
 
+        <button
+          className={`gallery-select-mode-toggle ${selectionMode ? 'active' : ''}`}
+          onClick={() => {
+            if (selectionMode && selection.selectedCount > 0) {
+              selection.deselectAll();
+            }
+            setSelectionMode(!selectionMode);
+          }}
+          title="Select attachments"
+        >
+          <CheckSquare size={18} />
+        </button>
         <button
           className="chat-info-toggle"
           id="galleryInfoToggle"
@@ -338,7 +401,7 @@ export function AttachmentGallery({
           aria-expanded={infoPanelOpen}
           onClick={onToggleInfoPanel}
           title="Chat info"
-        >i</button>
+        ><Info size={18} /></button>
       </div>
 
       {/* Tabs */}
@@ -360,7 +423,7 @@ export function AttachmentGallery({
       <div id="line" />
 
       {/* Grid */}
-      <div className="gallery-scroll" ref={scrollContainerRef}>
+      <div className={`gallery-scroll ${selectionMode ? 'selection-mode-active' : ''}`} ref={scrollContainerRef}>
         {groups.length === 0 ? (
           <div className="gallery-empty">No attachments found</div>
         ) : (
@@ -374,6 +437,9 @@ export function AttachmentGallery({
                     attachment={att}
                     mediaState={mediaState}
                     onClick={() => handleThumbnailClick(att)}
+                    onDoubleClick={() => handleThumbnailDoubleClick(att)}
+                    selectionMode={selectionMode}
+                    isSelected={selection.isSelected(att)}
                   />
                 ))}
               </div>
@@ -390,8 +456,18 @@ export function AttachmentGallery({
           mediaState={mediaState}
           onClose={() => setViewerState({ open: false, index: viewerState.index })}
           onJumpToMessage={handleViewerJump}
+          selection={selection}
         />
       )}
     </>
   );
 }
+
+export const AttachmentGallery = memo(AttachmentGalleryBase, (prev, next) => {
+  return prev.chatData === next.chatData &&
+         prev.mediaState === next.mediaState &&
+         prev.settings === next.settings &&
+         prev.infoPanelOpen === next.infoPanelOpen &&
+         prev.defaultTab === next.defaultTab &&
+         prev.selection === next.selection;
+});

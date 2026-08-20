@@ -240,7 +240,7 @@ const MessageChunk = React.memo(function MessageChunk({
   );
 });
 
-export const MessageList = forwardRef<MessageListHandle, MessageListProps>(function MessageList(
+const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function MessageList(
   { chatData, mediaState, selectedPerspective, settings, highlightQuery, onScrollSync, onMediaClick },
   ref
 ) {
@@ -335,4 +335,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       ))}
     </div>
   );
+});
+
+export const MessageList = React.memo(MessageListBase, (prev, next) => {
+  return prev.chatData === next.chatData &&
+         prev.mediaState === next.mediaState &&
+         prev.highlightQuery === next.highlightQuery &&
+         prev.selectedPerspective === next.selectedPerspective &&
+         prev.settings === next.settings;
 });

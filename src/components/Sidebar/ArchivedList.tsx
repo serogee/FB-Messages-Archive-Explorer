@@ -1,4 +1,5 @@
 import type { ChatListEntry } from '../../types/messenger';
+import { ArrowLeft } from 'lucide-react';
 import { ChatList } from './ChatList';
 
 interface ArchivedListProps {
@@ -33,7 +34,7 @@ export function ArchivedList({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <button className="archived-back" onClick={onBack} aria-label="Back to inbox">
-        ← Back to Chats
+        <ArrowLeft size={16} /> Back to Chats
       </button>
       <span className="archived-label">{label}</span>
       {chatList.length === 0 ? (

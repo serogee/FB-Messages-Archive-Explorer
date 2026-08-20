@@ -1,0 +1,179 @@
+/* ── Selection Panel (Info Panel replacement) ───────────────────── */
+
+.selection-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border);
+}
+
+.selection-panel-header {
+  flex: 0 0 auto;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.selection-panel-header strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selection-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Clear all button */
+.selection-clear-btn {
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.selection-clear-btn:hover {
+  color: #ff5555;
+  border-color: #ff5555;
+  background: rgba(255,85,85,0.06);
+}
+
+/* 3-dot options menu */
+.selection-menu-wrap {
+  position: relative;
+}
+.selection-menu-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 2px;
+  line-height: 1;
+  transition: all 0.15s;
+}
+.selection-menu-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.selection-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  min-width: 180px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  z-index: 300;
+  animation: selection-menu-in 0.12s ease;
+}
+@keyframes selection-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.selection-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 6px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 14px;
+  transition: background 0.1s;
+}
+.selection-menu-item:hover {
+  background: var(--hover-overlay);
+}
+.dark .selection-menu-item:hover {
+  background: var(--hover-overlay-dark);
+}
+.selection-menu-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+  color: var(--muted);
+  transition: color 0.1s;
+}
+.selection-menu-item:hover .selection-menu-icon {
+  color: var(--text);
+}
+
+/* Grid content — matches gallery grid exactly */
+.selection-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px 12px 12px;
+}
+
+.selection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 4px;
+}
+
+/* Progress */
+.selection-progress-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.selection-progress-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.selection-progress-text {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.selection-progress-track {
+  height: 6px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.selection-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.1s linear;
+}

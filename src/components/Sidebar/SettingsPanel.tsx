@@ -4,6 +4,7 @@ import type { MessengerThread } from '../../types/messenger';
 import { getParticipantNames } from '../../services/parser';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
 import { EnableDeletionModal } from '../Modals/EnableDeletionModal';
+import { ChevronUp, ChevronDown } from 'lucide-react';
 
 interface SettingsPanelProps {
   settings: Settings;
@@ -84,7 +85,9 @@ function PerspectiveDropdown({
         <span className="perspective-dropdown-value">
           {selectedPerspective || 'Select...'}
         </span>
-        <span className="perspective-dropdown-arrow">{open ? '\u25B2' : '\u25BC'}</span>
+        <span className="perspective-dropdown-arrow">
+          {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </span>
       </button>
       {open && (
         <div className="perspective-dropdown-list" role="listbox">

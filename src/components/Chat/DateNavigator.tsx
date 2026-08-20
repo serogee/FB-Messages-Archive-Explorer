@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { MessengerThread } from '../../types/messenger';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import { isReactionNoticeMessage } from '../../services/reactions';
 import { getMessageTimestamp } from '../../services/parser';
@@ -232,7 +233,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
           title="Previous"
           aria-label="Previous period"
         >
-          ‹
+          <ChevronLeft size={16} />
         </button>
         <button
           id="dateNavNext"
@@ -241,7 +242,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
           title="Next"
           aria-label="Next period"
         >
-          ›
+          <ChevronRight size={16} />
         </button>
       </div>
 

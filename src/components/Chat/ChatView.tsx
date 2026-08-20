@@ -1,9 +1,11 @@
 import { useRef, useImperativeHandle, forwardRef, useState, useCallback } from 'react';
 import type { MessengerThread, MediaState, ChatListEntry } from '../../types/messenger';
+import { Info } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import type { useSearch } from '../../hooks/useSearch';
 import type { AttachmentCategory } from '../../hooks/useAttachments';
 import { useAttachments } from '../../hooks/useAttachments';
+import { useSelection } from '../../hooks/useSelection';
 import { DateNavigator } from './DateNavigator';
 import { MessageList, type MessageListHandle } from './MessageList';
 import { AttachmentGallery } from '../AttachmentGallery/AttachmentGallery';
@@ -27,6 +29,7 @@ interface ChatViewProps {
   galleryOpen: boolean;
   galleryDefaultTab?: AttachmentCategory;
   onCloseGallery: () => void;
+  selection: ReturnType<typeof useSelection>;
 }
 
 export interface ChatViewHandle {
@@ -68,6 +71,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     galleryOpen,
     galleryDefaultTab,
     onCloseGallery,
+    selection,
   },
   ref
 ) {
@@ -126,6 +130,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
             onJumpToMessage={handleViewerJump}
             onToggleInfoPanel={onToggleInfoPanel}
             defaultTab={galleryDefaultTab}
+            selection={selection}
           />
         )}
       </div>
@@ -158,7 +163,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
               onClick={onToggleInfoPanel}
               title="Chat info"
             >
-              i
+              <Info size={18} />
             </button>
           </div>
 
