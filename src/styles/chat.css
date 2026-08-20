@@ -242,6 +242,10 @@
     z-index: 20;
     cursor: default;
 }
+.from-them .reaction-popover {
+    left: 0;
+    right: auto;
+}
 .reaction-bubble:hover .reaction-popover {
     display: flex;
 }
@@ -481,11 +485,31 @@ img, video { max-width:100%; border-radius:10px; margin:5px; cursor:pointer; tra
 .info-row-clickable:hover { background: var(--hover-overlay); }
 
 /* Audio wrap with expand button */
-.media-audio-wrap { display: flex; align-items: center; gap: 6px; }
+.media-audio-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: 340px;
+    max-width: 100%;
+    min-width: 280px;
+    margin: 4px 0;
+    vertical-align: middle;
+}
+.media-audio-control {
+    width: 306px;
+    min-width: 246px;
+    height: 32px;
+    flex: 1 1 306px;
+}
+.audio-placeholder {
+    width: 132px;
+    height: 34px;
+    font-size: 12px;
+}
 .media-audio-expand {
     flex: 0 0 auto;
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     border: 1px solid rgba(0,0,0,0.1);
     border-radius: 6px;
     background: rgba(0,0,0,0.05);

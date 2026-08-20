@@ -210,12 +210,12 @@ function LazyMedia({ mediaPath, mediaFile, onMediaClick }: { mediaPath: string, 
   } else if (mediaType === 'audio') {
     content = fileURL
       ? <div className="media-audio-wrap">
-          <audio controls>
+          <audio controls className="media-audio-control">
             <source src={fileURL} type="audio/mpeg" />
           </audio>
           {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} title="Open in viewer">⛶</button>}
         </div>
-      : <span className="placeholder">[ Audio not found ]</span>;
+      : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
   } else {
     const filename = mediaPath.split('/').pop() || 'File attachment';
     content = fileURL
