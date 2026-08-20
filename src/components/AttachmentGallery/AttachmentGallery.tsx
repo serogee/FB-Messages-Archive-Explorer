@@ -109,8 +109,8 @@ function formatMonthYear(ts: number): string {
 interface GalleryThumbnailProps {
   attachment: ResolvedAttachment;
   mediaState: MediaState;
-  onClick: (e: React.MouseEvent) => void;
-  onDoubleClick: (e: React.MouseEvent) => void;
+  onOpen: (e: React.MouseEvent | React.KeyboardEvent) => void;
+  onSelect: (e: React.MouseEvent | React.KeyboardEvent) => void;
   selectionMode: boolean;
   isSelected: boolean;
 }
@@ -197,30 +197,41 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   const cat = attachment.category;
   const filename = attachment.mediaPath.split('/').pop() || 'File';
 
-  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleClick = (e: React.MouseEvent) => {
-    if (e.detail === 2) {
-      // Double click — cancel pending single click
-      if (clickTimerRef.current) {
-        clearTimeout(clickTimerRef.current);
-        clickTimerRef.current = null;
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (selectionMode) {
+        onSelect(e);
+      } else {
+        onOpen(e);
       }
-      onDoubleClick(e);
-    } else if (e.detail === 1) {
-      // Delay single click to see if double click follows
-      clickTimerRef.current = setTimeout(() => {
-        clickTimerRef.current = null;
-        onClick(e);
-      }, 200);
     }
   };
 
   const wrapperClass = `gallery-thumb ${cat === 'audio' || cat === 'files' ? 'gallery-thumb-file' : ''} ${isSelected ? 'selected' : ''}`;
 
   return (
-    <button ref={containerRef} className={wrapperClass} onClick={handleClick} title={filename}>
-      <div className="select-checkbox">
+    <div
+      ref={containerRef}
+      className={wrapperClass}
+      onClick={selectionMode ? onSelect : onOpen}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      title={filename}
+    >
+      <div
+        className="select-checkbox"
+        role="checkbox"
+        aria-checked={isSelected}
+        tabIndex={-1}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onSelect(e);
+        }}
+      >
         {isSelected && <Check size={14} />}
       </div>
       
@@ -250,7 +261,22 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
           <div className="gallery-thumb-name">{filename}</div>
         </>
       )}
-    </button>
+      {selectionMode && (
+        <button
+          type="button"
+          className="gallery-open-viewer-btn"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onOpen(e);
+          }}
+          aria-label={`Open ${filename}`}
+          title="Open"
+        >
+          <Info size={15} />
+        </button>
+      )}
+    </div>
   );
 }, (prev, next) => {
   return prev.attachment === next.attachment &&
@@ -445,8 +471,8 @@ const AttachmentGalleryBase = function AttachmentGallery({
                     key={`${att.messageIndex}-${att.mediaPath}-${gi}-${ai}`}
                     attachment={att}
                     mediaState={mediaState}
-                    onClick={() => handleThumbnailClick(att)}
-                    onDoubleClick={() => handleThumbnailDoubleClick(att)}
+                    onOpen={() => handleThumbnailClick(att)}
+                    onSelect={() => handleThumbnailToggleSelect(att)}
                     selectionMode={selectionMode}
                     isSelected={selection.isSelected(att)}
                   />

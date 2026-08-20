@@ -197,6 +197,34 @@
     border-color: white;
 }
 
+.gallery-open-viewer-btn {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: none;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+    z-index: 11;
+    opacity: 0;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.65));
+    transition: opacity 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+.gallery-thumb:hover .gallery-open-viewer-btn,
+.gallery-open-viewer-btn:focus-visible {
+    opacity: 1;
+}
+.gallery-open-viewer-btn:hover {
+    color: var(--accent);
+    transform: scale(1.06);
+}
+
 .gallery-thumb-img {
     width: 100%;
     height: 100%;
