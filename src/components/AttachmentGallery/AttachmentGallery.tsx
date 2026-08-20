@@ -6,6 +6,7 @@ import { useAttachments, type AttachmentCategory } from '../../hooks/useAttachme
 import type { useSelection } from '../../hooks/useSelection';
 import { findMediaFile } from '../../services/media';
 import { blobCache } from '../../services/blobCache';
+import { videoPosterCache } from '../../services/videoPosterCache';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
 
 // Shared IntersectionObserver for all gallery thumbnails to avoid creating thousands of observers
@@ -117,27 +118,38 @@ interface GalleryThumbnailProps {
 const GalleryThumbnail = memo(function GalleryThumbnail({
   attachment,
   mediaState,
-  onClick,
-  onDoubleClick,
+  onOpen,
+  onSelect,
+  selectionMode,
   isSelected,
 }: GalleryThumbnailProps) {
   const [url, setUrl] = useState<string | null>(null);
-  const containerRef = useRef<HTMLButtonElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
     if (!entry) return;
 
-    // Non-video items with a cached blob URL: show immediately, no observer needed
-    const cached = blobCache.get(entry);
-    if (cached && attachment.category !== 'videos') {
-      setUrl(cached);
-      return;
+    if (attachment.category === 'videos') {
+      const cachedPoster = videoPosterCache.get(entry);
+      if (cachedPoster) {
+        setUrl(cachedPoster);
+        return;
+      }
     }
-    if (!cached && entry.url && attachment.category !== 'videos') {
-      blobCache.put(entry, entry.url);
-      setUrl(entry.url);
-      return;
+
+    // Non-video items with a cached blob URL: show immediately, no observer needed
+    if (attachment.category !== 'videos') {
+      const cached = blobCache.get(entry);
+      if (cached) {
+        setUrl(cached);
+        return;
+      }
+      if (entry.url) {
+        blobCache.put(entry, entry.url);
+        setUrl(entry.url);
+        return;
+      }
     }
 
     // Nothing to load (no cached URL and no file handle)
@@ -149,20 +161,23 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
 
     observerCallbacks.set(el, {
       load: () => {
-        const cachedUrl = blobCache.get(entry);
+        const cachedUrl = attachment.category === 'videos'
+          ? videoPosterCache.get(entry)
+          : blobCache.get(entry);
         if (cachedUrl) {
           if (isMounted) setUrl(cachedUrl);
           return;
         }
         if (!entry.handle) return;
-        blobCache.getOrCreate(entry).then(blobUrl => {
+        const loader = attachment.category === 'videos'
+          ? videoPosterCache.getOrCreate(entry)
+          : blobCache.getOrCreate(entry);
+        loader.then(blobUrl => {
           if (isMounted && blobUrl) setUrl(blobUrl);
         });
       },
       unload: () => {
-        if (isMounted && attachment.category === 'videos') {
-          setUrl(null);
-        }
+        if (isMounted) setUrl(null);
       }
     });
 
@@ -216,14 +231,14 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
           <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
         )
       ) : cat === 'videos' ? (
-        url ? (
-          <>
-            <video src={url} className="gallery-thumb-img" preload="metadata" muted />
-            <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>
-          </>
-        ) : (
-          <div className="gallery-thumb-placeholder"><Film size={24} /></div>
-        )
+        <>
+          {url ? (
+            <img src={url} alt={filename} className="gallery-thumb-img" loading="lazy" />
+          ) : (
+            <div className="gallery-thumb-placeholder"><Film size={24} /></div>
+          )}
+          <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>
+        </>
       ) : cat === 'audio' ? (
         <>
           <div className="gallery-thumb-icon"><Music size={24} /></div>
@@ -340,18 +355,12 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, [activeTab, getFiltered]);
 
   const handleThumbnailClick = useCallback((attachment: ResolvedAttachment) => {
-    if (selectionMode) {
-      selection.toggle(attachment);
-    } else {
-      openViewer(attachment);
-    }
-  }, [selectionMode, selection, openViewer]);
-  
-  const handleThumbnailDoubleClick = useCallback((attachment: ResolvedAttachment) => {
-    if (selectionMode) {
-      openViewer(attachment);
-    }
-  }, [selectionMode, openViewer]);
+    openViewer(attachment);
+  }, [openViewer]);
+
+  const handleThumbnailToggleSelect = useCallback((attachment: ResolvedAttachment) => {
+    selection.toggle(attachment);
+  }, [selection]);
 
   const handleViewerJump = useCallback((messageIndex: number) => {
     setViewerState({ open: false, index: 0 });
