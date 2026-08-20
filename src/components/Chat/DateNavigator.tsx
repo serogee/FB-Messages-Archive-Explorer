@@ -74,6 +74,79 @@ function buildDateBuckets(messages: MessengerThread['messages']): BucketsByScale
   };
 }
 
+function getBucketKeyForMessageIndex(buckets: DateBucket[], msgIndex: number): string | null {
+  if (buckets.length === 0) return null;
+
+  let lo = 0;
+  let hi = buckets.length - 1;
+  let best = 0;
+
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (buckets[mid].index <= msgIndex) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  return buckets[best].key;
+}
+
+function findClosestChunkIndex(container: HTMLDivElement, activeLine: number): number | null {
+  const chunks = Array.from(container.querySelectorAll('.message-chunk[data-start-msg-index]')) as HTMLElement[];
+  if (chunks.length === 0) return null;
+
+  let lo = 0;
+  let hi = chunks.length - 1;
+  let candidate = chunks.length - 1;
+
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const rect = chunks[mid].getBoundingClientRect();
+    if (rect.bottom >= activeLine) {
+      candidate = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+
+  const chunk = chunks[candidate];
+  const chunkRect = chunk.getBoundingClientRect();
+  const attr = activeLine > chunkRect.bottom ? chunk.dataset.endMsgIndex : chunk.dataset.startMsgIndex;
+  const index = Number(attr);
+  return Number.isFinite(index) ? index : null;
+}
+
+function findMessageIndexAtActiveLine(container: HTMLDivElement): number | null {
+  const containerRect = container.getBoundingClientRect();
+  const activeLine = containerRect.top + Math.max(60, containerRect.height * 0.2);
+  const x = containerRect.left + Math.max(1, Math.min(containerRect.width - 1, containerRect.width * 0.5));
+  const sampleYs = [activeLine, activeLine + 24, activeLine - 24, activeLine + 60, activeLine - 60];
+
+  for (const y of sampleYs) {
+    if (y < containerRect.top || y > containerRect.bottom) continue;
+    const el = document.elementFromPoint(x, y);
+    if (!el || !container.contains(el)) continue;
+
+    const msgEl = el.closest('.message[data-msg-index]') as HTMLElement | null;
+    if (msgEl) {
+      const index = Number(msgEl.dataset.msgIndex);
+      if (Number.isFinite(index)) return index;
+    }
+
+    const chunkEl = el.closest('.message-chunk[data-start-msg-index]') as HTMLElement | null;
+    if (chunkEl) {
+      const index = Number(chunkEl.dataset.startMsgIndex);
+      if (Number.isFinite(index)) return index;
+    }
+  }
+
+  return findClosestChunkIndex(container, activeLine);
+}
+
 interface DateNavigatorProps {
   chatData: MessengerThread | null;
   settings: Settings;
@@ -89,6 +162,8 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
   const syncingRef = useRef(false);
   const sliderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const activeKeyRef = useRef<string | null>(null);
+  const currentBucketsRef = useRef<DateBucket[]>([]);
 
   // Rebuild buckets when chat changes
   useEffect(() => {
@@ -103,30 +178,33 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
     setActiveKey(built.month[0]?.key ?? null);
   }, [chatData]);
 
-  const currentBuckets = buckets[scale] || [];
+  const currentBuckets = React.useMemo(() => buckets[scale] || [], [buckets, scale]);
   const activeIndex = currentBuckets.findIndex(b => b.key === activeKey);
   const activeBucket = activeIndex >= 0 ? currentBuckets[activeIndex] : currentBuckets[0];
   const hasDates = currentBuckets.length > 0;
   const maxCount = Math.max(1, ...currentBuckets.map(b => b.count));
 
+  useEffect(() => {
+    activeKeyRef.current = activeKey;
+  }, [activeKey]);
+
+  useEffect(() => {
+    currentBucketsRef.current = currentBuckets;
+  }, [currentBuckets]);
+
   // Scroll sync: update active bucket from scroll position
   const updateFromScroll = useCallback(() => {
     if (syncingRef.current) return;
     const container = chatContainerRef.current;
-    if (!container || !chatData?.messages) return;
-    const containerRect = container.getBoundingClientRect();
-    const allMsgEls = Array.from(container.querySelectorAll('.message[data-msg-index]')) as HTMLElement[];
-    const activeLine = containerRect.top + Math.max(60, containerRect.height * 0.2);
-    const currentEl = allMsgEls.find(el => el.getBoundingClientRect().bottom >= activeLine) || allMsgEls[allMsgEls.length - 1];
-    if (!currentEl) return;
-    const msgIndex = Number(currentEl.dataset.msgIndex);
-    const msg = chatData.messages[msgIndex];
-    if (!msg) return;
-    const ts = getMessageTimestamp(msg);
-    if (ts === null) return;
-    const key = getBucketKey(scale, ts);
-    if (key !== activeKey) setActiveKey(key);
-  }, [chatData, scale, activeKey, chatContainerRef]);
+    const bucketsForScale = currentBucketsRef.current;
+    if (!container || bucketsForScale.length === 0) return;
+
+    const msgIndex = findMessageIndexAtActiveLine(container);
+    if (msgIndex === null) return;
+
+    const key = getBucketKeyForMessageIndex(bucketsForScale, msgIndex);
+    if (key && key !== activeKeyRef.current) setActiveKey(key);
+  }, [chatContainerRef]);
 
   // Expose updateFromScroll for parent to call on scroll
   useEffect(() => {

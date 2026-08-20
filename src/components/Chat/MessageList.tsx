@@ -66,6 +66,14 @@ function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages
   );
 }
 
+function getChunksAndHeights(chatData: MessengerThread) {
+  const chunks = chunkArray(chatData.messages, CHUNK_SIZE);
+  if (!chatData._chunkHeights || chatData._chunkHeights.length !== chunks.length) {
+    chatData._chunkHeights = chunks.map((chunk, i) => estimateChunkHeight(chunk, i, chatData.messages));
+  }
+  return { chunks, chunkHeights: chatData._chunkHeights };
+}
+
 function formatSeparatorDate(ts: number): string {
   return new Date(ts).toLocaleString([], {
     weekday: 'short', month: 'short', day: 'numeric',
@@ -162,6 +170,8 @@ const MessageChunk = React.memo(function MessageChunk({
         ref={chunkRef}
         className="message-chunk"
         data-chunk-index={chunkIndex}
+        data-start-msg-index={chunkIndex * CHUNK_SIZE}
+        data-end-msg-index={Math.min(allMessages.length - 1, (chunkIndex + 1) * CHUNK_SIZE - 1)}
         style={{ minHeight: estimatedHeight }}
       />
     );
@@ -234,7 +244,13 @@ const MessageChunk = React.memo(function MessageChunk({
   });
 
   return (
-    <div ref={chunkRef} className="message-chunk" data-chunk-index={chunkIndex}>
+    <div
+      ref={chunkRef}
+      className="message-chunk"
+      data-chunk-index={chunkIndex}
+      data-start-msg-index={chunkIndex * CHUNK_SIZE}
+      data-end-msg-index={Math.min(allMessages.length - 1, (chunkIndex + 1) * CHUNK_SIZE - 1)}
+    >
       {items}
     </div>
   );
@@ -309,11 +325,14 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     }
   }, [chatData]);
 
+  const { chunks, chunkHeights } = React.useMemo(
+    () => chatData ? getChunksAndHeights(chatData) : { chunks: [], chunkHeights: [] },
+    [chatData]
+  );
+
   if (!chatData) return null;
 
   const allMessages = chatData.messages;
-  const chunks = chunkArray(allMessages, CHUNK_SIZE);
-  const chunkHeights = chunks.map((chunk, i) => estimateChunkHeight(chunk, i, allMessages));
 
   return (
     <div id="chat" ref={chatContainerRef} onScroll={handleScroll}>
