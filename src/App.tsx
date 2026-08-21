@@ -146,7 +146,12 @@ export default function App() {
         console.error('Failed to calculate chat size:', error);
       });
     }
-    await chat.loadChat(entry);
+    archive.setSizeQueuePaused(true);
+    try {
+      await chat.loadChat(entry);
+    } finally {
+      archive.setSizeQueuePaused(false);
+    }
   }, [archive, chat]);
 
   useEffect(() => {

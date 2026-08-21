@@ -123,6 +123,7 @@ export function useArchive(): {
   openFolderWithWriteAccess: () => Promise<void>;
   getDeleteInfo: (entry: ChatListEntry | ChatListEntry[]) => Promise<MessengerExportDeletionInfo>;
   computeAndUpdateFolderSize: (entry: ChatListEntry) => Promise<number>;
+  setSizeQueuePaused: (paused: boolean) => void;
   deleteChat: (entry: ChatListEntry) => Promise<void>;
   deleteChats: (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => Promise<void>;
   updateFolderSize: (entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => void;
@@ -147,6 +148,10 @@ export function useArchive(): {
     rootHandle: FileSystemDirectoryHandle;
     mediaSizeIndex: Map<string, number>;
   } | null>(null);
+  const sizeComputationPromisesRef = useRef<Map<string, Promise<number>>>(new Map());
+  const sizeQueuePausedRef = useRef(false);
+  const sizeQueuePauseCountRef = useRef(0);
+  const sizeQueueResumeWaitersRef = useRef<Set<() => void>>(new Set());
 
   const inboxListRef = useRef<ChatListEntry[]>([]);
   const archivedListRef = useRef<ChatListEntry[]>([]);
@@ -154,6 +159,52 @@ export function useArchive(): {
   inboxListRef.current = inboxList;
   archivedListRef.current = archivedList;
   requestsListRef.current = requestsList;
+
+  const getSizeEntryKey = useCallback((entry: ChatListEntry): string => {
+    return `${entry.source}:${entry.folderName}:${entry._jsonFileName || ''}`;
+  }, []);
+
+  const getCurrentEntry = useCallback((entry: ChatListEntry): ChatListEntry | null => {
+    const key = getSizeEntryKey(entry);
+    return [...inboxListRef.current, ...archivedListRef.current, ...requestsListRef.current]
+      .find(candidate => getSizeEntryKey(candidate) === key) || null;
+  }, [getSizeEntryKey]);
+
+  const hasCompleteSize = useCallback((entry: ChatListEntry): boolean => {
+    return entry.folderSize > 0 && (!entry._messengerExport || !!entry._sizeIncludesMedia);
+  }, []);
+
+  const waitForSizeQueueResume = useCallback(async (signal?: AbortSignal): Promise<void> => {
+    while (sizeQueuePausedRef.current && !signal?.aborted) {
+      await new Promise<void>(resolve => {
+        sizeQueueResumeWaitersRef.current.add(resolve);
+      });
+    }
+  }, []);
+
+  const resumeSizeQueue = useCallback(() => {
+    sizeQueuePausedRef.current = false;
+    if (sizeQueueResumeWaitersRef.current.size > 0) {
+      const waiters = Array.from(sizeQueueResumeWaitersRef.current);
+      sizeQueueResumeWaitersRef.current.clear();
+      waiters.forEach(resolve => resolve());
+    }
+  }, []);
+
+  const setSizeQueuePaused = useCallback((paused: boolean) => {
+    if (paused) {
+      sizeQueuePauseCountRef.current++;
+    } else {
+      sizeQueuePauseCountRef.current = Math.max(0, sizeQueuePauseCountRef.current - 1);
+    }
+
+    if (sizeQueuePauseCountRef.current > 0) {
+      sizeQueuePausedRef.current = true;
+      return;
+    }
+
+    resumeSizeQueue();
+  }, [resumeSizeQueue]);
 
   const startLazySizeComputation = useCallback((
     entries: ChatListEntry[],
@@ -221,18 +272,38 @@ export function useArchive(): {
       const entry = entries[index];
       setTimeout(async () => {
         if (signal?.aborted) return;
+        await waitForSizeQueueResume(signal);
+        if (signal?.aborted) return;
         try {
-          const size = await computeSize(entry);
+          const currentEntry = getCurrentEntry(entry);
+          if (currentEntry && hasCompleteSize(currentEntry)) {
+            done++;
+            scheduleFlush(done >= entries.length);
+            processNext(index + 1);
+            return;
+          }
+
+          const key = getSizeEntryKey(entry);
+          let sizePromise = sizeComputationPromisesRef.current.get(key);
+          if (!sizePromise) {
+            sizePromise = computeSize(entry);
+            sizeComputationPromisesRef.current.set(key, sizePromise);
+          }
+
+          const size = await sizePromise;
           if (signal?.aborted) return;
           pendingSizes.set(entry._jsonFileName || entry.folderName, size);
         } catch { /* ignore */ }
+        finally {
+          sizeComputationPromisesRef.current.delete(getSizeEntryKey(entry));
+        }
         done++;
         scheduleFlush(done >= entries.length);
         processNext(index + 1);
       }, 0);
     };
     processNext(0);
-  }, []);
+  }, [getCurrentEntry, getSizeEntryKey, hasCompleteSize, waitForSizeQueueResume]);
 
   const openFolder = useCallback(async (requestWrite?: boolean, onFolderPicked?: () => void): Promise<boolean> => {
     let abortCtrl: AbortController | null = null;
@@ -256,6 +327,9 @@ export function useArchive(): {
       isMessengerExportRef.current = false;
       messengerReferenceIndexRef.current = null;
       messengerMediaSizeIndexRef.current = null;
+      sizeComputationPromisesRef.current.clear();
+      sizeQueuePauseCountRef.current = 0;
+      resumeSizeQueue();
       
       const messagesRoot = await resolveMessagesRoot(handle);
       if (!messagesRoot) {
@@ -390,7 +464,7 @@ export function useArchive(): {
         setLoadProgress(null);
       }
     }
-  }, [startLazySizeComputation]);
+  }, [resumeSizeQueue, startLazySizeComputation]);
 
   const openFolderWithWriteAccess = useCallback(async () => {
     setError(null);
@@ -541,20 +615,37 @@ export function useArchive(): {
   }, []);
 
   const computeAndUpdateFolderSize = useCallback(async (entry: ChatListEntry): Promise<number> => {
-    let size: number;
-    if (entry._messengerExport) {
-      const mediaSizeIndex = await getMessengerMediaSizeIndex();
-      size = await computeMessengerExportChatSize(entry.dirHandle, entry._jsonFileName!, mediaSizeIndex);
-      updateFolderSize(entry, size, true);
-    } else {
-      size = await computeFolderSize(entry.dirHandle);
-      updateFolderSize(entry, size);
+    const currentEntry = getCurrentEntry(entry);
+    if (currentEntry && hasCompleteSize(currentEntry)) {
+      return currentEntry.folderSize;
     }
-    return size;
-  }, [getMessengerMediaSizeIndex, updateFolderSize]);
+
+    const key = getSizeEntryKey(entry);
+    let sizePromise = sizeComputationPromisesRef.current.get(key);
+    if (!sizePromise) {
+      sizePromise = (async () => {
+        if (entry._messengerExport) {
+          const mediaSizeIndex = await getMessengerMediaSizeIndex();
+          return computeMessengerExportChatSize(entry.dirHandle, entry._jsonFileName!, mediaSizeIndex);
+        }
+        return computeFolderSize(entry.dirHandle);
+      })();
+      sizeComputationPromisesRef.current.set(key, sizePromise);
+    }
+
+    try {
+      const size = await sizePromise;
+      updateFolderSize(entry, size, entry._messengerExport ? true : undefined);
+      return size;
+    } finally {
+      if (sizeComputationPromisesRef.current.get(key) === sizePromise) {
+        sizeComputationPromisesRef.current.delete(key);
+      }
+    }
+  }, [getCurrentEntry, getMessengerMediaSizeIndex, getSizeEntryKey, hasCompleteSize, updateFolderSize]);
 
   return {
     rootHandle, originalRootHandle, inboxList, archivedList, requestsList,    loading, loadProgress, sizeProgress, error,
-    openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, deleteChat, deleteChats, updateFolderSize,
+    openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, setSizeQueuePaused, deleteChat, deleteChats, updateFolderSize,
   };
 }
