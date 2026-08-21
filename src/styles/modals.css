@@ -24,6 +24,31 @@
 .delete-warning { color:var(--muted); font-size:14px; line-height:1.5; margin-bottom:16px; }
 .delete-warning strong { color:#e53e3e; }
 .delete-meta { color:var(--muted); font-size:13px; margin-bottom:20px; }
+.delete-breakdown { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+.delete-breakdown-row { display:grid; grid-template-columns:96px minmax(0,1fr); gap:10px; align-items:baseline; font-size:13px; }
+.delete-breakdown-row span { color:var(--muted); }
+.delete-breakdown-row strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-size:13px; }
 .delete-actions { display:flex; justify-content:flex-end; gap:8px; }
 .btn-danger { background:#e53e3e; color:white; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; font:inherit; }
 .btn-danger:hover { background:#c53030; }
+.btn-danger:disabled,
+.btn-danger:disabled:hover {
+    background: #9ca3af;
+    color: #f3f4f6;
+    cursor: not-allowed;
+    opacity: 0.75;
+}
+.delete-toast {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 4500;
+    max-width: min(360px, calc(100vw - 32px));
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: #c53030;
+    color: white;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+    font-size: 14px;
+    font-weight: 600;
+}

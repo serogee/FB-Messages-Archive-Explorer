@@ -14,6 +14,7 @@ import { TrustModal } from './components/Modals/TrustModal';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
 import type { ChatListEntry } from './types/messenger';
 import type { AttachmentCategory } from './hooks/useAttachments';
+import type { MessengerExportDeletionInfo } from './services/messengerExport';
 
 export default function App() {
   const { settings, setSetting } = useSettings();
@@ -31,6 +32,11 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'chats' | 'settings'>('chats');
   const [deleteTarget, setDeleteTarget] = useState<ChatListEntry | ChatListEntry[] | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
+  const [deleteInfo, setDeleteInfo] = useState<MessengerExportDeletionInfo | null>(null);
+  const [deleteInfoLoading, setDeleteInfoLoading] = useState(false);
+  const [deleteToast, setDeleteToast] = useState<string | null>(null);
+  const deleteInfoRequestRef = useRef(0);
+  const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryDefaultTab, setGalleryDefaultTab] = useState<AttachmentCategory>('all');
@@ -57,6 +63,9 @@ export default function App() {
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return;
+    const deletedName = Array.isArray(deleteTarget)
+      ? `${deleteTarget.length} Chats`
+      : deleteTarget.title;
     try {
       if (Array.isArray(deleteTarget)) {
         setDeleteProgress({ done: 0, total: deleteTarget.length });
@@ -75,12 +84,46 @@ export default function App() {
           selection.deselectAll();
         }
       }
+      setDeleteToast(`${deletedName} Deleted`);
+      if (deleteToastTimerRef.current) clearTimeout(deleteToastTimerRef.current);
+      deleteToastTimerRef.current = setTimeout(() => setDeleteToast(null), 3200);
     } catch (e) {
       console.error('Delete failed:', e);
     }
     setDeleteProgress(null);
     setDeleteTarget(null);
+    setDeleteInfo(null);
+    setDeleteInfoLoading(false);
+    deleteInfoRequestRef.current++;
   }, [deleteTarget, archive, chat, selection]);
+
+  const handleDeleteRequest = useCallback((target: ChatListEntry | ChatListEntry[]) => {
+    const requestId = deleteInfoRequestRef.current + 1;
+    deleteInfoRequestRef.current = requestId;
+    setDeleteTarget(target);
+    setDeleteInfo(null);
+
+    setDeleteInfoLoading(true);
+    archive.getDeleteInfo(target)
+      .then(info => {
+        if (deleteInfoRequestRef.current !== requestId) return;
+        setDeleteInfo(info);
+      })
+      .catch(error => {
+        if (deleteInfoRequestRef.current !== requestId) return;
+        console.error('Failed to prepare delete details:', error);
+      })
+      .finally(() => {
+        if (deleteInfoRequestRef.current !== requestId) return;
+        setDeleteInfoLoading(false);
+      });
+  }, [archive]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteToastTimerRef.current) clearTimeout(deleteToastTimerRef.current);
+    };
+  }, []);
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await archive.openFolder(settings.deletionEnabled);
@@ -149,7 +192,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         onSelectChat={chat.loadChat}
         onOpenFolder={handleOpenFolder}
-        onDeleteChat={setDeleteTarget}
+        onDeleteChat={handleDeleteRequest}
         search={search}
         chatData={chat.chatData}
         mediaState={chat.mediaState}
@@ -228,10 +271,22 @@ export default function App() {
           entry={deleteTarget}
           onConfirm={handleDeleteConfirm}
           onCancel={() => {
-            if (!deleteProgress) setDeleteTarget(null);
+            if (!deleteProgress) {
+              setDeleteTarget(null);
+              setDeleteInfo(null);
+              setDeleteInfoLoading(false);
+              deleteInfoRequestRef.current++;
+            }
           }}
           progress={deleteProgress}
+          messengerDeletionInfo={deleteInfo}
+          deletionInfoLoading={deleteInfoLoading}
         />
+      )}
+      {deleteToast && (
+        <div className="delete-toast" role="status" aria-live="polite">
+          {deleteToast}
+        </div>
       )}
       <TrustModal settings={settings} setSetting={setSetting} />
     </div>
