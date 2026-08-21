@@ -25,14 +25,17 @@ export async function isMessengerExport(handle: FileSystemDirectoryHandle): Prom
     return false;
   } catch { /* not a Facebook messages root */ }
 
+  let checked = 0;
   for await (const [name, entry] of handle.entries()) {
     if (entry.kind !== 'file' || !/\.json$/i.test(name)) continue;
+    if (checked >= 3) break;
+    checked++;
 
     try {
       const file = await (entry as FileSystemFileHandle).getFile();
-      return isConversationJsonContent(await file.text());
+      if (isConversationJsonContent(await file.text())) return true;
     } catch {
-      return false;
+      continue;
     }
   }
 

@@ -1,7 +1,6 @@
 import type { ChatListEntry } from '../../types/messenger';
 import { getMessageAttachmentReferences } from '../media';
-import { isConversationJsonContent } from './messengerExportDetector';
-import { parseMessengerExportJson } from './messengerExportParser';
+import { tryParseMessengerExportJson } from './messengerExportParser';
 import { buildMessengerExportMediaSizeIndex } from './messengerExportSize';
 
 export interface MessengerExportReferenceIndex {
@@ -38,9 +37,8 @@ function isMessengerMediaRef(path: string): boolean {
 async function getConversationMediaBasenames(file: File): Promise<Set<string>> {
   const content = await file.text();
   const media = new Set<string>();
-  if (!isConversationJsonContent(content)) return media;
-
-  const thread = parseMessengerExportJson(content);
+  const thread = tryParseMessengerExportJson(content);
+  if (!thread) return media;
   for (const msg of thread.messages || []) {
     for (const { path } of getMessageAttachmentReferences(msg)) {
       if (!isMessengerMediaRef(path)) continue;

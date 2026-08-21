@@ -1,7 +1,6 @@
 import type { ChatListEntry, MessengerThread } from '../../types/messenger';
 import { getMessageTimestamp } from '../parser';
-import { isConversationJsonContent } from './messengerExportDetector';
-import { getMessengerExportLastMessage, parseMessengerExportJson } from './messengerExportParser';
+import { getMessengerExportLastMessage, tryParseMessengerExportJson } from './messengerExportParser';
 
 function jsonStem(fileName: string): string {
   return fileName.replace(/\.json$/i, '');
@@ -62,9 +61,8 @@ export async function listMessengerExportChats(
     try {
       const file = await fileHandle.getFile();
       const content = await file.text();
-      if (!isConversationJsonContent(content)) continue;
-
-      const thread = parseMessengerExportJson(content);
+      const thread = tryParseMessengerExportJson(content);
+      if (!thread) continue;
       const { lastMessage, lastTimestamp } = describeLastMessage(thread);
 
       entries.push({

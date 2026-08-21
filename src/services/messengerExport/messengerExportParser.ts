@@ -21,6 +21,17 @@ interface RawMessengerExportThread {
   messages?: RawMessengerExportMessage[];
 }
 
+function isRawMessengerExportThread(raw: unknown): raw is RawMessengerExportThread {
+  return (
+    !!raw &&
+    typeof raw === 'object' &&
+    typeof (raw as RawMessengerExportThread).threadName === 'string' &&
+    Array.isArray((raw as RawMessengerExportThread).participants) &&
+    (raw as RawMessengerExportThread).participants!.some(participant => typeof participant === 'string') &&
+    Array.isArray((raw as RawMessengerExportThread).messages)
+  );
+}
+
 function isUsableMediaUri(uri: string): boolean {
   return /^\.?\/?media\//i.test(uri) || /^[^/\\]+\.[a-z0-9]{2,5}$/i.test(uri);
 }
@@ -80,8 +91,7 @@ function normalizeMessage(raw: RawMessengerExportMessage): MessengerMessage {
   return message;
 }
 
-export function parseMessengerExportJson(content: string): MessengerThread {
-  const raw = JSON.parse(content) as RawMessengerExportThread;
+function parseMessengerExportRaw(raw: RawMessengerExportThread): MessengerThread {
   const title = fixEncoding(raw.threadName || 'conversation');
   const participants = (raw.participants || [])
     .filter((participant): participant is string => typeof participant === 'string')
@@ -96,6 +106,21 @@ export function parseMessengerExportJson(content: string): MessengerThread {
   };
 
   return normalizeMessengerData(thread);
+}
+
+export function parseMessengerExportJson(content: string): MessengerThread {
+  const raw = JSON.parse(content) as RawMessengerExportThread;
+  return parseMessengerExportRaw(raw);
+}
+
+export function tryParseMessengerExportJson(content: string): MessengerThread | null {
+  try {
+    const raw = JSON.parse(content);
+    if (!isRawMessengerExportThread(raw)) return null;
+    return parseMessengerExportRaw(raw);
+  } catch {
+    return null;
+  }
 }
 
 export function getMessengerExportLastMessage(thread: MessengerThread): MessengerMessage | null {
