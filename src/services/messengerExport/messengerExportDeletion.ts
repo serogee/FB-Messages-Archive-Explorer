@@ -34,12 +34,21 @@ function isMessengerMediaRef(path: string): boolean {
   return normalized.startsWith('media/') || /^[^/]+\.[a-z0-9]{2,5}$/i.test(normalized);
 }
 
-async function getConversationMediaBasenames(file: File): Promise<Set<string>> {
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+}
+
+async function getConversationMediaBasenames(file: File, signal?: AbortSignal): Promise<Set<string>> {
+  throwIfAborted(signal);
   const content = await file.text();
+  throwIfAborted(signal);
   const media = new Set<string>();
   const thread = tryParseMessengerExportJson(content);
   if (!thread) return media;
   for (const msg of thread.messages || []) {
+    throwIfAborted(signal);
     for (const { path } of getMessageAttachmentReferences(msg)) {
       if (!isMessengerMediaRef(path)) continue;
       const basename = getBasename(path);
@@ -59,12 +68,12 @@ export async function buildMessengerExportReferenceIndex(
   let lastYield = performance.now();
 
   for await (const [name, entry] of rootHandle.entries()) {
-    if (signal?.aborted) break;
+    throwIfAborted(signal);
     if (entry.kind !== 'file' || !/\.json$/i.test(name)) continue;
 
     try {
       const file = await (entry as FileSystemFileHandle).getFile();
-      const media = await getConversationMediaBasenames(file);
+      const media = await getConversationMediaBasenames(file, signal);
       chatMedia.set(name, media);
 
       for (const basename of media) {
@@ -75,10 +84,14 @@ export async function buildMessengerExportReferenceIndex(
         }
         owners.add(name);
       }
-    } catch { /* skip unreadable JSON files */ }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      /* skip unreadable JSON files */
+    }
 
     if (performance.now() - lastYield > 16) {
       await new Promise(resolve => setTimeout(resolve, 0));
+      throwIfAborted(signal);
       lastYield = performance.now();
     }
   }
@@ -125,14 +138,18 @@ export async function getMessengerExportDeletionInfo(
   mediaSizeIndex?: Map<string, number>
 ): Promise<MessengerExportDeletionInfo> {
   const jsonFileName = entry._jsonFileName!;
+  throwIfAborted(signal);
   const resolvedMediaSizeIndex = mediaSizeIndex || await buildMessengerExportMediaSizeIndex(rootHandle, signal);
+  throwIfAborted(signal);
   const jsonSize = await getJsonSize(rootHandle, jsonFileName);
+  throwIfAborted(signal);
   const chatMedia = referenceIndex.chatMedia.get(jsonFileName) || new Set<string>();
   const exclusiveMediaFiles: string[] = [];
   let sharedMediaCount = 0;
   let mediaSize = 0;
 
   for (const basename of chatMedia) {
+    throwIfAborted(signal);
     const owners = referenceIndex.mediaOwners.get(basename);
     if (!owners || owners.size <= 1) {
       exclusiveMediaFiles.push(basename);
@@ -160,13 +177,16 @@ export async function getMessengerExportBatchDeletionInfo(
   signal?: AbortSignal,
   mediaSizeIndex?: Map<string, number>
 ): Promise<MessengerExportDeletionInfo> {
+  throwIfAborted(signal);
   const resolvedMediaSizeIndex = mediaSizeIndex || await buildMessengerExportMediaSizeIndex(rootHandle, signal);
+  throwIfAborted(signal);
   const selectedJson = new Set(entries.map(entry => entry._jsonFileName).filter(Boolean) as string[]);
   const referencedMedia = new Set<string>();
   let jsonSize = 0;
   let chatFileCount = 0;
 
   for (const entry of entries) {
+    throwIfAborted(signal);
     const jsonFileName = entry._jsonFileName!;
     jsonSize += await getJsonSize(rootHandle, jsonFileName);
     chatFileCount++;
@@ -182,6 +202,7 @@ export async function getMessengerExportBatchDeletionInfo(
   let mediaSize = 0;
 
   for (const basename of referencedMedia) {
+    throwIfAborted(signal);
     const owners = referenceIndex.mediaOwners.get(basename);
     const shouldDelete = owners ? Array.from(owners).every(owner => selectedJson.has(owner)) : true;
     if (shouldDelete) {

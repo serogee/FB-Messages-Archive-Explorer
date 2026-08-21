@@ -38,6 +38,7 @@ export default function App() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteToast, setDeleteToast] = useState<string | null>(null);
   const deleteInfoRequestRef = useRef(0);
+  const deleteInfoAbortRef = useRef<AbortController | null>(null);
   const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -65,6 +66,8 @@ export default function App() {
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return;
+    deleteInfoAbortRef.current?.abort();
+    deleteInfoAbortRef.current = null;
     setDeleteBusy(true);
     setDeleteInfoLoading(false);
     deleteInfoRequestRef.current++;
@@ -105,6 +108,9 @@ export default function App() {
   }, [deleteTarget, archive, chat, selection]);
 
   const handleDeleteRequest = useCallback((target: ChatListEntry | ChatListEntry[]) => {
+    deleteInfoAbortRef.current?.abort();
+    const abortCtrl = new AbortController();
+    deleteInfoAbortRef.current = abortCtrl;
     const requestId = deleteInfoRequestRef.current + 1;
     deleteInfoRequestRef.current = requestId;
     setDeleteTarget(target);
@@ -113,7 +119,7 @@ export default function App() {
     setDeleteBusy(false);
 
     setDeleteInfoLoading(true);
-    archive.getDeleteInfo(target)
+    archive.getDeleteInfo(target, abortCtrl.signal)
       .then(info => {
         if (deleteInfoRequestRef.current !== requestId) return;
         setDeleteInfo(info);
@@ -132,10 +138,14 @@ export default function App() {
       })
       .catch(error => {
         if (deleteInfoRequestRef.current !== requestId) return;
+        if (error instanceof DOMException && error.name === 'AbortError') return;
         console.error('Failed to prepare delete details:', error);
       })
       .finally(() => {
         if (deleteInfoRequestRef.current !== requestId) return;
+        if (deleteInfoAbortRef.current === abortCtrl) {
+          deleteInfoAbortRef.current = null;
+        }
         setDeleteInfoLoading(false);
       });
   }, [archive]);
@@ -156,12 +166,15 @@ export default function App() {
 
   useEffect(() => {
     return () => {
+      deleteInfoAbortRef.current?.abort();
       if (deleteToastTimerRef.current) clearTimeout(deleteToastTimerRef.current);
     };
   }, []);
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await archive.openFolder(settings.deletionEnabled, () => {
+      deleteInfoAbortRef.current?.abort();
+      deleteInfoAbortRef.current = null;
       chat.clearChat();
       search.clearSearch();
       search.clearWideSearchCache();
@@ -318,12 +331,16 @@ export default function App() {
           entry={deleteTarget}
           onConfirm={handleDeleteConfirm}
           onSkipCalculation={() => {
+            deleteInfoAbortRef.current?.abort();
+            deleteInfoAbortRef.current = null;
             deleteInfoRequestRef.current++;
             setDeleteInfoLoading(false);
             setDeleteInfoSkipped(true);
           }}
           onCancel={() => {
             if (!deleteProgress && !deleteBusy) {
+              deleteInfoAbortRef.current?.abort();
+              deleteInfoAbortRef.current = null;
               setDeleteTarget(null);
               setDeleteInfo(null);
               setDeleteInfoLoading(false);
