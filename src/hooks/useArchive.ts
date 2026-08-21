@@ -119,7 +119,7 @@ export function useArchive(): {
   loadProgress: { done: number; total: number } | null;
   sizeProgress: { done: number; total: number } | null;
   error: string | null;
-  openFolder: (requestWrite?: boolean) => Promise<boolean>;
+  openFolder: (requestWrite?: boolean, onFolderPicked?: () => void) => Promise<boolean>;
   openFolderWithWriteAccess: () => Promise<void>;
   getDeleteInfo: (entry: ChatListEntry | ChatListEntry[]) => Promise<MessengerExportDeletionInfo>;
   computeAndUpdateFolderSize: (entry: ChatListEntry) => Promise<number>;
@@ -234,10 +234,11 @@ export function useArchive(): {
     processNext(0);
   }, []);
 
-  const openFolder = useCallback(async (requestWrite?: boolean): Promise<boolean> => {
+  const openFolder = useCallback(async (requestWrite?: boolean, onFolderPicked?: () => void): Promise<boolean> => {
     let abortCtrl: AbortController | null = null;
     try {
       const handle = requestWrite ? await pickFolderWithWriteAccess() : await pickMessagesFolder();
+      onFolderPicked?.();
       
       setError(null);
       setLoading(true);

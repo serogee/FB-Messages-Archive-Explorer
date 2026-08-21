@@ -146,12 +146,18 @@ export function useChat(): {
   }, []);
 
   const clearChat = useCallback(() => {
+    if (mediaAbortControllerRef.current) {
+      mediaAbortControllerRef.current.abort();
+      mediaAbortControllerRef.current = null;
+    }
     setMediaState(prev => { revokeAllMedia(prev); return createMediaState(); });
     setChatData(null);
     setActiveEntry(null);
+    setLoading(false);
     setMediaLoading(false);
     setMediaProgress(0);
     setMsgProgress(0);
+    setMsgStatusText("");
   }, []);
 
   return {

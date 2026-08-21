@@ -147,12 +147,22 @@ export default function App() {
   }, []);
 
   const handleOpenFolder = useCallback(async () => {
-    const picked = await archive.openFolder(settings.deletionEnabled);
-    if (picked) {
+    const picked = await archive.openFolder(settings.deletionEnabled, () => {
       chat.clearChat();
+      search.clearSearch();
+      search.clearWideSearchCache();
       selection.deselectAll();
+      setGalleryOpen(false);
+      pendingJumpIndexRef.current = null;
+    });
+    if (picked) {
+      deleteInfoRequestRef.current++;
+      setDeleteTarget(null);
+      setDeleteInfo(null);
+      setDeleteInfoLoading(false);
+      setDeleteProgress(null);
     }
-  }, [settings.deletionEnabled, archive, chat, selection]);
+  }, [settings.deletionEnabled, archive, chat, search, selection]);
 
   const chatViewRef = useRef<ChatViewHandle>(null);
 
