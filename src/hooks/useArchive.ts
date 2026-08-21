@@ -122,9 +122,10 @@ export function useArchive(): {
   openFolder: (requestWrite?: boolean) => Promise<boolean>;
   openFolderWithWriteAccess: () => Promise<void>;
   getDeleteInfo: (entry: ChatListEntry | ChatListEntry[]) => Promise<MessengerExportDeletionInfo>;
+  computeAndUpdateFolderSize: (entry: ChatListEntry) => Promise<number>;
   deleteChat: (entry: ChatListEntry) => Promise<void>;
   deleteChats: (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => Promise<void>;
-  updateFolderSize: (entry: ChatListEntry, size: number) => void;
+  updateFolderSize: (entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => void;
 } {
   const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [originalRootHandle, setOriginalRootHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -140,6 +141,11 @@ export function useArchive(): {
   const messengerReferenceIndexRef = useRef<{
     rootHandle: FileSystemDirectoryHandle;
     index: MessengerExportReferenceIndex;
+    mediaSizeIndex: Map<string, number>;
+  } | null>(null);
+  const messengerMediaSizeIndexRef = useRef<{
+    rootHandle: FileSystemDirectoryHandle;
+    mediaSizeIndex: Map<string, number>;
   } | null>(null);
 
   const inboxListRef = useRef<ChatListEntry[]>([]);
@@ -248,6 +254,7 @@ export function useArchive(): {
       setOriginalRootHandle(null);
       isMessengerExportRef.current = false;
       messengerReferenceIndexRef.current = null;
+      messengerMediaSizeIndexRef.current = null;
       
       const messagesRoot = await resolveMessagesRoot(handle);
       if (!messagesRoot) {
@@ -277,6 +284,7 @@ export function useArchive(): {
           void (async () => {
             const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(handle, signal);
             if (signal.aborted) return;
+            messengerMediaSizeIndexRef.current = { rootHandle: handle, mediaSizeIndex };
 
             startLazySizeComputation(
               inbox,
@@ -395,17 +403,45 @@ export function useArchive(): {
     }
   }, []);
 
-  const getMessengerReferenceIndex = useCallback(async (): Promise<MessengerExportReferenceIndex> => {
+  const getMessengerMediaSizeIndex = useCallback(async (): Promise<Map<string, number>> => {
+    if (!rootHandle) throw new Error('No folder open');
+    const cached = messengerMediaSizeIndexRef.current;
+    if (cached && cached.rootHandle === rootHandle) {
+      return cached.mediaSizeIndex;
+    }
+
+    const referenceCached = messengerReferenceIndexRef.current;
+    if (referenceCached && referenceCached.rootHandle === rootHandle) {
+      messengerMediaSizeIndexRef.current = {
+        rootHandle,
+        mediaSizeIndex: referenceCached.mediaSizeIndex,
+      };
+      return referenceCached.mediaSizeIndex;
+    }
+
+    const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(rootHandle);
+    messengerMediaSizeIndexRef.current = { rootHandle, mediaSizeIndex };
+    return mediaSizeIndex;
+  }, [rootHandle]);
+
+  const getMessengerReferenceIndex = useCallback(async (): Promise<{
+    index: MessengerExportReferenceIndex;
+    mediaSizeIndex: Map<string, number>;
+  }> => {
     if (!rootHandle) throw new Error('No folder open');
     const cached = messengerReferenceIndexRef.current;
     if (cached && cached.rootHandle === rootHandle) {
-      return cached.index;
+      return {
+        index: cached.index,
+        mediaSizeIndex: cached.mediaSizeIndex,
+      };
     }
 
     const index = await buildMessengerExportReferenceIndex(rootHandle);
-    messengerReferenceIndexRef.current = { rootHandle, index };
-    return index;
-  }, [rootHandle]);
+    const mediaSizeIndex = await getMessengerMediaSizeIndex();
+    messengerReferenceIndexRef.current = { rootHandle, index, mediaSizeIndex };
+    return { index, mediaSizeIndex };
+  }, [getMessengerMediaSizeIndex, rootHandle]);
 
   const getDeleteInfo = useCallback(async (
     entry: ChatListEntry | ChatListEntry[]
@@ -417,18 +453,18 @@ export function useArchive(): {
       return computeFacebookDeleteInfo(entries);
     }
 
-    const referenceIndex = await getMessengerReferenceIndex();
+    const { index: referenceIndex, mediaSizeIndex } = await getMessengerReferenceIndex();
     if (messengerEntries.length === 1 && !Array.isArray(entry)) {
-      return getMessengerExportDeletionInfo(rootHandle, messengerEntries[0], referenceIndex);
+      return getMessengerExportDeletionInfo(rootHandle, messengerEntries[0], referenceIndex, undefined, mediaSizeIndex);
     }
 
-    return getMessengerExportBatchDeletionInfo(rootHandle, messengerEntries, referenceIndex);
+    return getMessengerExportBatchDeletionInfo(rootHandle, messengerEntries, referenceIndex, undefined, mediaSizeIndex);
   }, [getMessengerReferenceIndex, rootHandle]);
 
   const deleteChat = useCallback(async (entry: ChatListEntry) => {
     if (!rootHandle) throw new Error('No folder open');
     if (entry._messengerExport) {
-      const referenceIndex = await getMessengerReferenceIndex();
+      const { index: referenceIndex } = await getMessengerReferenceIndex();
       await deleteMessengerExportChat(rootHandle, entry, referenceIndex);
       setInboxList(prev => prev.filter(e => e.folderName !== entry.folderName));
       return;
@@ -458,7 +494,7 @@ export function useArchive(): {
       const entry = entries[i];
       if (entry._messengerExport) {
         try {
-          const referenceIndex = await getMessengerReferenceIndex();
+          const { index: referenceIndex } = await getMessengerReferenceIndex();
           await deleteMessengerExportChat(rootHandle, entry, referenceIndex);
         } catch (err) {
           console.error(`Failed to delete ${entry.folderName}`, err);
@@ -485,18 +521,39 @@ export function useArchive(): {
     setArchivedList(prev => prev.filter(e => !foldersToRemove.has(e.folderName)));
   }, [getMessengerReferenceIndex, rootHandle]);
 
-  const updateFolderSize = useCallback((entry: ChatListEntry, size: number) => {
+  const updateFolderSize = useCallback((entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => {
+    const applySize = (e: ChatListEntry) => e.folderName === entry.folderName
+      ? {
+          ...e,
+          folderSize: size,
+          _sizeIncludesMedia: entry._messengerExport ? (sizeIncludesMedia ?? true) : e._sizeIncludesMedia,
+        }
+      : e;
+
     if (entry.source === 'inbox' || entry.source === 'e2ee') {
-      setInboxList(prev => prev.map(e => e.folderName === entry.folderName ? { ...e, folderSize: size } : e));
+      setInboxList(prev => prev.map(applySize));
     } else if (entry.source === 'requests') {
-      setRequestsList(prev => prev.map(e => e.folderName === entry.folderName ? { ...e, folderSize: size } : e));
+      setRequestsList(prev => prev.map(applySize));
     } else {
-      setArchivedList(prev => prev.map(e => e.folderName === entry.folderName ? { ...e, folderSize: size } : e));
+      setArchivedList(prev => prev.map(applySize));
     }
   }, []);
 
+  const computeAndUpdateFolderSize = useCallback(async (entry: ChatListEntry): Promise<number> => {
+    let size: number;
+    if (entry._messengerExport) {
+      const mediaSizeIndex = await getMessengerMediaSizeIndex();
+      size = await computeMessengerExportChatSize(entry.dirHandle, entry._jsonFileName!, mediaSizeIndex);
+      updateFolderSize(entry, size, true);
+    } else {
+      size = await computeFolderSize(entry.dirHandle);
+      updateFolderSize(entry, size);
+    }
+    return size;
+  }, [getMessengerMediaSizeIndex, updateFolderSize]);
+
   return {
     rootHandle, originalRootHandle, inboxList, archivedList, requestsList,    loading, loadProgress, sizeProgress, error,
-    openFolder, openFolderWithWriteAccess, getDeleteInfo, deleteChat, deleteChats, updateFolderSize,
+    openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, deleteChat, deleteChats, updateFolderSize,
   };
 }

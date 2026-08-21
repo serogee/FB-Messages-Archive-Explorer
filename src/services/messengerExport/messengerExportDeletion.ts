@@ -121,10 +121,11 @@ export async function getMessengerExportDeletionInfo(
   rootHandle: FileSystemDirectoryHandle,
   entry: ChatListEntry,
   referenceIndex: MessengerExportReferenceIndex,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  mediaSizeIndex?: Map<string, number>
 ): Promise<MessengerExportDeletionInfo> {
   const jsonFileName = entry._jsonFileName!;
-  const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(rootHandle, signal);
+  const resolvedMediaSizeIndex = mediaSizeIndex || await buildMessengerExportMediaSizeIndex(rootHandle, signal);
   const jsonSize = await getJsonSize(rootHandle, jsonFileName);
   const chatMedia = referenceIndex.chatMedia.get(jsonFileName) || new Set<string>();
   const exclusiveMediaFiles: string[] = [];
@@ -135,7 +136,7 @@ export async function getMessengerExportDeletionInfo(
     const owners = referenceIndex.mediaOwners.get(basename);
     if (!owners || owners.size <= 1) {
       exclusiveMediaFiles.push(basename);
-      mediaSize += mediaSizeIndex.get(basename) || 0;
+      mediaSize += resolvedMediaSizeIndex.get(basename) || 0;
     } else {
       sharedMediaCount++;
     }
@@ -156,9 +157,10 @@ export async function getMessengerExportBatchDeletionInfo(
   rootHandle: FileSystemDirectoryHandle,
   entries: ChatListEntry[],
   referenceIndex: MessengerExportReferenceIndex,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  mediaSizeIndex?: Map<string, number>
 ): Promise<MessengerExportDeletionInfo> {
-  const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(rootHandle, signal);
+  const resolvedMediaSizeIndex = mediaSizeIndex || await buildMessengerExportMediaSizeIndex(rootHandle, signal);
   const selectedJson = new Set(entries.map(entry => entry._jsonFileName).filter(Boolean) as string[]);
   const referencedMedia = new Set<string>();
   let jsonSize = 0;
@@ -184,7 +186,7 @@ export async function getMessengerExportBatchDeletionInfo(
     const shouldDelete = owners ? Array.from(owners).every(owner => selectedJson.has(owner)) : true;
     if (shouldDelete) {
       exclusiveMediaFiles.push(basename);
-      mediaSize += mediaSizeIndex.get(basename) || 0;
+      mediaSize += resolvedMediaSizeIndex.get(basename) || 0;
     } else {
       sharedMediaCount++;
     }

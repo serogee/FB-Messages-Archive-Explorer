@@ -108,6 +108,18 @@ export default function App() {
       .then(info => {
         if (deleteInfoRequestRef.current !== requestId) return;
         setDeleteInfo(info);
+        if (!Array.isArray(target) && !target._messengerExport && target.folderSize <= 0) {
+          archive.updateFolderSize(target, info.totalSize);
+          return;
+        }
+
+        const entries = Array.isArray(target) ? target : [target];
+        entries.forEach(entry => {
+          if (entry.folderSize > 0 && (!entry._messengerExport || entry._sizeIncludesMedia)) return;
+          void archive.computeAndUpdateFolderSize(entry).catch(error => {
+            console.error('Failed to update chat size from delete details:', error);
+          });
+        });
       })
       .catch(error => {
         if (deleteInfoRequestRef.current !== requestId) return;
@@ -118,6 +130,15 @@ export default function App() {
         setDeleteInfoLoading(false);
       });
   }, [archive]);
+
+  const handleSelectChat = useCallback(async (entry: ChatListEntry) => {
+    if (entry.folderSize <= 0 || (entry._messengerExport && !entry._sizeIncludesMedia)) {
+      void archive.computeAndUpdateFolderSize(entry).catch(error => {
+        console.error('Failed to calculate chat size:', error);
+      });
+    }
+    await chat.loadChat(entry);
+  }, [archive, chat]);
 
   useEffect(() => {
     return () => {
@@ -142,13 +163,13 @@ export default function App() {
       const entry = archiveList.find(e => e.folderName === folderName);
       if (entry) {
         pendingJumpIndexRef.current = index;
-        chat.loadChat(entry);
+        handleSelectChat(entry);
         selection.deselectAll();
         return;
       }
     }
     chatViewRef.current?.jumpToMessage(index);
-  }, [chat, archiveList, selection]);
+  }, [chat, archiveList, handleSelectChat, selection]);
 
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {
@@ -190,7 +211,7 @@ export default function App() {
         setSidebarView={setSidebarView}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onSelectChat={chat.loadChat}
+        onSelectChat={handleSelectChat}
         onOpenFolder={handleOpenFolder}
         onDeleteChat={handleDeleteRequest}
         search={search}
