@@ -73,6 +73,7 @@ export interface ChatListEntry {
   source: 'inbox' | 'archived' | 'requests' | 'e2ee';
   _messengerExport?: boolean;
   _jsonFileName?: string;
+  _sizeIncludesMedia?: boolean;
 }
 
 // ── Attachment counts ──────────────────────────────────────────────

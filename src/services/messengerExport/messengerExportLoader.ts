@@ -80,6 +80,7 @@ export async function listMessengerExportChats(
         source: 'inbox',
         _messengerExport: true,
         _jsonFileName: name,
+        _sizeIncludesMedia: false,
       });
     } catch {
       // Skip unreadable or invalid JSON files.

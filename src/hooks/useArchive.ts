@@ -7,7 +7,12 @@ import {
   computeFolderSize,
   deleteChat as deleteChatFs,
 } from '../services/fileSystem';
-import { isMessengerExport, listMessengerExportChats } from '../services/messengerExport';
+import {
+  buildMessengerExportMediaSizeIndex,
+  computeMessengerExportChatSize,
+  isMessengerExport,
+  listMessengerExportChats,
+} from '../services/messengerExport';
 
 async function resolveMessagesRoot(handle: FileSystemDirectoryHandle): Promise<FileSystemDirectoryHandle | null> {
   const commonPaths = [
@@ -74,7 +79,13 @@ export function useArchive(): {
   archivedListRef.current = archivedList;
   requestsListRef.current = requestsList;
 
-  const startLazySizeComputation = useCallback((entries: ChatListEntry[], setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>, onProgress?: (done: number) => void, signal?: AbortSignal) => {
+  const startLazySizeComputation = useCallback((
+    entries: ChatListEntry[],
+    setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>,
+    onProgress?: (done: number) => void,
+    signal?: AbortSignal,
+    computeSize: (entry: ChatListEntry) => Promise<number> = entry => computeFolderSize(entry.dirHandle)
+  ) => {
     let done = 0;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     const pendingSizes = new Map<string, number>();
@@ -94,8 +105,8 @@ export function useArchive(): {
       if (updates.size > 0) {
         setList(prev =>
           prev.map(e => {
-            const size = updates.get(e.folderName);
-            return size == null ? e : { ...e, folderSize: size };
+            const size = updates.get(e._jsonFileName || e.folderName);
+            return size == null ? e : { ...e, folderSize: size, _sizeIncludesMedia: e._messengerExport ? true : e._sizeIncludesMedia };
           })
         );
       }
@@ -135,9 +146,9 @@ export function useArchive(): {
       setTimeout(async () => {
         if (signal?.aborted) return;
         try {
-          const size = await computeFolderSize(entry.dirHandle);
+          const size = await computeSize(entry);
           if (signal?.aborted) return;
-          pendingSizes.set(entry.folderName, size);
+          pendingSizes.set(entry._jsonFileName || entry.folderName, size);
         } catch { /* ignore */ }
         done++;
         scheduleFlush(done >= entries.length);
@@ -188,7 +199,36 @@ export function useArchive(): {
         setInboxList(inbox);
         setArchivedList([]);
         setRequestsList([]);
-        setSizeProgress(null);
+
+        if (inbox.length > 0) {
+          setSizeProgress({ done: 0, total: inbox.length });
+          const signal = abortCtrl.signal;
+          void (async () => {
+            const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(handle, signal);
+            if (signal.aborted) return;
+
+            startLazySizeComputation(
+              inbox,
+              setInboxList,
+              done => {
+                if (done === inbox.length) {
+                  setSizeProgress(null);
+                } else {
+                  setSizeProgress({ done, total: inbox.length });
+                }
+              },
+              signal,
+              entry => computeMessengerExportChatSize(
+                entry.dirHandle,
+                entry._jsonFileName!,
+                mediaSizeIndex,
+                signal
+              )
+            );
+          })();
+        } else {
+          setSizeProgress(null);
+        }
         return true;
       }
 

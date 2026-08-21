@@ -40,6 +40,18 @@ function getAvatarColor(title: string): string {
   return colors[Math.abs(hash) % colors.length];
 }
 
+function formatEntrySize(entry: ChatListEntry): string {
+  if (entry._messengerExport && !entry._sizeIncludesMedia) {
+    return `${formatFileSize(entry.folderSize)} + media`;
+  }
+
+  if (entry.folderSize <= 0) {
+    return `${entry.jsonFileCount} json + media`;
+  }
+
+  return formatFileSize(entry.folderSize);
+}
+
 async function copyFolderPath(entry: ChatListEntry) {
   // Build a human-readable path from the directory handle chain
   const subfolder =
@@ -142,7 +154,7 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
             {entry.lastTimestamp ? formatRelativeTime(entry.lastTimestamp) : ''}
           </span>
           <span className="chat-item-size">
-            {entry.folderSize > 0 ? formatFileSize(entry.folderSize) : `${entry.jsonFileCount} file${entry.jsonFileCount !== 1 ? 's' : ''}`}
+            {formatEntrySize(entry)}
           </span>
         </div>
         {showMenu && (
