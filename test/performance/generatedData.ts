@@ -1,4 +1,5 @@
 import type { MessengerMessage } from '../../src/types/messenger';
+import { createMockDirectoryHandle } from '../helpers/mockFileSystem';
 
 export function generateMessages(count: number): MessengerMessage[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -27,4 +28,61 @@ export function generateMessengerExportJson(messageCount: number): string {
     participants: ['Alice', 'Bob'],
     messages: generateMessages(messageCount),
   });
+}
+
+export function generateFacebookMessagesRoot(chatCount: number): FileSystemDirectoryHandle {
+  const inbox: Record<string, Record<string, string>> = {};
+
+  for (let index = 0; index < chatCount; index++) {
+    inbox[`chat_${index}`] = {
+      'message_1.json': JSON.stringify({
+        title: `Chat ${index}`,
+        thread_path: `inbox/chat_${index}`,
+        participants: [{ name: 'Alice' }, { name: `Person ${index}` }],
+        messages: [
+          {
+            sender_name: `Person ${index}`,
+            senderName: `Person ${index}`,
+            timestamp_ms: index + 1,
+            timestamp: index + 1,
+            content: `Latest message for chat ${index}`,
+            text: `Latest message for chat ${index}`,
+          },
+        ],
+      }),
+    };
+  }
+
+  return createMockDirectoryHandle('messages', { inbox });
+}
+
+export function generateMessengerReferenceRoot(chatCount: number): FileSystemDirectoryHandle {
+  const tree: Record<string, string | Uint8Array | Record<string, Uint8Array>> = {
+    media: {},
+  };
+  const media = tree.media as Record<string, Uint8Array>;
+
+  for (let index = 0; index < chatCount; index++) {
+    const exclusive = `exclusive_${index}.jpg`;
+    const shared = `shared_${index % 25}.jpg`;
+    media[exclusive] = new Uint8Array(256);
+    media[shared] = new Uint8Array(512);
+    tree[`chat_${index}.json`] = JSON.stringify({
+      threadName: `Chat ${index}`,
+      participants: ['Alice', `Person ${index}`],
+      messages: [
+        {
+          senderName: 'Alice',
+          text: `Message ${index}`,
+          timestamp: index + 1,
+          media: [
+            { uri: `media/${exclusive}` },
+            { uri: `media/${shared}` },
+          ],
+        },
+      ],
+    });
+  }
+
+  return createMockDirectoryHandle('messenger', tree);
 }
