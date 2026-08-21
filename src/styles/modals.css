@@ -31,6 +31,8 @@
 .delete-actions { display:flex; justify-content:flex-end; gap:8px; }
 .btn-danger { background:#e53e3e; color:white; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; font:inherit; }
 .btn-danger:hover { background:#c53030; }
+.btn-warning { background:#d69e2e; color:#141414; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; font:inherit; }
+.btn-warning:hover { background:#b7791f; }
 .btn-danger:disabled,
 .btn-danger:disabled:hover {
     background: #9ca3af;

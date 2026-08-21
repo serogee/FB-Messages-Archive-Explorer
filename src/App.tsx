@@ -34,6 +34,8 @@ export default function App() {
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
   const [deleteInfo, setDeleteInfo] = useState<MessengerExportDeletionInfo | null>(null);
   const [deleteInfoLoading, setDeleteInfoLoading] = useState(false);
+  const [deleteInfoSkipped, setDeleteInfoSkipped] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteToast, setDeleteToast] = useState<string | null>(null);
   const deleteInfoRequestRef = useRef(0);
   const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -63,6 +65,9 @@ export default function App() {
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return;
+    setDeleteBusy(true);
+    setDeleteInfoLoading(false);
+    deleteInfoRequestRef.current++;
     const deletedName = Array.isArray(deleteTarget)
       ? `${deleteTarget.length} Chats`
       : deleteTarget.title;
@@ -90,10 +95,12 @@ export default function App() {
     } catch (e) {
       console.error('Delete failed:', e);
     }
+    setDeleteBusy(false);
     setDeleteProgress(null);
     setDeleteTarget(null);
     setDeleteInfo(null);
     setDeleteInfoLoading(false);
+    setDeleteInfoSkipped(false);
     deleteInfoRequestRef.current++;
   }, [deleteTarget, archive, chat, selection]);
 
@@ -102,6 +109,8 @@ export default function App() {
     deleteInfoRequestRef.current = requestId;
     setDeleteTarget(target);
     setDeleteInfo(null);
+    setDeleteInfoSkipped(false);
+    setDeleteBusy(false);
 
     setDeleteInfoLoading(true);
     archive.getDeleteInfo(target)
@@ -160,6 +169,8 @@ export default function App() {
       setDeleteTarget(null);
       setDeleteInfo(null);
       setDeleteInfoLoading(false);
+      setDeleteInfoSkipped(false);
+      setDeleteBusy(false);
       setDeleteProgress(null);
     }
   }, [settings.deletionEnabled, archive, chat, search, selection]);
@@ -301,17 +312,25 @@ export default function App() {
         <DeleteConfirmModal
           entry={deleteTarget}
           onConfirm={handleDeleteConfirm}
+          onSkipCalculation={() => {
+            deleteInfoRequestRef.current++;
+            setDeleteInfoLoading(false);
+            setDeleteInfoSkipped(true);
+          }}
           onCancel={() => {
-            if (!deleteProgress) {
+            if (!deleteProgress && !deleteBusy) {
               setDeleteTarget(null);
               setDeleteInfo(null);
               setDeleteInfoLoading(false);
+              setDeleteInfoSkipped(false);
               deleteInfoRequestRef.current++;
             }
           }}
           progress={deleteProgress}
           messengerDeletionInfo={deleteInfo}
           deletionInfoLoading={deleteInfoLoading}
+          deletionInfoSkipped={deleteInfoSkipped}
+          deleting={deleteBusy}
         />
       )}
       {deleteToast && (

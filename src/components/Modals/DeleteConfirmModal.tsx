@@ -5,31 +5,41 @@ import type { MessengerExportDeletionInfo } from '../../services/messengerExport
 interface DeleteConfirmModalProps {
   entry: ChatListEntry | ChatListEntry[];
   onConfirm: () => void;
+  onSkipCalculation?: () => void;
   onCancel: () => void;
   progress?: { done: number; total: number } | null;
   messengerDeletionInfo?: MessengerExportDeletionInfo | null;
   deletionInfoLoading?: boolean;
+  deletionInfoSkipped?: boolean;
+  deleting?: boolean;
 }
 
 export function DeleteConfirmModal({
   entry,
   onConfirm,
+  onSkipCalculation,
   onCancel,
   progress,
   messengerDeletionInfo,
   deletionInfoLoading,
+  deletionInfoSkipped,
+  deleting,
 }: DeleteConfirmModalProps) {
   const isMultiple = Array.isArray(entry);
   const title = isMultiple ? `Delete ${entry.length} Chats` : 'Delete Chat';
   const entries = isMultiple ? entry : [entry];
   const isMessenger = entries.some(e => e._messengerExport);
+  const isDeleting = !!deleting || !!progress;
+  const canSkipCalculation = !!deletionInfoLoading && !isMessenger && !deletionInfoSkipped && !messengerDeletionInfo && !isDeleting;
+  const canConfirm = !isDeleting && (!!messengerDeletionInfo || !!deletionInfoSkipped);
+  const pendingDetailText = deletionInfoSkipped ? 'Skipped' : 'Calculating...';
   const targetName = isMultiple
     ? `${entry.length} chats selected`
     : (entry._jsonFileName || entry.folderName);
 
   return (
     <div className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
-      <div className="delete-backdrop" onClick={onCancel} />
+      <div className="delete-backdrop" onClick={isDeleting ? undefined : onCancel} />
       <div className="delete-card">
         <h3 id="deleteTitle">{title}</h3>
         <div className="delete-warning">
@@ -45,7 +55,7 @@ export function DeleteConfirmModal({
             <strong>
               {messengerDeletionInfo
                 ? `${formatFileSize(messengerDeletionInfo.jsonSize)}${!isMessenger ? ` (${messengerDeletionInfo.chatFileCount} files)` : ''}`
-                : 'Calculating...'}
+                : pendingDetailText}
             </strong>
           </div>
           <div className="delete-breakdown-row">
@@ -53,7 +63,7 @@ export function DeleteConfirmModal({
             <strong>
               {messengerDeletionInfo
                 ? `${formatFileSize(messengerDeletionInfo.mediaSize)} (${messengerDeletionInfo.exclusiveMediaCount} files)`
-                : 'Calculating...'}
+                : pendingDetailText}
             </strong>
           </div>
         </div>
@@ -101,11 +111,24 @@ export function DeleteConfirmModal({
           </div>
         )}
         <div className="delete-actions">
-          <button className="btn btn-secondary" onClick={onCancel} disabled={!!progress}>
-            Cancel
-          </button>
-          <button className="btn-danger" onClick={onConfirm} id="deleteConfirmBtn" disabled={!!progress || !!deletionInfoLoading || !messengerDeletionInfo}>
-            {progress ? 'Deleting...' : 'Delete permanently'}
+          {!isDeleting && (
+            <button className="btn btn-secondary" onClick={onCancel}>
+              Cancel
+            </button>
+          )}
+          <button
+            className={canSkipCalculation ? 'btn-warning' : 'btn-danger'}
+            onClick={canSkipCalculation ? onSkipCalculation : onConfirm}
+            id="deleteConfirmBtn"
+            disabled={canSkipCalculation ? !onSkipCalculation : !canConfirm}
+          >
+            {isDeleting
+              ? 'Deleting...'
+              : canSkipCalculation
+                ? 'Skip calculation'
+                : deletionInfoLoading && !messengerDeletionInfo
+                  ? 'Calculating...'
+                  : 'Delete permanently'}
           </button>
         </div>
       </div>
