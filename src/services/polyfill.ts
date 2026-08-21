@@ -1,5 +1,5 @@
 export class VirtualFileHandle {
-  kind: 'file' = 'file';
+  kind = 'file' as const;
   name: string;
   private file: File;
 
@@ -14,7 +14,7 @@ export class VirtualFileHandle {
 }
 
 export class VirtualDirectoryHandle {
-  kind: 'directory' = 'directory';
+  kind = 'directory' as const;
   name: string;
   private children: Map<string, VirtualFileHandle | VirtualDirectoryHandle> = new Map();
 
