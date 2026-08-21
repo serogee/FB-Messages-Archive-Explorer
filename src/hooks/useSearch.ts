@@ -3,12 +3,13 @@ import type { ChatListEntry, MessengerThread, SearchIndexEntry, SearchResult } f
 import { buildSearchIndex, performSearch } from '../services/search';
 import { isReactionNoticeMessage } from '../services/reactions';
 import { loadChatMessages } from '../services/fileSystem';
+import { loadMessengerExportChat } from '../services/messengerExport';
 
 const WIDE_INDEX_CACHE_LIMIT = 50;
 const globalWideIndexCache = new Map<string, { dirHandle: FileSystemDirectoryHandle; index: SearchIndexEntry[] }>();
 
 function getWideIndexCacheKey(entry: ChatListEntry): string {
-  return `${entry.source}:${entry.folderName}`;
+  return `${entry.source}:${entry.folderName}:${entry._jsonFileName || ''}`;
 }
 
 function getCachedWideIndex(entry: ChatListEntry): SearchIndexEntry[] | null {
@@ -110,7 +111,9 @@ export function useSearch(
           try {
             let index = getCachedWideIndex(entry);
             if (!index) {
-              const data = await loadChatMessages(entry.dirHandle);
+              const data = entry._messengerExport
+                ? await loadMessengerExportChat(entry.dirHandle, entry._jsonFileName!, undefined, signal)
+                : await loadChatMessages(entry.dirHandle, undefined, signal);
               if (signal.aborted) return;
               index = buildSearchIndex(data.messages, isReactionNoticeMessage);
               setCachedWideIndex(entry, index);

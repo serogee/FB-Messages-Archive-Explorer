@@ -71,6 +71,8 @@ export interface ChatListEntry {
   dirHandle: FileSystemDirectoryHandle;
   jsonFileCount: number;
   source: 'inbox' | 'archived' | 'requests' | 'e2ee';
+  _messengerExport?: boolean;
+  _jsonFileName?: string;
 }
 
 // ── Attachment counts ──────────────────────────────────────────────

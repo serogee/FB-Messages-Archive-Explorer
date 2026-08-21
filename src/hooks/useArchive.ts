@@ -7,6 +7,7 @@ import {
   computeFolderSize,
   deleteChat as deleteChatFs,
 } from '../services/fileSystem';
+import { isMessengerExport, listMessengerExportChats } from '../services/messengerExport';
 
 async function resolveMessagesRoot(handle: FileSystemDirectoryHandle): Promise<FileSystemDirectoryHandle | null> {
   const commonPaths = [
@@ -64,6 +65,7 @@ export function useArchive(): {
   const [sizeProgress, setSizeProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const isMessengerExportRef = useRef(false);
 
   const inboxListRef = useRef<ChatListEntry[]>([]);
   const archivedListRef = useRef<ChatListEntry[]>([]);
@@ -163,10 +165,31 @@ export function useArchive(): {
       setRequestsList([]);
       setRootHandle(null);
       setOriginalRootHandle(null);
+      isMessengerExportRef.current = false;
       
       const messagesRoot = await resolveMessagesRoot(handle);
       if (!messagesRoot) {
-        throw new Error("Could not find messages in this folder. Make sure you selected an extracted Facebook archive.");
+        const messengerExport = await isMessengerExport(handle);
+        if (!messengerExport) {
+          throw new Error("Could not find messages in this folder. Make sure you selected an extracted Facebook archive or Messenger export.");
+        }
+
+        isMessengerExportRef.current = true;
+        setOriginalRootHandle(handle);
+        setRootHandle(handle);
+
+        const inbox = await listMessengerExportChats(
+          handle,
+          (done, total) => setLoadProgress({ done, total }),
+          abortCtrl.signal
+        );
+        if (abortCtrl.signal.aborted) return false;
+
+        setInboxList(inbox);
+        setArchivedList([]);
+        setRequestsList([]);
+        setSizeProgress(null);
+        return true;
       }
 
       setOriginalRootHandle(handle);

@@ -83,7 +83,8 @@ export function revokeAllMedia(state: MediaState): void {
 }
 
 export function getMessageMediaItems(msg: MessengerMessage): MediaItem[] {
-  return ([] as MediaItem[]).concat(
+  const seen = new Set<string>();
+  const items = ([] as MediaItem[]).concat(
     msg?.media || [],
     msg?.photos || [],
     msg?.videos || [],
@@ -92,6 +93,14 @@ export function getMessageMediaItems(msg: MessengerMessage): MediaItem[] {
     msg?.gifs || [],
     msg?.files || []
   );
+
+  return items.filter(item => {
+    const path = getMediaReferencePath(item).toLowerCase();
+    if (!path) return false;
+    if (seen.has(path)) return false;
+    seen.add(path);
+    return true;
+  });
 }
 
 function categorizeAttachment(path: string, preferredType?: string): string {
@@ -116,15 +125,24 @@ export function getMessageAttachmentReferences(
   msg: MessengerMessage
 ): Array<{ path: string; category: string }> {
   const refs: Array<{ path: string; category: string }> = [];
-  (msg?.photos || []).forEach(item => refs.push({ path: getMediaReferencePath(item), category: 'photos' }));
-  (msg?.videos || []).forEach(item => refs.push({ path: getMediaReferencePath(item), category: 'videos' }));
-  (msg?.audio || []).forEach(item => refs.push({ path: getMediaReferencePath(item), category: 'audio' }));
-  (msg?.audio_files || []).forEach(item => refs.push({ path: getMediaReferencePath(item), category: 'audio' }));
-  (msg?.gifs || []).forEach(item => refs.push({ path: getMediaReferencePath(item), category: 'gifs' }));
-  (msg?.files || []).forEach(item => refs.push({ path: getMediaReferencePath(item), category: 'files' }));
+  const seen = new Set<string>();
+  const addRef = (item: MediaItem, category: string) => {
+    const path = getMediaReferencePath(item);
+    const key = `${category}:${path.toLowerCase()}`;
+    if (!path || seen.has(key)) return;
+    seen.add(key);
+    refs.push({ path, category });
+  };
+
+  (msg?.photos || []).forEach(item => addRef(item, 'photos'));
+  (msg?.videos || []).forEach(item => addRef(item, 'videos'));
+  (msg?.audio || []).forEach(item => addRef(item, 'audio'));
+  (msg?.audio_files || []).forEach(item => addRef(item, 'audio'));
+  (msg?.gifs || []).forEach(item => addRef(item, 'gifs'));
+  (msg?.files || []).forEach(item => addRef(item, 'files'));
   (msg?.media || []).forEach(item => {
     const path = getMediaReferencePath(item);
-    refs.push({ path, category: categorizeAttachment(path) });
+    addRef(item, categorizeAttachment(path));
   });
   return refs;
 }

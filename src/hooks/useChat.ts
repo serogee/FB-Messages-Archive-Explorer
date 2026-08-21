@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import type { ChatListEntry, MessengerThread, MediaState } from '../types/messenger';
 import { loadChatMessages } from '../services/fileSystem';
 import { processMediaFromDirectory, createMediaState, revokeAllMedia } from '../services/media';
+import { loadMessengerExportChat, processMessengerExportMedia } from '../services/messengerExport';
 import { enrichReactionTimestamps } from '../services/reactions';
 import { storageGet, storageSet } from '../services/storage';
 import { getParticipantNames } from '../services/parser';
@@ -63,25 +64,47 @@ export function useChat(): {
       const newMediaState = createMediaState();
       setMediaLoading(true);
       setMediaProgress(0);
-      processMediaFromDirectory(entry.dirHandle, newMediaState, (done, total) => {
-        setMediaProgress(total > 0 ? done / total : 1);
-      }, abortCtrl.signal)
-        .then(() => {
-          if (abortCtrl.signal.aborted) return;
-          setMediaState({ ...newMediaState });
-          setMediaLoading(false);
-          setMediaProgress(1);
-        })
-        .catch(() => {
-          if (abortCtrl.signal.aborted) return;
-          setMediaLoading(false);
-          setMediaProgress(1);
-        });
+      if (entry._messengerExport) {
+        processMessengerExportMedia(entry.dirHandle, newMediaState, (done, total) => {
+          setMediaProgress(total > 0 ? done / total : 1);
+        }, abortCtrl.signal)
+          .then(() => {
+            if (abortCtrl.signal.aborted) return;
+            setMediaState({ ...newMediaState });
+            setMediaLoading(false);
+            setMediaProgress(1);
+          })
+          .catch(() => {
+            if (abortCtrl.signal.aborted) return;
+            setMediaLoading(false);
+            setMediaProgress(1);
+          });
+      } else {
+        processMediaFromDirectory(entry.dirHandle, newMediaState, (done, total) => {
+          setMediaProgress(total > 0 ? done / total : 1);
+        }, abortCtrl.signal)
+          .then(() => {
+            if (abortCtrl.signal.aborted) return;
+            setMediaState({ ...newMediaState });
+            setMediaLoading(false);
+            setMediaProgress(1);
+          })
+          .catch(() => {
+            if (abortCtrl.signal.aborted) return;
+            setMediaLoading(false);
+            setMediaProgress(1);
+          });
+      }
 
-      const data = await loadChatMessages(entry.dirHandle, (progress, statusText) => {
-        setMsgProgress(progress);
-        setMsgStatusText(statusText);
-      }, abortCtrl.signal);
+      const data = entry._messengerExport
+        ? await loadMessengerExportChat(entry.dirHandle, entry._jsonFileName!, (progress, statusText) => {
+            setMsgProgress(progress);
+            setMsgStatusText(statusText);
+          }, abortCtrl.signal)
+        : await loadChatMessages(entry.dirHandle, (progress, statusText) => {
+            setMsgProgress(progress);
+            setMsgStatusText(statusText);
+          }, abortCtrl.signal);
       
       if (abortCtrl.signal.aborted) return;
 

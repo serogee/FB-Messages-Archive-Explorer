@@ -264,15 +264,21 @@ export const MessageBubble = memo(function MessageBubble({
   const sender = msg.senderName || msg.sender_name || 'Unknown';
   const rawText = fixEncoding(msg?.text || msg?.content || '').trim();
   const timestamp = getMessageTimestamp(msg) || 0;
+  const seenMediaPaths = new Set<string>();
   const mediaItems = [
-    ...(msg.media || []).map(media => ({ media, preferredType: undefined })),
     ...(msg.photos || []).map(media => ({ media, preferredType: 'image' as const })),
     ...(msg.videos || []).map(media => ({ media, preferredType: 'video' as const })),
     ...(msg.audio || []).map(media => ({ media, preferredType: 'audio' as const })),
     ...(msg.audio_files || []).map(media => ({ media, preferredType: 'audio' as const })),
     ...(msg.gifs || []).map(media => ({ media, preferredType: 'image' as const })),
     ...(msg.files || []).map(media => ({ media, preferredType: undefined })),
-  ];
+    ...(msg.media || []).map(media => ({ media, preferredType: undefined })),
+  ].filter(({ media }) => {
+    const mediaPath = getMediaReferencePath(media).toLowerCase();
+    if (!mediaPath || seenMediaPaths.has(mediaPath)) return false;
+    seenMediaPaths.add(mediaPath);
+    return true;
+  });
 
   const highlightedText = highlightQuery
     ? highlightText(rawText, highlightQuery)
