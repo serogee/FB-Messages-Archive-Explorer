@@ -2,7 +2,7 @@
 
 Browse, search, and manage your exported Facebook or Messenger message archive privately, in your browser, with nothing uploaded.
 
-**[▶ Open the App](https://serogee.github.io/FB-Messages-Archive-Explorer/)**
+**[🔗 Open the App](https://serogee.github.io/FB-Messages-Archive-Explorer/)**
 
 > **Your data stays on your computer.** All processing happens in your browser. Your messages and files are never uploaded anywhere.
 
@@ -10,30 +10,28 @@ Browse, search, and manage your exported Facebook or Messenger message archive p
 
 ## Contents
 
-- [Quick Start](#quick-start)
-- [Demo](#demo)
-- [Features](#features)
-- [How to Export Your Messages](#how-to-export-your-facebook-or-messenger-messages)
-  - [Option A: Facebook](#option-a-facebook-all-facebook-messages)
-  - [Option B: Messenger](#option-b-messenger-standalone-messenger-export)
-  - [Which folder structure does the app recognize?](#which-folder-structure-does-the-app-recognize)
-- [Browser Support and Limitations](#browser-support-and-limitations)
-- [Run the App Locally](#run-the-app-locally)
-  - [Prerequisites](#prerequisites)
-  - [Setup](#setup)
-  - [Build for Production](#build-for-production)
-  - [Other Developer Commands](#other-developer-commands)
-- [Tech Stack](#tech-stack)
-- [Privacy and Data Handling](#privacy-and-data-handling)
-- [Related Project](#related-project)
-- [Credits](#credits)
-- [License](#license)
-- [Contact and Support](#contact-and-support)
+- [🚀 1. Quick Start](#quick-start)
+- [🖥️ 2. Demo](#demo)
+- [🔍 3. Features](#features)
+- [❓ 4. How to Export Your Messages](#how-to-export-your-facebook-or-messenger-messages)
+    - [4.1. Option A: Facebook](#option-a-facebook-all-facebook-messages)
+    - [4.2. Option B: Messenger](#option-b-messenger-standalone-messenger-export)
+    - [4.x. Which folder structure does the app recognize?](#which-folder-structure-does-the-app-recognize)
+- [❔ 5. Browser Support and Limitations](#browser-support-and-limitations)
+- [⚙️ 6. Run the App Locally](#run-the-app-locally)
+    - [6.1. Prerequisites](#prerequisites)
+    - [6.2. Setup](#setup)
+    - [6.3. Build for Production](#build-for-production)
+    - [6.4. Other Developer Commands](#other-developer-commands)
+- [🤖 7. Tech Stack](#tech-stack)
+- [🔏 8. Privacy and Data Handling](#privacy-and-data-handling)
+- [🔗 9. Related Project and Credits](#related-project)
+- [📜 10. License](#license)
+- [📡 11. Contact and Support](#contact-and-support)
 
 ---
 
-## Quick Start
-
+## 🚀 1. Quick Start
 
 Before you begin, you need a Facebook or Messenger export in **JSON format** (not HTML). See [How to Export Your Messages](#how-to-export-your-facebook-or-messenger-messages) for step-by-step instructions.
 
@@ -42,12 +40,13 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 3. Open the app: **[https://serogee.github.io/FB-Messages-Archive-Explorer/](https://serogee.github.io/FB-Messages-Archive-Explorer/)**
 4. Click **Open Folder** in the sidebar.
 5. Select the folder you extracted. You can select:
-   - The whole extracted folder (the app finds the messages automatically), or
-   - The `messages` folder inside it.
+    - The whole extracted folder (the app finds the messages automatically), or
+    - The `messages` folder inside it.
 6. Wait for your chats to finish loading. A progress bar shows the status.
 7. Click any chat in the sidebar to read it.
 
 **If the app shows an error and does not recognize your folder:**
+
 - Make sure you extracted the `.zip` file first. The app cannot open `.zip` files directly.
 - Make sure you chose **JSON** format when you exported. HTML exports are not supported.
 
@@ -55,15 +54,16 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 
 ---
 
-## Demo
+## 🖥️ 2. Demo
 
 ![Screenshot of FB Messages Archive Explorer showing a chat conversation with message bubbles, a sidebar chat list, and a statistics panel](public/demo.png)
 
 ---
 
-## Features
+## 🔍 3. Features
 
 **Viewing**
+
 - Load a complete Facebook export or a Messenger standalone export and see all your conversations
 - View inbox, archived threads, and message request conversations separately
 - Read messages in a Messenger-like layout with chat bubbles and date headers
@@ -71,6 +71,7 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 - See emoji reactions on messages
 
 **Searching and Navigating**
+
 - Filter the chat list by conversation name
 - Sort chats by: most recent, oldest, most messages, fewest messages, largest size, or smallest size
 - Search message content within the current chat
@@ -79,18 +80,21 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 - Click a search result to jump to that message, even across different chats
 
 **Details and Gallery**
+
 - View per-chat statistics: message count, member count, date range, and attachment counts by type
 - See how many messages each member sent, with percentage bars
 - Browse all attachments in a filterable gallery (photos, videos, audio, GIFs, files)
 - Select attachments and save them to a folder (Chromium browsers) or download as a ZIP file (all browsers)
 
 **Customization**
+
 - Choose which participant's messages appear on the right ("View perspective")
 - Switch between dark mode and light mode
 - Show or hide sender names and reactions
 - Resize the sidebar and statistics panel by dragging
 
 **Archive Management (optional)**
+
 - Select one or more conversations and delete them permanently from your exported archive
 - Disabled by default; requires explicit confirmation; only available in Chromium browsers
 
@@ -99,14 +103,14 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 
 ---
 
-## How to Export Your Facebook or Messenger Messages
+## ❓ 4. How to Export Your Facebook or Messenger Messages
 
 Meta offers two ways to download your messages.
 
 > [!NOTE]
 > Meta can change its interface at any time. If the steps look different from what is described below, visit the [Meta Help Center](https://www.facebook.com/help/) for current instructions.
 
-### Option A: Facebook (all Facebook messages)
+### 4.1. Option A: Facebook (all Facebook messages)
 
 1. Go to [https://www.facebook.com/dyi](https://www.facebook.com/dyi).
 2. Select the Facebook profile you want to export.
@@ -115,8 +119,8 @@ Meta offers two ways to download your messages.
 5. Clear all categories. Then select only **Messages**. This keeps the download small.
 6. Set **Format** to **JSON**.
 
-   > [!IMPORTANT]
-   > You must select **JSON**. The app does not support HTML exports.
+> [!IMPORTANT]
+> You must select **JSON**. The app does not support HTML exports.
 
 7. Choose a **Date range** if you want to limit the export to a specific period.
 8. Choose a media quality. Lower quality means a smaller download.
@@ -124,12 +128,12 @@ Meta offers two ways to download your messages.
 10. When the export is ready, download the `.zip` file.
 11. **Extract** (unzip) the `.zip` file to a folder on your computer.
 
-   > [!NOTE]
-   > Large exports may be split into multiple `.zip` files. Extract all of them into the **same folder** before you open the app.
+> [!NOTE]
+> Large exports may be split into multiple `.zip` files. Extract all of them into the **same folder** before you open the app.
 
 12. In the app, select the extracted folder, or the `messages` folder inside it.
 
-### Option B: Messenger (standalone Messenger export)
+### 4.2. Option B: Messenger (standalone Messenger export)
 
 1. Go to [https://www.messenger.com/dyi](https://www.messenger.com/dyi).
 2. Follow the steps to download your Messenger data.
@@ -137,35 +141,36 @@ Meta offers two ways to download your messages.
 4. Download and extract the `.zip` file.
 5. In the app, select the folder that contains your conversation `.json` files.
 
-### Which folder structure does the app recognize?
+### 4.x. Which folder structure does the app recognize?
 
 The app automatically finds your messages if you select any of these:
 
-| What you select | What the app looks for |
-|---|---|
-| The extracted folder root | A `messages/` subfolder containing `inbox` or `archived_threads` |
-| The `messages/` folder directly | Uses it as the starting point |
-| A folder with `your_facebook_activity/messages/` inside | Recognized automatically |
-| A Messenger export folder with `.json` files at the root | Recognized as a Messenger export |
+| What you select                                          | What the app looks for                                           |
+| -------------------------------------------------------- | ---------------------------------------------------------------- |
+| The extracted folder root                                | A `messages/` subfolder containing `inbox` or `archived_threads` |
+| The `messages/` folder directly                          | Uses it as the starting point                                    |
+| A folder with `your_facebook_activity/messages/` inside  | Recognized automatically                                         |
+| A Messenger export folder with `.json` files at the root | Recognized as a Messenger export                                 |
 
 Conversations are loaded from `inbox`, `archived_threads`, `message_requests`, and `e2ee_cutover`. Other subfolders are not scanned.
 
 ---
 
-## Browser Support and Limitations
+## ❔ 5. Browser Support and Limitations
 
-| Feature | Chrome, Edge, Brave | Firefox, Safari |
-|---|---|---|
-| Browse and view messages | ✅ | ✅ (via folder-upload fallback) |
-| Search messages | ✅ | ✅ |
-| Delete conversations | ✅ (requires write access) | ❌ Not available |
-| Save attachments to a folder | ✅ | ❌ Not available |
-| Download attachments as ZIP | ✅ | ✅ |
+| Feature                      | Chrome, Edge, Brave        | Firefox, Safari                 |
+| ---------------------------- | -------------------------- | ------------------------------- |
+| Browse and view messages     | ✅                         | ✅ (via folder-upload fallback) |
+| Search messages              | ✅                         | ✅                              |
+| Delete conversations         | ✅ (requires write access) | ❌ Not available                |
+| Save attachments to a folder | ✅                         | ❌ Not available                |
+| Download attachments as ZIP  | ✅                         | ✅                              |
 
 > [!NOTE]
 > In Firefox and Safari, the app uses a folder-upload fallback instead of the native folder picker. All files are loaded into memory at once, which may be slow for very large archives. Chromium-based browsers (Chrome, Edge, Brave) give the best experience.
 
 **Other known limitations:**
+
 - The app cannot open `.zip` files directly. You must extract them first.
 - HTML exports are not supported. Use JSON format when exporting.
 - Search results show a maximum of 50 matches at a time.
@@ -178,36 +183,39 @@ Conversations are loaded from `inbox`, `archived_threads`, `message_requests`, a
 
 ---
 
-## Run the App Locally
+## ⚙️ 6. Run the App Locally
 
 Running locally means downloading the source code and starting your own copy of the app on your computer. Most users do not need to do this: the hosted version works the same way and requires no setup.
 
 If you want to verify that the app does exactly what it claims, you can run it locally. When you run the app from the source code on your own machine, your browser loads the app directly from your filesystem. You can inspect the code before you run it, and the app cannot contact any server that is not in the code you reviewed.
 
-
-### Prerequisites
+### 6.1. Prerequisites
 
 - [Node.js](https://nodejs.org/) (the project's CI pipeline uses Node 20; other recent versions likely work)
 - [Git](https://git-scm.com/)
 
-### Setup
+### 6.2. Setup
 
 **1. Clone the repository**
+
 ```bash
 git clone https://github.com/serogee/FB-Messages-Archive-Explorer.git
 ```
 
 **2. Enter the project folder**
+
 ```bash
 cd FB-Messages-Archive-Explorer
 ```
 
 **3. Install dependencies**
+
 ```bash
 npm install
 ```
 
 **4. Start the development server**
+
 ```bash
 npm run dev
 ```
@@ -216,50 +224,51 @@ Open the local address shown in the terminal (usually `http://localhost:5173/FB-
 
 Press `Ctrl + C` to stop the server.
 
-### Build for Production
+### 6.3. Build for Production
 
 **Build**
+
 ```bash
 npm run build
 ```
 
 **Preview the build locally**
+
 ```bash
 npm run preview
 ```
 
+### 6.4. Other Developer Commands
 
-### Other Developer Commands
-
-| Command | Description |
-|---|---|
-| `npm test` | Run all tests once |
-| `npm run test:watch` | Run tests in watch mode |
-| `npm run test:perf` | Run performance benchmarks |
-| `npm run lint` | Lint with oxlint |
+| Command              | Description                |
+| -------------------- | -------------------------- |
+| `npm test`           | Run all tests once         |
+| `npm run test:watch` | Run tests in watch mode    |
+| `npm run test:perf`  | Run performance benchmarks |
+| `npm run lint`       | Lint with oxlint           |
 
 ---
 
-## Tech Stack
+## 🤖 7. Tech Stack
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-61DAFB?style=flat&logo=react&logoColor=black)
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white)
 
-| Technology | Purpose |
-|---|---|
-| [TypeScript](https://www.typescriptlang.org/) ~6.0 | Language |
-| [React](https://react.dev/) ^19 | UI rendering |
-| [Vite](https://vite.dev/) ^8 | Dev server and build tool |
-| [Vitest](https://vitest.dev/) ^4 | Unit tests and benchmarks |
-| [Lucide React](https://lucide.dev/) ^1.33 | Icons |
-| [oxlint](https://oxc.rs/docs/guide/usage/linter) ^1.75 | Linting |
-| Vanilla CSS | Styling (no framework) |
-| GitHub Pages | Hosting |
+| Technology                                             | Purpose                   |
+| ------------------------------------------------------ | ------------------------- |
+| [TypeScript](https://www.typescriptlang.org/) ~6.0     | Language                  |
+| [React](https://react.dev/) ^19                        | UI rendering              |
+| [Vite](https://vite.dev/) ^8                           | Dev server and build tool |
+| [Vitest](https://vitest.dev/) ^4                       | Unit tests and benchmarks |
+| [Lucide React](https://lucide.dev/) ^1.33              | Icons                     |
+| [oxlint](https://oxc.rs/docs/guide/usage/linter) ^1.75 | Linting                   |
+| Vanilla CSS                                            | Styling (no framework)    |
+| GitHub Pages                                           | Hosting                   |
 
 ---
 
-## Privacy and Data Handling
+## 🔏 8. Privacy and Data Handling
 
 - **No data is uploaded.** After the initial page load, the app makes no network requests.
 - File access uses the browser's [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API). The browser asks you to select a folder; access is limited to that folder only. On browsers without this API, a folder-upload input is used instead.
@@ -271,27 +280,21 @@ npm run preview
 
 ---
 
-## Related Project
+## 🔗 9. Related Project and credits
 
-For a simpler tool that opens one Messenger conversation file at a time (no full archive required), see:
+For a simpler tool that opens one Messenger conversation file at a time (no full archive required), see **[Simple Messenger JSON Explorer](https://github.com/serogee/Simple-Messenger-JSON-Explorer)**.
 
-**[Simple Messenger JSON Explorer](https://github.com/serogee/Simple-Messenger-JSON-Explorer)**
-
----
-
-## Credits
-
-This project builds upon the work of [DuckCIT/Facebook-Messenger-JSON-Viewer](https://github.com/DuckCIT/Facebook-Messenger-JSON-Viewer).
+This project builds upon the work of **[DuckCIT/Facebook-Messenger-JSON-Viewer](https://github.com/DuckCIT/Facebook-Messenger-JSON-Viewer)**.
 
 ---
 
-## License
+## 📜 10. License
 
 [MIT License](LICENSE)
 
 ---
 
-## Contact and Support
+## 📡 11. Contact and Support
 
 For bug reports, feature requests, or questions, open an issue on GitHub:
 
