@@ -52,7 +52,7 @@ async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: Abo
           }
         } catch (error) {
           if (error instanceof DOMException && error.name === 'AbortError') throw error;
-          /* An unreadable file must not prevent estimating the rest of the deletion. */
+          /* Unreadable files are omitted from the estimate; deletion still targets the entire folder. */
         }
       } else if (child.kind === 'directory') {
         await scan(child);
@@ -280,7 +280,7 @@ export function useArchive(): {
           const size = await sizePromise;
           if (signal?.aborted) return;
           pendingSizes.set(entry._jsonFileName || entry.folderName, size);
-        } catch { /* ignore */ }
+        } catch { /* Folder size is optional metadata; failure must not hide the conversation. */ }
         finally {
           sizeComputationPromisesRef.current.delete(getSizeEntryKey(entry));
         }

@@ -132,7 +132,7 @@ export function useChat(): {
               if (enrichAbort.signal.aborted) return;
               data._reactionsEnriched = true;
             })
-            .catch(() => { /* aborted or error, ignore */ });
+            .catch(() => { /* Reaction enrichment is best-effort; base messages remain usable. */ });
         });
       }
 

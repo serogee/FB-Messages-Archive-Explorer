@@ -162,10 +162,11 @@ function LazyMedia({
             container.scrollTop = container.scrollHeight;
             container.dataset.lastScrollTop = String(container.scrollTop);
           } else {
+            // Anchor to the top edge while scrolling down and the bottom edge while scrolling up.
             if (scrollDir === 'down') {
-              if (elRect.top < containerRect.top) isAboveAnchor = true; // Anchor on top
+              if (elRect.top < containerRect.top) isAboveAnchor = true;
             } else {
-              if (elRect.top < containerRect.bottom) isAboveAnchor = true; // Anchor on bottom
+              if (elRect.top < containerRect.bottom) isAboveAnchor = true;
             }
 
             if (isAboveAnchor) {

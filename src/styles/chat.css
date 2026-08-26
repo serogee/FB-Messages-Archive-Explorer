@@ -30,7 +30,7 @@
 }
 
 @container chat-header (max-width: 750px) {
-    /* Compact Mode - Inactive */
+    /* Collapsed auto-navigation state */
     .chat-header.date-nav-auto:not(:hover) .date-nav-scale,
     .chat-header.date-nav-auto:not(:hover) .date-nav-steps {
         display: none !important;
@@ -42,7 +42,7 @@
         min-width: 0;
     }
 
-    /* Compact Mode - Active */
+    /* Expanded navigation state */
     .chat-header.date-nav-auto:hover .date-nav-controls,
     .chat-header:not(.date-nav-auto) .date-nav-controls:not(.manual-collapsed) {
         max-width: none;
