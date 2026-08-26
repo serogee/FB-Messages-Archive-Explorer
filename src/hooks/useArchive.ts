@@ -6,6 +6,7 @@ import {
   listChatFolders,
   computeFolderSize,
   deleteChat as deleteChatFs,
+  resolveFacebookMessagesRoot,
 } from '../services/fileSystem';
 import {
   buildMessengerExportMediaSizeIndex,
@@ -19,35 +20,6 @@ import {
   type MessengerExportDeletionInfo,
   type MessengerExportReferenceIndex,
 } from '../services/messengerExport';
-
-async function resolveMessagesRoot(handle: FileSystemDirectoryHandle): Promise<FileSystemDirectoryHandle | null> {
-  const commonPaths = [
-    [], // Maybe they selected 'messages' directly
-    ['messages'], // E.g. inside facebook-xyz folder
-    ['your_facebook_activity', 'messages'], // Newer Facebook export format
-    ['your_instagram_activity', 'messages'] // Just in case
-  ];
-
-  for (const path of commonPaths) {
-    try {
-      let current = handle;
-      for (const segment of path) {
-        current = await current.getDirectoryHandle(segment);
-      }
-      // Check if it's the right place by looking for inbox or archived_threads
-      let isValid = false;
-      try { await current.getDirectoryHandle('inbox'); isValid = true; } catch {}
-      if (!isValid) {
-        try { await current.getDirectoryHandle('archived_threads'); isValid = true; } catch {}
-      }
-      if (isValid) return current;
-    } catch {
-      // Path doesn't exist, try next
-    }
-  }
-
-  return null;
-}
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -344,7 +316,7 @@ export function useArchive(): {
       sizeQueuePauseCountRef.current = 0;
       resumeSizeQueue();
       
-      const messagesRoot = await resolveMessagesRoot(handle);
+      const messagesRoot = await resolveFacebookMessagesRoot(handle);
       if (!messagesRoot) {
         const messengerExport = await isMessengerExport(handle);
         if (!messengerExport) {

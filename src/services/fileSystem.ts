@@ -3,6 +3,49 @@ import { parseMessengerJsonContent, getOrderedMessageFileNames, getMessageTimest
 import { processMediaFromDirectory, createMediaState } from './media';
 import type { MediaState } from '../types/messenger';
 
+const SELECTED_MESSAGES_DIRECTORY = [] as const;
+const FACEBOOK_EXPORT_MESSAGES_DIRECTORY = ['messages'] as const;
+const ACCOUNTS_CENTER_MESSAGES_DIRECTORY = ['your_facebook_activity', 'messages'] as const;
+const FACEBOOK_MESSAGES_ROOT_PATHS = [
+  SELECTED_MESSAGES_DIRECTORY,
+  FACEBOOK_EXPORT_MESSAGES_DIRECTORY,
+  ACCOUNTS_CENTER_MESSAGES_DIRECTORY,
+] as const;
+const FACEBOOK_CONVERSATION_SECTIONS = ['inbox', 'archived_threads'] as const;
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'NotFoundError';
+}
+
+async function containsFacebookConversations(handle: FileSystemDirectoryHandle): Promise<boolean> {
+  for (const section of FACEBOOK_CONVERSATION_SECTIONS) {
+    try {
+      await handle.getDirectoryHandle(section);
+      return true;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+  return false;
+}
+
+export async function resolveFacebookMessagesRoot(
+  handle: FileSystemDirectoryHandle
+): Promise<FileSystemDirectoryHandle | null> {
+  for (const path of FACEBOOK_MESSAGES_ROOT_PATHS) {
+    try {
+      let current = handle;
+      for (const segment of path) {
+        current = await current.getDirectoryHandle(segment);
+      }
+      if (await containsFacebookConversations(current)) return current;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+  return null;
+}
+
 // ── Browser support detection ──────────────────────────────────────
 
 export function isFileSystemAccessSupported(): boolean {
