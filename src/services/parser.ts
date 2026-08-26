@@ -1,6 +1,5 @@
 import type { MessengerMessage, MessengerThread } from '../types/messenger';
 
-// ── Encoding helpers ───────────────────────────────────────────────
 
 function looksMisencoded(value: string): boolean {
   return /(?:\u00c3.|\u00c2.|\u00e2[\u0080-\u00bf]{1,2}|\u00f0[\u0080-\u00bf])/.test(value);
@@ -27,7 +26,6 @@ function decodeLegacyMessengerJsonContent(content: string): string {
   return decodeURIComponent(escape(replaced));
 }
 
-// ── Normalize display encoding ─────────────────────────────────────
 
 function normalizeDisplayEncoding(data: MessengerThread): MessengerThread {
   if (!data || typeof data !== 'object') return data;
@@ -64,7 +62,6 @@ function normalizeDisplayEncoding(data: MessengerThread): MessengerThread {
   return data;
 }
 
-// ── Parse a single JSON file ───────────────────────────────────────
 
 export function parseMessengerJsonContent(content: string): MessengerThread {
   let data: MessengerThread;
@@ -79,14 +76,12 @@ export function parseMessengerJsonContent(content: string): MessengerThread {
   return normalizeDisplayEncoding(data);
 }
 
-// ── Get message file number ────────────────────────────────────────
 
 function getMessageFileNumber(filename: string): number {
   const match = filename.match(/(?:^|[/\\])message_(\d+)\.json$/i);
   return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
 }
 
-// ── Merge multiple data files ──────────────────────────────────────
 
 export function mergeMessengerData(dataFiles: MessengerThread[]): MessengerThread {
   if (!dataFiles.length) throw new Error('No data files to merge');
@@ -104,14 +99,12 @@ export function mergeMessengerData(dataFiles: MessengerThread[]): MessengerThrea
   return base;
 }
 
-// ── Timestamps ─────────────────────────────────────────────────────
 
 export function getMessageTimestamp(msg: MessengerMessage): number | null {
   const timestamp = Number(msg?.timestamp_ms ?? msg?.timestamp ?? 0);
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
 }
 
-// ── Normalize (sort chronologically) ───────────────────────────────
 
 export function normalizeMessengerData(data: MessengerThread): MessengerThread {
   if (!Array.isArray(data.messages)) {
@@ -130,7 +123,6 @@ export function normalizeMessengerData(data: MessengerThread): MessengerThread {
   return data;
 }
 
-// ── Participant names ──────────────────────────────────────────────
 
 export function getParticipantNames(data: MessengerThread | null): string[] {
   return (data?.participants || [])
@@ -138,7 +130,6 @@ export function getParticipantNames(data: MessengerThread | null): string[] {
     .filter(Boolean) as string[];
 }
 
-// ── Sanitize file name ─────────────────────────────────────────────
 
 export function sanitizeFileName(name: string): string {
   return String(name || 'conversation')
@@ -148,7 +139,6 @@ export function sanitizeFileName(name: string): string {
     .slice(0, 140) || 'conversation';
 }
 
-// ── Order message JSON files ───────────────────────────────────────
 
 export function getOrderedMessageFileNames(fileNames: string[]): string[] {
   const messageFiles = fileNames.filter(name => /message_\d+\.json$/i.test(name));

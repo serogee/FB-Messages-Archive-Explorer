@@ -101,9 +101,8 @@ export async function openFolderPolyfill(): Promise<ReadableDirectoryHandle> {
     input.webkitdirectory = true;
     input.setAttribute('directory', '');
     
-    // In some browsers, if the user cancels, the change event never fires.
-    // Unfortunately, there's no reliable cross-browser way to detect cancel on file inputs.
-    // The promise will just hang if they cancel, which is acceptable because they can just click the button again.
+    // File inputs do not reliably report cancellation across browsers. A later picker
+    // request remains independent if this promise never settles.
     
     input.onchange = (e) => {
       const files = (e.target as HTMLInputElement).files;

@@ -52,7 +52,7 @@ async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: Abo
           }
         } catch (error) {
           if (error instanceof DOMException && error.name === 'AbortError') throw error;
-          /* ignore unreadable files */
+          /* An unreadable file must not prevent estimating the rest of the deletion. */
         }
       } else if (child.kind === 'directory') {
         await scan(child);

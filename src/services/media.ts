@@ -2,7 +2,6 @@ import type { MediaItem, MediaState, MediaEntry, MessengerMessage } from '../typ
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../types/fileSystem';
 import { blobCache } from './blobCache';
 
-// ── Internal helpers ───────────────────────────────────────────────
 
 function normalizeMediaPath(path: string): string {
   return String(path || '').replace(/\\/g, '/').toLowerCase();
@@ -12,7 +11,6 @@ function getMediaBasename(path: string): string {
   return normalizeMediaPath(path).split('/').pop() || '';
 }
 
-// ── Exported functions ─────────────────────────────────────────────
 
 export function getMediaType(filename: string): 'image' | 'video' | 'audio' | 'unknown' {
   const ext = String(filename || '').split('.').pop()?.toLowerCase() || '';
@@ -199,12 +197,12 @@ export async function processMediaFromDirectory(
           const entry: MediaEntry = { handle, type };
           state.types[path] = type;
           addMediaToIndex(state, path, entry);
-        } catch { /* ignore individual failures */ }
+        } catch { /* One unreadable attachment must not stop media indexing. */ }
         done++;
         onProgress?.(done, total);
       })
     );
-    // Yield event loop based on time to maximize speed without freezing
+    // Yield only after a frame budget to balance throughput and responsiveness.
     if (performance.now() - lastYield > 16) {
       await new Promise(r => setTimeout(r, 0));
       lastYield = performance.now();

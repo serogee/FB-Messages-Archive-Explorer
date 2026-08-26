@@ -31,7 +31,6 @@ export async function saveToFolder(
   let done = 0;
   onProgress(done, total);
 
-  // Keep track of used names to prevent overwriting
   const usedNames = new Set<string>();
 
   for (const att of attachments) {
@@ -238,7 +237,6 @@ export async function downloadAsZip(
 
   chunks.push(new Uint8Array(eocd));
 
-  // 4. Download ZIP
   const blob = new Blob(chunks, { type: 'application/zip' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

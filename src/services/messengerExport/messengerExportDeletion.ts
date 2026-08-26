@@ -87,7 +87,7 @@ export async function buildMessengerExportReferenceIndex(
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      /* skip unreadable JSON files */
+      /* One unreadable conversation must not block reference indexing for the rest. */
     }
 
     if (performance.now() - lastYield > 16) {

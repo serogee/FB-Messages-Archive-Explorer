@@ -2,7 +2,6 @@ import type { MessengerMessage, Reaction } from '../types/messenger';
 import { fixEncoding } from './parser';
 import { getMessageMediaItems } from './media';
 
-// ── Internal helpers ───────────────────────────────────────────────
 
 function normalizeReactionValue(value: string): string {
   return String(value || '')
@@ -27,7 +26,6 @@ function parseReactionNotice(
   };
 }
 
-// ── Exported functions ─────────────────────────────────────────────
 
 export function isReactionNoticeMessage(msg: MessengerMessage): boolean {
   if (typeof msg._isReactionNotice === 'boolean') return msg._isReactionNotice;
