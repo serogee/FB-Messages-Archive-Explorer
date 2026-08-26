@@ -1,12 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { ChatListEntry, MessengerThread, SearchIndexEntry, SearchResult } from '../types/messenger';
+import type { ReadableDirectoryHandle } from '../types/fileSystem';
 import { buildSearchIndex, performSearch } from '../services/search';
 import { isReactionNoticeMessage } from '../services/reactions';
 import { loadChatMessages } from '../services/fileSystem';
 import { loadMessengerExportChat } from '../services/messengerExport';
 
 const WIDE_INDEX_CACHE_LIMIT = 50;
-const globalWideIndexCache = new Map<string, { dirHandle: FileSystemDirectoryHandle; index: SearchIndexEntry[] }>();
+const globalWideIndexCache = new Map<string, { dirHandle: ReadableDirectoryHandle; index: SearchIndexEntry[] }>();
 
 function getWideIndexCacheKey(entry: ChatListEntry): string {
   return `${entry.source}:${entry.folderName}:${entry._jsonFileName || ''}`;

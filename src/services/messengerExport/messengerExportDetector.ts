@@ -1,3 +1,5 @@
+import type { ReadableDirectoryHandle } from '../../types/fileSystem';
+
 export function isConversationJsonContent(content: string): boolean {
   try {
     const data = JSON.parse(content);
@@ -14,7 +16,7 @@ export function isConversationJsonContent(content: string): boolean {
   }
 }
 
-export async function isMessengerExport(handle: FileSystemDirectoryHandle): Promise<boolean> {
+export async function isMessengerExport(handle: ReadableDirectoryHandle): Promise<boolean> {
   try {
     await handle.getDirectoryHandle('inbox');
     return false;
@@ -32,7 +34,7 @@ export async function isMessengerExport(handle: FileSystemDirectoryHandle): Prom
     checked++;
 
     try {
-      const file = await (entry as FileSystemFileHandle).getFile();
+      const file = await entry.getFile();
       if (isConversationJsonContent(await file.text())) return true;
     } catch {
       continue;

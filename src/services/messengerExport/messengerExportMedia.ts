@@ -1,4 +1,5 @@
 import type { MediaEntry, MediaState } from '../../types/messenger';
+import type { ReadableDirectoryHandle, ReadableFileHandle } from '../../types/fileSystem';
 import { addMediaToIndex, getMediaType } from '../media';
 
 function normalizeRelativePath(path: string): string {
@@ -6,9 +7,9 @@ function normalizeRelativePath(path: string): string {
 }
 
 async function collectMediaFiles(
-  dirHandle: FileSystemDirectoryHandle,
+  dirHandle: ReadableDirectoryHandle,
   prefix: string,
-  files: Array<{ handle: FileSystemFileHandle; path: string }>,
+  files: Array<{ handle: ReadableFileHandle; path: string }>,
   signal?: AbortSignal
 ): Promise<void> {
   let lastYield = performance.now();
@@ -18,9 +19,9 @@ async function collectMediaFiles(
 
     const path = prefix ? `${prefix}/${name}` : name;
     if (entry.kind === 'file') {
-      files.push({ handle: entry as FileSystemFileHandle, path });
+      files.push({ handle: entry, path });
     } else if (entry.kind === 'directory') {
-      await collectMediaFiles(entry as FileSystemDirectoryHandle, path, files, signal);
+      await collectMediaFiles(entry, path, files, signal);
     }
 
     if (performance.now() - lastYield > 16) {
@@ -31,12 +32,12 @@ async function collectMediaFiles(
 }
 
 export async function processMessengerExportMedia(
-  rootHandle: FileSystemDirectoryHandle,
+  rootHandle: ReadableDirectoryHandle,
   state: MediaState,
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  let mediaHandle: FileSystemDirectoryHandle;
+  let mediaHandle: ReadableDirectoryHandle;
   try {
     mediaHandle = await rootHandle.getDirectoryHandle('media');
   } catch {
@@ -44,7 +45,7 @@ export async function processMessengerExportMedia(
     return;
   }
 
-  const files: Array<{ handle: FileSystemFileHandle; path: string }> = [];
+  const files: Array<{ handle: ReadableFileHandle; path: string }> = [];
   await collectMediaFiles(mediaHandle, 'media', files, signal);
   if (signal?.aborted) return;
 

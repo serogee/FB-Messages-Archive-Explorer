@@ -1,4 +1,5 @@
 import type { ChatListEntry } from '../../types/messenger';
+import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../../types/fileSystem';
 import { getMessageAttachmentReferences } from '../media';
 import { tryParseMessengerExportJson } from './messengerExportParser';
 import { buildMessengerExportMediaSizeIndex } from './messengerExportSize';
@@ -60,7 +61,7 @@ async function getConversationMediaBasenames(file: File, signal?: AbortSignal): 
 }
 
 export async function buildMessengerExportReferenceIndex(
-  rootHandle: FileSystemDirectoryHandle,
+  rootHandle: ReadableDirectoryHandle,
   signal?: AbortSignal
 ): Promise<MessengerExportReferenceIndex> {
   const mediaOwners = new Map<string, Set<string>>();
@@ -72,7 +73,7 @@ export async function buildMessengerExportReferenceIndex(
     if (entry.kind !== 'file' || !/\.json$/i.test(name)) continue;
 
     try {
-      const file = await (entry as FileSystemFileHandle).getFile();
+      const file = await entry.getFile();
       const media = await getConversationMediaBasenames(file, signal);
       chatMedia.set(name, media);
 
@@ -115,7 +116,7 @@ function removeChatFromReferenceIndex(index: MessengerExportReferenceIndex, json
   index.chatMedia.delete(jsonFileName);
 }
 
-async function removeMediaFile(rootHandle: FileSystemDirectoryHandle, basename: string): Promise<void> {
+async function removeMediaFile(rootHandle: WritableDirectoryHandle, basename: string): Promise<void> {
   try {
     const mediaHandle = await rootHandle.getDirectoryHandle('media');
     await mediaHandle.removeEntry(basename);
@@ -125,14 +126,14 @@ async function removeMediaFile(rootHandle: FileSystemDirectoryHandle, basename: 
   }
 }
 
-async function getJsonSize(rootHandle: FileSystemDirectoryHandle, jsonFileName: string): Promise<number> {
+async function getJsonSize(rootHandle: ReadableDirectoryHandle, jsonFileName: string): Promise<number> {
   const fileHandle = await rootHandle.getFileHandle(jsonFileName);
   const file = await fileHandle.getFile();
   return file.size;
 }
 
 export async function getMessengerExportDeletionInfo(
-  rootHandle: FileSystemDirectoryHandle,
+  rootHandle: ReadableDirectoryHandle,
   entry: ChatListEntry,
   referenceIndex: MessengerExportReferenceIndex,
   signal?: AbortSignal,
@@ -172,7 +173,7 @@ export async function getMessengerExportDeletionInfo(
 }
 
 export async function getMessengerExportBatchDeletionInfo(
-  rootHandle: FileSystemDirectoryHandle,
+  rootHandle: ReadableDirectoryHandle,
   entries: ChatListEntry[],
   referenceIndex: MessengerExportReferenceIndex,
   signal?: AbortSignal,
@@ -226,7 +227,7 @@ export async function getMessengerExportBatchDeletionInfo(
 }
 
 export async function deleteMessengerExportChat(
-  rootHandle: FileSystemDirectoryHandle,
+  rootHandle: WritableDirectoryHandle,
   entry: ChatListEntry,
   referenceIndex: MessengerExportReferenceIndex
 ): Promise<void> {

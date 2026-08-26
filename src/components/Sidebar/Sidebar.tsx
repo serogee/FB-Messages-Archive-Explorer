@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { Settings } from '../../hooks/useSettings';
 import type { ChatListEntry, MessengerThread, MediaState } from '../../types/messenger';
+import type { ReadableDirectoryHandle } from '../../types/fileSystem';
 import type { useSearch } from '../../hooks/useSearch';
 import { HeaderMenu } from './HeaderMenu';
 import { SearchBar } from './SearchBar';
@@ -16,8 +17,8 @@ interface SidebarProps {
   archivedList: ChatListEntry[];
   requestsList: ChatListEntry[];
   activeEntry: ChatListEntry | null;
-  rootHandle: FileSystemDirectoryHandle | null;
-  originalRootHandle: FileSystemDirectoryHandle | null;
+  rootHandle: ReadableDirectoryHandle | null;
+  originalRootHandle: ReadableDirectoryHandle | null;
   loading: boolean;
   loadProgress: { done: number; total: number } | null;
   sizeProgress: { done: number; total: number } | null;

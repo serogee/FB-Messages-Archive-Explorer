@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import type { ChatListEntry } from '../types/messenger';
+import type { ReadableDirectoryHandle } from '../types/fileSystem';
+import { isWritableDirectoryHandle } from '../types/fileSystem';
 import {
   pickMessagesFolder,
   pickFolderWithWriteAccess,
@@ -33,13 +35,13 @@ async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: Abo
   let mediaSize = 0;
   let mediaCount = 0;
 
-  const scan = async (dirHandle: FileSystemDirectoryHandle) => {
+  const scan = async (dirHandle: ReadableDirectoryHandle) => {
     throwIfAborted(signal);
     for await (const [name, child] of dirHandle.entries()) {
       throwIfAborted(signal);
       if (child.kind === 'file') {
         try {
-          const file = await (child as FileSystemFileHandle).getFile();
+          const file = await child.getFile();
           throwIfAborted(signal);
           if (/\.json$/i.test(name)) {
             jsonSize += file.size;
@@ -53,7 +55,7 @@ async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: Abo
           /* ignore unreadable files */
         }
       } else if (child.kind === 'directory') {
-        await scan(child as FileSystemDirectoryHandle);
+        await scan(child);
       }
     }
   };
@@ -94,8 +96,8 @@ async function computeFacebookDeleteInfo(entries: ChatListEntry[], signal?: Abor
 }
 
 export function useArchive(): {
-  rootHandle: FileSystemDirectoryHandle | null;
-  originalRootHandle: FileSystemDirectoryHandle | null;
+  rootHandle: ReadableDirectoryHandle | null;
+  originalRootHandle: ReadableDirectoryHandle | null;
 
   inboxList: ChatListEntry[];
   archivedList: ChatListEntry[];
@@ -113,8 +115,8 @@ export function useArchive(): {
   deleteChats: (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => Promise<void>;
   updateFolderSize: (entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => void;
 } {
-  const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null);
-  const [originalRootHandle, setOriginalRootHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [rootHandle, setRootHandle] = useState<ReadableDirectoryHandle | null>(null);
+  const [originalRootHandle, setOriginalRootHandle] = useState<ReadableDirectoryHandle | null>(null);
   const [inboxList, setInboxList] = useState<ChatListEntry[]>([]);
   const [archivedList, setArchivedList] = useState<ChatListEntry[]>([]);
   const [requestsList, setRequestsList] = useState<ChatListEntry[]>([]);
@@ -125,12 +127,12 @@ export function useArchive(): {
   const abortControllerRef = useRef<AbortController | null>(null);
   const isMessengerExportRef = useRef(false);
   const messengerReferenceIndexRef = useRef<{
-    rootHandle: FileSystemDirectoryHandle;
+    rootHandle: ReadableDirectoryHandle;
     index: MessengerExportReferenceIndex;
     mediaSizeIndex: Map<string, number>;
   } | null>(null);
   const messengerMediaSizeIndexRef = useRef<{
-    rootHandle: FileSystemDirectoryHandle;
+    rootHandle: ReadableDirectoryHandle;
     mediaSizeIndex: Map<string, number>;
   } | null>(null);
   const sizeComputationPromisesRef = useRef<Map<string, Promise<number>>>(new Map());
@@ -528,6 +530,7 @@ export function useArchive(): {
 
   const deleteChat = useCallback(async (entry: ChatListEntry) => {
     if (!rootHandle) throw new Error('No folder open');
+    if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
     if (entry._messengerExport) {
       const { index: referenceIndex } = await getMessengerReferenceIndex();
       await deleteMessengerExportChat(rootHandle, entry, referenceIndex);
@@ -552,6 +555,7 @@ export function useArchive(): {
 
   const deleteChats = useCallback(async (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => {
     if (!rootHandle) throw new Error('No folder open');
+    if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
     
     const foldersToRemove = new Set(entries.map(e => e.folderName));
     

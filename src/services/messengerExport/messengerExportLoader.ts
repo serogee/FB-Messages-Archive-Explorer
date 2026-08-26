@@ -1,4 +1,5 @@
 import type { ChatListEntry, MessengerThread } from '../../types/messenger';
+import type { ReadableDirectoryHandle, ReadableFileHandle } from '../../types/fileSystem';
 import { getMessageTimestamp } from '../parser';
 import { getMessengerExportLastMessage, tryParseMessengerExportJson } from './messengerExportParser';
 
@@ -38,16 +39,16 @@ function describeLastMessage(thread: MessengerThread): { lastMessage?: string; l
 }
 
 export async function listMessengerExportChats(
-  handle: FileSystemDirectoryHandle,
+  handle: ReadableDirectoryHandle,
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal
 ): Promise<ChatListEntry[]> {
-  const fileHandles: Array<{ name: string; handle: FileSystemFileHandle }> = [];
+  const fileHandles: Array<{ name: string; handle: ReadableFileHandle }> = [];
 
   for await (const [name, entry] of handle.entries()) {
     if (signal?.aborted) return [];
     if (entry.kind === 'file' && /\.json$/i.test(name)) {
-      fileHandles.push({ name, handle: entry as FileSystemFileHandle });
+      fileHandles.push({ name, handle: entry });
     }
   }
 
@@ -101,7 +102,7 @@ export async function listMessengerExportChats(
 }
 
 export async function loadMessengerExportChat(
-  handle: FileSystemDirectoryHandle,
+  handle: ReadableDirectoryHandle,
   jsonFileName: string,
   onProgress?: (progress: number, statusText: string) => void,
   signal?: AbortSignal

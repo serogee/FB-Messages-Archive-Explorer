@@ -1,4 +1,5 @@
 import type { MediaItem, MediaState, MediaEntry, MessengerMessage } from '../types/messenger';
+import type { ReadableDirectoryHandle, ReadableFileHandle } from '../types/fileSystem';
 import { blobCache } from './blobCache';
 
 // ── Internal helpers ───────────────────────────────────────────────
@@ -148,7 +149,7 @@ export function getMessageAttachmentReferences(
 }
 
 export async function processMediaFromDirectory(
-  dirHandle: FileSystemDirectoryHandle,
+  dirHandle: ReadableDirectoryHandle,
   state: MediaState,
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal
@@ -156,13 +157,13 @@ export async function processMediaFromDirectory(
   const MEDIA_SUBDIRS = ['photos', 'videos', 'audio', 'gifs', 'files'];
   const BATCH_SIZE = 20;
 
-  const fileHandles: Array<{ handle: FileSystemFileHandle; path: string }> = [];
+  const fileHandles: Array<{ handle: ReadableFileHandle; path: string }> = [];
 
   let lastYield = performance.now();
 
   for (const subdirName of MEDIA_SUBDIRS) {
     if (signal?.aborted) return;
-    let subdirHandle: FileSystemDirectoryHandle;
+    let subdirHandle: ReadableDirectoryHandle;
     try {
       subdirHandle = await dirHandle.getDirectoryHandle(subdirName);
     } catch {
@@ -172,7 +173,7 @@ export async function processMediaFromDirectory(
       if (signal?.aborted) return;
       if (entry.kind === 'file') {
         fileHandles.push({
-          handle: entry as FileSystemFileHandle,
+          handle: entry,
           path: `${subdirName}/${name}`,
         });
       }
