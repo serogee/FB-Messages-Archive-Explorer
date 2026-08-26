@@ -62,8 +62,9 @@ export async function buildMessengerExportMediaSizeIndex(
   try {
     const mediaHandle = await rootHandle.getDirectoryHandle('media');
     await collectMediaSizes(mediaHandle, 'media', index, signal);
-  } catch {
-    // Messenger exports without media/ still have valid JSON-only sizes.
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error;
+    // A Messenger export may validly omit media when it contains only JSON.
   }
 
   return index;
