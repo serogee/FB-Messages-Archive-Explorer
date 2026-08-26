@@ -3,7 +3,6 @@ import { escapeHtml } from './storage';
 import { fixEncoding } from './parser';
 import { isReactionNoticeMessage } from './reactions';
 
-// ── Internal helpers ───────────────────────────────────────────────
 
 function buildNormalizedMap(original: string): { normalized: string; mapping: number[] } {
   const mapping: number[] = [];
@@ -54,7 +53,6 @@ function getMessageText(msg: MessengerMessage): string {
   return fixEncoding(msg?.text || msg?.content || '').trim();
 }
 
-// ── Exported functions ─────────────────────────────────────────────
 
 export function normalizeForSearch(str: string): string {
   if (!str) return '';

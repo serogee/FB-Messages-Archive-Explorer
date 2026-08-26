@@ -2,7 +2,6 @@ import type { MediaItem, MediaState, MediaEntry, MessengerMessage } from '../typ
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../types/fileSystem';
 import { blobCache } from './blobCache';
 
-// ── Internal helpers ───────────────────────────────────────────────
 
 function normalizeMediaPath(path: string): string {
   return String(path || '').replace(/\\/g, '/').toLowerCase();
@@ -12,7 +11,6 @@ function getMediaBasename(path: string): string {
   return normalizeMediaPath(path).split('/').pop() || '';
 }
 
-// ── Exported functions ─────────────────────────────────────────────
 
 export function getMediaType(filename: string): 'image' | 'video' | 'audio' | 'unknown' {
   const ext = String(filename || '').split('.').pop()?.toLowerCase() || '';

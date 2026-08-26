@@ -16,24 +16,15 @@ export class BlobLRUCache {
     this.maxSize = maxSize;
   }
 
-  /**
-   * Get an existing blob URL for this entry, promoting it to most-recently-used.
-   * Returns null if not cached.
-   */
   get(entry: MediaEntry): string | null {
     const cached = this.cache.get(entry);
     if (!cached) return null;
 
-    // Promote to most-recently-used by re-inserting
     this.cache.delete(entry);
     this.cache.set(entry, cached);
     return cached;
   }
 
-  /**
-   * Get an existing blob URL or create one from the entry's file handle.
-   * Returns null if the entry has no handle and no cached URL.
-   */
   async getOrCreate(entry: MediaEntry): Promise<string | null> {
     const existing = this.get(entry);
     if (existing) return existing;
@@ -57,9 +48,6 @@ export class BlobLRUCache {
     }
   }
 
-  /**
-   * Store a blob URL in the cache, evicting the oldest if at capacity.
-   */
   put(entry: MediaEntry, url: string): void {
     if (this.cache.has(entry)) {
       this.cache.delete(entry);
@@ -76,9 +64,6 @@ export class BlobLRUCache {
     this.cache.set(entry, url);
   }
 
-  /**
-   * Revoke a specific blob URL and clear it from the entry.
-   */
   private revoke(url: string, entry: MediaEntry): void {
     try {
       URL.revokeObjectURL(url);
@@ -89,9 +74,6 @@ export class BlobLRUCache {
     }
   }
 
-  /**
-   * Revoke and clear all cached blob URLs.
-   */
   clear(): void {
     for (const [entry, url] of this.cache) {
       this.revoke(url, entry);
@@ -99,11 +81,9 @@ export class BlobLRUCache {
     this.cache.clear();
   }
 
-  /** Current number of cached blob URLs */
   get size(): number {
     return this.cache.size;
   }
 }
 
-/** Global singleton blob URL cache */
 export const blobCache = new BlobLRUCache(DEFAULT_MAX_SIZE);

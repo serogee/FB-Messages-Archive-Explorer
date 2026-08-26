@@ -47,7 +47,6 @@ export async function resolveFacebookMessagesRoot(
   return null;
 }
 
-// ── Browser support detection ──────────────────────────────────────
 
 export function isFileSystemAccessSupported(): boolean {
   return typeof window.showDirectoryPicker === 'function';
@@ -57,7 +56,6 @@ export function isWriteAccessSupported(): boolean {
   return isFileSystemAccessSupported();
 }
 
-// ── Folder pickers ─────────────────────────────────────────────────
 
 import { openFolderPolyfill } from './polyfill';
 
@@ -76,7 +74,6 @@ export async function pickFolderWithWriteAccess(): Promise<ReadableDirectoryHand
   return window.showDirectoryPicker({ id: 'messages-folder', mode: 'readwrite' });
 }
 
-// ── List chat folders ──────────────────────────────────────────────
 
 export async function listChatFolders(
   parentHandle: ReadableDirectoryHandle,
@@ -187,7 +184,6 @@ export async function listChatFolders(
   return entries;
 }
 
-// ── Load full chat ─────────────────────────────────────────────────
 
 export async function loadChatMessages(
   chatDirHandle: ReadableDirectoryHandle,
@@ -262,7 +258,6 @@ export async function loadChatMessages(
   });
 }
 
-// ── Compute folder size ────────────────────────────────────────────
 
 export async function computeFolderSize(dirHandle: ReadableDirectoryHandle): Promise<number> {
   let total = 0;
@@ -279,7 +274,6 @@ export async function computeFolderSize(dirHandle: ReadableDirectoryHandle): Pro
   return total;
 }
 
-// ── Delete a chat folder ───────────────────────────────────────────
 
 export async function deleteChat(
   parentHandle: WritableDirectoryHandle,
@@ -290,7 +284,6 @@ export async function deleteChat(
   await subDir.removeEntry(chatFolderName, { recursive: true });
 }
 
-// ── Load media for a chat ─────────────────────────────────────────
 
 export async function loadChatMedia(
   chatDirHandle: ReadableDirectoryHandle
