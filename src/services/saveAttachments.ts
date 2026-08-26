@@ -15,8 +15,6 @@ async function getFileFromAttachment(
   }
 }
 
-// ── Chromium: Save to Folder ────────────────────────────────────────
-
 export async function saveToFolder(
   attachments: ResolvedAttachment[],
   mediaState: MediaState,
@@ -67,8 +65,6 @@ export async function saveToFolder(
   }
 }
 
-// ── Cross-browser: Download Single ──────────────────────────────────
-
 export async function downloadSingle(
   attachment: ResolvedAttachment,
   mediaState: MediaState
@@ -83,8 +79,6 @@ export async function downloadSingle(
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
-// ── Cross-browser: Download ZIP ─────────────────────────────────────
 
 function createCrcTable() {
   const table = new Uint32Array(256);
