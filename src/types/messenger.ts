@@ -53,9 +53,9 @@ export interface MessengerThread {
   magic_words?: string[];
   joinable_mode?: { mode: number; link: string };
 
-  // Runtime flags set after first processing
+  /** Avoids repeating asynchronous reaction timestamp enrichment. */
   _reactionsEnriched?: boolean;
-  _dateNavBuilt?: boolean;
+  /** Cached height estimates for virtualized message chunks. */
   _chunkHeights?: number[];
 }
 
