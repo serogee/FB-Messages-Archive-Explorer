@@ -82,7 +82,7 @@ export async function listMessengerExportChats(
         _sizeIncludesMedia: false,
       });
     } catch {
-      // Skip unreadable or invalid JSON files.
+      // One malformed conversation must not hide other chats in the export.
     }
 
     onProgress?.(i + 1, fileHandles.length);

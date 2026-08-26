@@ -68,7 +68,7 @@ export async function pickMessagesFolder(): Promise<ReadableDirectoryHandle> {
 
 export async function pickFolderWithWriteAccess(): Promise<ReadableDirectoryHandle> {
   if (!isFileSystemAccessSupported()) {
-    // Write access is not supported via polyfill, but we can still read
+    // Upload fallback handles are read-only but still support archive browsing.
     return openFolderPolyfill();
   }
   return window.showDirectoryPicker({ id: 'messages-folder', mode: 'readwrite' });
@@ -115,8 +115,7 @@ export async function listChatFolders(
 
       const participants = (parsed.participants || []).map(p => p.name).filter(Boolean);
 
-      // Last message: after parseMessengerJsonContent the messages are reversed so
-      // the array is chronological (oldest first). Last item = newest message.
+      // Parsing normalizes messages oldest-first, so the final item supplies the preview.
       const msgs = parsed.messages || [];
       const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
       const isGroup = participants.length > 2;
@@ -164,11 +163,11 @@ export async function listChatFolders(
         source,
       });
     } catch {
-      // Skip unreadable folders
+      // One inaccessible conversation must not prevent listing the rest of the archive.
     }
 
     if (onProgress) onProgress(i + 1, total);
-    // Yield occasionally to prevent UI freezes
+    // Bound uninterrupted listing work so large archives remain responsive.
     if (i % 10 === 0) {
       await new Promise(r => setTimeout(r, 0));
     }
@@ -190,7 +189,7 @@ export async function loadChatMessages(
   onProgress?: (progress: number, statusText: string) => void,
   signal?: AbortSignal
 ): Promise<MessengerThread> {
-  // Yield immediately to let the browser paint the loading state
+  // Let the browser paint the loading state before file scanning begins.
   await new Promise(r => setTimeout(r, 10));
   onProgress?.(0, "Scanning files...");
 
@@ -211,8 +210,7 @@ export async function loadChatMessages(
     try {
       const fileHandle = await chatDirHandle.getFileHandle(name);
       files.push(await fileHandle.getFile());
-    } catch { /* skip */ }
-    // Scanning files is fast, but update progress so user knows it's working
+    } catch { /* Keep loading the remaining message files. */ }
     onProgress?.(0.05 * (i + 1) / orderedNames.length, "Preparing files...");
   }
 

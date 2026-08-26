@@ -197,12 +197,12 @@ export async function processMediaFromDirectory(
           const entry: MediaEntry = { handle, type };
           state.types[path] = type;
           addMediaToIndex(state, path, entry);
-        } catch { /* ignore individual failures */ }
+        } catch { /* One unreadable attachment must not stop media indexing. */ }
         done++;
         onProgress?.(done, total);
       })
     );
-    // Yield event loop based on time to maximize speed without freezing
+    // Yield only after a frame budget to balance throughput and responsiveness.
     if (performance.now() - lastYield > 16) {
       await new Promise(r => setTimeout(r, 0));
       lastYield = performance.now();
