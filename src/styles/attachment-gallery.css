@@ -135,8 +135,8 @@
 /* Grid */
 .gallery-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-    gap: 4px;
+    grid-template-columns: repeat(auto-fill, minmax(var(--attachment-grid-min-width), 1fr));
+    gap: var(--attachment-grid-gap);
 }
 
 /* Thumbnail base */

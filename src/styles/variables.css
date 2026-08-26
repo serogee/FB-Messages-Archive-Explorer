@@ -28,6 +28,8 @@
     --border: #e6e9ee;
     --sidebar-width: clamp(260px, 24vw, 480px);
     --info-panel-width: 320px;
+    --attachment-grid-min-width: 110px;
+    --attachment-grid-gap: 4px;
     --hover-overlay: rgba(0,0,0,0.04);
 }
 
