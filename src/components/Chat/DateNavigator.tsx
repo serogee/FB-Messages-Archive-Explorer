@@ -165,7 +165,6 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
   const activeKeyRef = useRef<string | null>(null);
   const currentBucketsRef = useRef<DateBucket[]>([]);
 
-  // Rebuild buckets when chat changes
   useEffect(() => {
     if (!chatData?.messages) {
       setBuckets({ month: [], week: [], day: [] });
@@ -192,7 +191,6 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
     currentBucketsRef.current = currentBuckets;
   }, [currentBuckets]);
 
-  // Scroll sync: update active bucket from scroll position
   const updateFromScroll = useCallback(() => {
     if (syncingRef.current) return;
     const container = chatContainerRef.current;
@@ -206,7 +204,6 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
     if (key && key !== activeKeyRef.current) setActiveKey(key);
   }, [chatContainerRef]);
 
-  // Expose updateFromScroll for parent to call on scroll
   useEffect(() => {
     const container = chatContainerRef.current;
     if (!container) return;
@@ -215,7 +212,6 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
     return () => container.removeEventListener('scroll', handler);
   }, [updateFromScroll, chatContainerRef]);
 
-  // Keyboard navigation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!hasDates) return;
@@ -265,7 +261,6 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
     setActiveKey(bucket.key);
     await onJumpToMessage(bucket.index);
     setTimeout(() => { syncingRef.current = false; }, DATE_NAV_SYNC_LOCK_MS);
-    // Scroll active item into view
     if (trackRef.current && scale === 'month') {
       const activeEl = trackRef.current.querySelector(`[data-date-key="${CSS.escape(bucket.key)}"]`);
       if (activeEl) activeEl.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
@@ -288,7 +283,6 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
 
   return (
     <div className={`date-nav-controls${hasDates ? ' active' : ''}${manualCollapse && !_settings.autoCollapseDateNav ? ' manual-collapsed' : ''}`} id="dateNavControls">
-      {/* Scale buttons */}
       <div className="date-nav-scale">
         {(['month', 'week', 'day'] as DateScale[]).map(s => (
           <button
@@ -302,7 +296,6 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
         ))}
       </div>
 
-      {/* Step buttons */}
       <div className="date-nav-steps">
         <button
           id="dateNavPrev"
@@ -324,7 +317,6 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
         </button>
       </div>
 
-      {/* Current box */}
       <button
         className="date-nav-current-box"
         disabled={_settings.autoCollapseDateNav}

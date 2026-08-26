@@ -77,7 +77,6 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
 ) {
   const messageListRef = useRef<MessageListHandle>(null);
 
-  // Media viewer state (for clicking attachments in chat)
   const [viewerState, setViewerState] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
   const attachments = useAttachments(chatData, mediaState);
 
@@ -98,7 +97,6 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     get current() { return messageListRef.current?.getChatContainer() ?? null; }
   };
 
-  // Handle media click from chat messages
   const handleMediaClick = useCallback((mediaPath: string, msgIndex: number) => {
     const idx = attachments.findIndex(mediaPath, msgIndex);
     if (idx >= 0) {
@@ -106,10 +104,8 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     }
   }, [attachments]);
 
-  // Handle jump from media viewer (close viewer, scroll to message)
   const handleViewerJump = useCallback((messageIndex: number) => {
     setViewerState({ open: false, index: 0 });
-    // If gallery is open, close it first, then jump
     if (galleryOpen) {
       onCloseGallery();
     }
@@ -138,13 +134,11 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
       {/* Chat mode: hidden when gallery is open to preserve scroll position */}
       <div style={{ display: !galleryOpen ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         <>
-          {/* Header */}
           <div className={`chat-header ${settings.autoCollapseDateNav ? 'date-nav-auto' : ''}`}>
             <h3 title={chatData?.title || activeEntry?.title || ''}>
               {chatData?.title || activeEntry?.title || (loading ? 'Loading...' : 'Select a chat')}
             </h3>
 
-            {/* Date navigator (inline in header) */}
             {chatData && (
               <DateNavigator
                 chatData={chatData}
@@ -154,7 +148,6 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
               />
             )}
 
-            {/* Info panel toggle */}
             <button
               className="chat-info-toggle"
               id="chatInfoToggle"
@@ -169,21 +162,18 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
 
           <div id="line" />
 
-          {/* Loading messages state */}
           {loading && (
             <div id="loading">
               <ProgressBar value={msgProgress} label={msgStatusText || "Loading messages"} />
             </div>
           )}
 
-          {/* Empty state */}
           {!loading && !chatData && (
             <div id="loading" style={{ flexDirection: 'column', gap: 12 }}>
               <span>Open a chat from the sidebar</span>
             </div>
           )}
 
-          {/* Messages */}
           {!loading && chatData && (
             <MessageList
               ref={messageListRef}
@@ -197,7 +187,6 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
             />
           )}
 
-          {/* Loading attachments overlay */}
           {mediaLoading && (
             <div className="media-loading-overlay">
               <div className="media-loading-card">
@@ -208,7 +197,6 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
         </>
       </div>
 
-      {/* Media Viewer (rendered at chat-container level, above everything within it) */}
       {viewerState.open && (
         <MediaViewer
           attachments={attachments.all}

@@ -114,7 +114,6 @@ export function Sidebar({
 
   return (
     <div className="sub-container" id="sidebar">
-      {/* Title row */}
       <div className="title-row">
         <div className="title-text">
           <strong>FB Messages Archive Explorer</strong>
@@ -131,10 +130,8 @@ export function Sidebar({
       </div>
       <hr />
 
-      {/* Search bar — persistent across all tabs */}
       <SearchBar search={search} onJumpToMessage={onJumpToMessage} />
 
-      {/* Tab bar — hidden in sub-views */}
       {!isSubView && (
         <div className="sidebar-tabs" role="tablist">
           <button
@@ -158,9 +155,7 @@ export function Sidebar({
         </div>
       )}
 
-      {/* Tab content area */}
       <div className="settings" role="tabpanel">
-        {/* Chats tab */}
         {sidebarView === 'chats' && !rootHandle && (
           <>
             <FolderPicker onOpenFolder={onOpenFolder} />
@@ -203,7 +198,6 @@ export function Sidebar({
           />
         )}
 
-        {/* Settings tab */}
         {sidebarView === 'settings' && (
           <SettingsPanel
             settings={settings}
@@ -216,7 +210,6 @@ export function Sidebar({
           />
         )}
 
-        {/* Archived view */}
         {sidebarView === 'archived' && (
           <ArchivedList
             chatList={archivedList}
@@ -234,7 +227,6 @@ export function Sidebar({
           />
         )}
 
-        {/* Message Requests view */}
         {sidebarView === 'requests' && (
           <ArchivedList
             chatList={requestsList}

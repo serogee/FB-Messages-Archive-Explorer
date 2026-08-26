@@ -40,7 +40,6 @@ export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
 
   return (
     <div className="sidebar-search" ref={wrapRef}>
-      {/* Input row */}
       <div className="sidebar-search-row">
         <input
           ref={inputRef}
@@ -74,7 +73,6 @@ export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
         )}
       </div>
 
-      {/* Progress bar */}
       <div className={`sidebar-search-progress${isSearching ? '' : ' hidden'}`}>
         <div className="sidebar-search-progress-bar">
           <div className="sidebar-search-progress-fill" style={{ width: `${progress}%` }} />
@@ -82,7 +80,6 @@ export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
         <span className="sidebar-search-progress-text">{progress < 100 ? `${progress}%` : 'Done'}</span>
       </div>
 
-      {/* Results overlay */}
       {searchDone && (
         <div className="sidebar-search-results" role="listbox" aria-label="Search results">
           {results.length === 0 ? (

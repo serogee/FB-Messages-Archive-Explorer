@@ -232,7 +232,6 @@ export default function App() {
 
   return (
     <div className={`container ${settings.infoPanelOpen ? 'info-open' : ''}`}>
-      {/* Sidebar */}
       <Sidebar
         settings={settings}
         setSetting={setSetting}
@@ -261,7 +260,6 @@ export default function App() {
         onJumpToMessage={handleJumpToMessage}
       />
 
-      {/* Sidebar resize handle */}
       <div
         className="sidebar-resize-handle"
         id="sidebarResizeHandle"
@@ -271,7 +269,6 @@ export default function App() {
         tabIndex={0}
       />
 
-      {/* Chat view */}
       <ChatView
         ref={chatViewRef}
         chatData={chat.chatData}
@@ -294,7 +291,6 @@ export default function App() {
         selection={selection}
       />
 
-      {/* Info panel resize handle */}
       <div
         className="info-resize-handle"
         id="infoResizeHandle"
@@ -325,7 +321,6 @@ export default function App() {
         )
       )}
 
-      {/* Modals */}
       {deleteTarget && (
         <DeleteConfirmModal
           entry={deleteTarget}

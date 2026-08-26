@@ -37,7 +37,6 @@ function ToggleRow({ id, label, checked, onChange, disabled }: {
   );
 }
 
-// Searchable autocomplete dropdown for perspective selection
 function PerspectiveDropdown({
   participants,
   selectedPerspective,
@@ -144,7 +143,6 @@ export function SettingsPanel({
 
   return (
     <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
-      {/* Folder selection — always visible */}
       <div className="settings-section">
         <strong>Messages Folder</strong>
         {rootHandle ? (
@@ -164,13 +162,11 @@ export function SettingsPanel({
         )}
       </div>
 
-      {/* Dark mode */}
       <div className="settings-section">
         <strong>Appearance</strong>
         <ToggleRow id="darkModeToggle" label="Dark mode" checked={settings.darkMode} onChange={v => setSetting('darkMode', v as Settings['darkMode'])} />
       </div>
 
-      {/* Customization */}
       <div className="settings-section">
         <strong>Customization</strong>
         <ToggleRow id="showMyNameToggle" label="Show my name" checked={settings.showMyName} onChange={v => setSetting('showMyName', v as Settings['showMyName'])} />
@@ -179,7 +175,6 @@ export function SettingsPanel({
         <ToggleRow id="autoCollapseDateNavToggle" label="Auto-collapse date navigator" checked={settings.autoCollapseDateNav} onChange={v => setSetting('autoCollapseDateNav', v as Settings['autoCollapseDateNav'])} />
       </div>
 
-      {/* Perspective — below customization */}
       {chatData && participants.length > 0 && (
         <div className="settings-section">
           <strong>View perspective</strong>
@@ -192,7 +187,6 @@ export function SettingsPanel({
         </div>
       )}
 
-      {/* Chat deletion */}
       <div className="settings-section">
         <strong>Chat Deletion</strong>
         {!fsSupported ? (
@@ -213,7 +207,6 @@ export function SettingsPanel({
         )}
       </div>
 
-      {/* Enable deletion confirmation modal */}
       {showEnableModal && (
         <EnableDeletionModal
           onConfirm={() => {
@@ -224,7 +217,6 @@ export function SettingsPanel({
         />
       )}
 
-      {/* How to download */}
       <div className="settings-section download-info">
         <strong>How to get your Facebook data</strong>
         <a href="https://www.facebook.com/dyi" target="_blank" rel="noreferrer">

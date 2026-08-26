@@ -102,7 +102,7 @@ function LazyMedia({
   const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
   const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
 
-  // 1. Shared IntersectionObserver for lazy loading
+  // Sharing observers keeps message-heavy chats from allocating one per attachment.
   useEffect(() => {
     let isMounted = true;
     if (!mediaFile || !mediaFile.handle || fileURL) return;
@@ -136,7 +136,7 @@ function LazyMedia({
     };
   }, [mediaFile, fileURL]);
 
-  // 2. Shared ResizeObserver for robust scroll anchoring
+  // Compensate for lazy media height changes so the user's scroll anchor stays stable.
   useEffect(() => {
     const el = mediaRef.current;
     if (!el) return;
@@ -183,7 +183,7 @@ function LazyMedia({
       observer.unobserve(el);
       lazyMediaResizeCallbacks.delete(el);
     };
-  }, []); // Empty dependency array: NEVER unbind, the wrapper is permanent
+  }, []);
 
   useEffect(() => {
     const el = mediaRef.current;
@@ -310,7 +310,6 @@ export const MessageBubble = memo(function MessageBubble({
               <span dangerouslySetInnerHTML={{ __html: highlightedText }} />
             )}
 
-            {/* Media */}
             {mediaItems.map(({ media, preferredType }, i) => {
               const mediaPath = getMediaReferencePath(media);
               const mediaFile = findMediaFile(mediaState, mediaPath);
@@ -325,7 +324,6 @@ export const MessageBubble = memo(function MessageBubble({
               );
             })}
 
-            {/* Reactions (Floating Bubble) */}
             {hasReactions && (
               <div 
                 className="reaction-bubble"
@@ -360,7 +358,6 @@ export const MessageBubble = memo(function MessageBubble({
               </div>
             )}
             
-            {/* Expanded Reaction Modal */}
             {isModalOpen && msg.reactions && (
               <ReactionModal 
                 reactions={msg.reactions} 
@@ -370,7 +367,6 @@ export const MessageBubble = memo(function MessageBubble({
           </>
         )}
 
-        {/* Timestamp (shown on hover via CSS) */}
         <div className="msg-timestamp">
           {timestamp ? formatTimestamp(timestamp) : ''}
         </div>

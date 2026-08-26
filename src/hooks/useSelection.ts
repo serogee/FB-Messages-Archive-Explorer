@@ -3,7 +3,7 @@ import type { ResolvedAttachment } from '../types/messenger';
 
 export function useSelection() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
-  // Keep a ref in sync so isSelected doesn't need selectedKeys in its dep array
+  // Stable selection callbacks avoid rerendering every memoized gallery thumbnail.
   const keysRef = useRef(selectedKeys);
   keysRef.current = selectedKeys;
 
@@ -24,7 +24,6 @@ export function useSelection() {
     setSelectedKeys(new Set());
   }, []);
 
-  // Stable reference — reads from ref, never changes identity
   const isSelected = useCallback(
     (attachment: ResolvedAttachment) => {
       const key = `${attachment.category}:${attachment.mediaPath.toLowerCase()}`;
