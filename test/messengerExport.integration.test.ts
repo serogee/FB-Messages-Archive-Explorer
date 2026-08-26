@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createMediaState, findMediaFile } from '../src/services/media';
 import {
   buildMessengerExportReferenceIndex,
@@ -106,6 +106,29 @@ describe('Messenger export filesystem services', () => {
     expect(info.mediaSize).toBe(3);
   });
 
+  it('accepts a Messenger export without a media directory', async () => {
+    const root = createMockDirectoryHandle('messenger', {
+      'chat.json': JSON.stringify({
+        threadName: 'Text only',
+        participants: ['Alice'],
+        messages: [{ senderName: 'Alice', text: 'hello', timestamp: 10 }],
+      }),
+    });
+
+    await expect(buildMessengerExportMediaSizeIndex(root)).resolves.toEqual(new Map());
+  });
+
+  it('reports failures while opening the media directory for sizing', async () => {
+    const root = messengerRoot();
+    vi.spyOn(root, 'getDirectoryHandle').mockRejectedValueOnce(
+      new DOMException('Media access denied', 'NotAllowedError')
+    );
+
+    await expect(buildMessengerExportMediaSizeIndex(root)).rejects.toMatchObject({
+      name: 'NotAllowedError',
+    });
+  });
+
   it('treats shared media as exclusive when all owners are in a batch', async () => {
     const root = messengerRoot();
     const referenceIndex = await buildMessengerExportReferenceIndex(root);
@@ -137,5 +160,40 @@ describe('Messenger export filesystem services', () => {
     await expect(media.getFileHandle('shared.jpg')).resolves.toMatchObject({ kind: 'file' });
     expect(referenceIndex.chatMedia.has('chat_alice.json')).toBe(false);
     expect(referenceIndex.mediaOwners.get('shared.jpg')).toEqual(new Set(['chat_group.json']));
+  });
+
+  it('continues deletion when exclusive media is already missing', async () => {
+    const root = createMockDirectoryHandle('messenger', {
+      'chat.json': JSON.stringify({
+        threadName: 'Alice',
+        participants: ['Alice'],
+        messages: [{
+          senderName: 'Alice',
+          timestamp: 10,
+          media: [{ uri: 'media/missing.jpg' }],
+        }],
+      }),
+      media: {},
+    });
+    const referenceIndex = await buildMessengerExportReferenceIndex(root);
+
+    await expect(deleteMessengerExportChat(root, entry('chat.json'), referenceIndex)).resolves.toBeUndefined();
+    await expect(root.getFileHandle('chat.json')).rejects.toMatchObject({ name: 'NotFoundError' });
+    expect(referenceIndex.chatMedia.has('chat.json')).toBe(false);
+  });
+
+  it('reports media deletion failures instead of completing successfully', async () => {
+    const root = messengerRoot();
+    const referenceIndex = await buildMessengerExportReferenceIndex(root);
+    const media = await root.getDirectoryHandle('media');
+    vi.spyOn(media, 'removeEntry').mockRejectedValueOnce(
+      new DOMException('Media deletion denied', 'NotAllowedError')
+    );
+
+    await expect(
+      deleteMessengerExportChat(root, entry('chat_alice.json'), referenceIndex)
+    ).rejects.toMatchObject({ name: 'NotAllowedError' });
+    await expect(root.getFileHandle('chat_alice.json')).rejects.toMatchObject({ name: 'NotFoundError' });
+    expect(referenceIndex.chatMedia.has('chat_alice.json')).toBe(true);
   });
 });

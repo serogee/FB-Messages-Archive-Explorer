@@ -119,8 +119,9 @@ async function removeMediaFile(rootHandle: FileSystemDirectoryHandle, basename: 
   try {
     const mediaHandle = await rootHandle.getDirectoryHandle('media');
     await mediaHandle.removeEntry(basename);
-  } catch {
-    // Missing media files are already gone; deletion can continue.
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error;
+    // Already-missing media is an acceptable idempotent deletion result.
   }
 }
 
