@@ -88,7 +88,6 @@ export function MediaViewer({
     }
   }, [attachment, onJumpToMessage, onClose]);
 
-  // Keyboard navigation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { onClose(); return; }
@@ -103,7 +102,6 @@ export function MediaViewer({
     return () => window.removeEventListener('keydown', handler);
   }, [onClose, hasPrev, hasNext, goPrev, goNext, attachment, selection]);
 
-  // Close menu on outside click
   useEffect(() => {
     if (!menuOpen) return;
     const handler = (e: MouseEvent) => {
@@ -121,7 +119,6 @@ export function MediaViewer({
     <div className="media-viewer-overlay" onClick={(e) => {
       if (e.target === e.currentTarget) onClose();
     }}>
-      {/* Top bar */}
       <div className="media-viewer-topbar">
         <div className="media-viewer-top-left">
           <div className="media-viewer-counter">
@@ -184,7 +181,6 @@ export function MediaViewer({
         </div>
       </div>
 
-      {/* Navigation arrows */}
       {hasPrev && (
         <button className="media-viewer-nav media-viewer-nav-prev" onClick={goPrev} aria-label="Previous">
           <ChevronLeft size={36} />
@@ -196,7 +192,6 @@ export function MediaViewer({
         </button>
       )}
 
-      {/* Media display */}
       <div className={`media-viewer-content ${attachment && selection?.isSelected(attachment) ? 'viewer-selected' : ''}`}>
         {!attachment ? (
           <div className="media-viewer-empty">No attachment</div>

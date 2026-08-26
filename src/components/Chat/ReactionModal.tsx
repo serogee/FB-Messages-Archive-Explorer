@@ -15,7 +15,6 @@ function getReactionTimeText(ts: number): string {
 export function ReactionModal({ reactions, onClose }: ReactionModalProps) {
   const [activeTab, setActiveTab] = useState<string>('All');
 
-  // Compute reaction counts and unique emojis for tabs
   const { counts, uniqueEmojis } = useMemo(() => {
     const c: Record<string, number> = {};
     const u = new Set<string>();
@@ -26,7 +25,6 @@ export function ReactionModal({ reactions, onClose }: ReactionModalProps) {
     return { counts: c, uniqueEmojis: Array.from(u) };
   }, [reactions]);
 
-  // Filter reactions based on active tab
   const filteredReactions = useMemo(() => {
     if (activeTab === 'All') return reactions;
     return reactions.filter(r => r.reaction === activeTab);

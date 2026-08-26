@@ -95,7 +95,6 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
           )
         ) : (
           <>
-            {/* Section 1: Chat Info */}
             <div className="info-section">
               <strong>Chat Info</strong>
               <div className="info-stats">
@@ -118,7 +117,6 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
               </div>
             </div>
 
-            {/* Section 2: Attachments */}
             <div className="info-section">
               <strong
                 className={onOpenGallery ? 'info-section-clickable' : ''}
@@ -162,7 +160,6 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
               </div>
             </div>
 
-            {/* Section 3: Messages Per Member — clickable to set perspective */}
             <div className="info-section">
               <strong>Messages Per Member</strong>
               <div className="info-list">
@@ -186,7 +183,6 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
               </div>
             </div>
 
-            {/* Section 4: Members — clickable to set perspective */}
             <div className="info-section">
               <strong>Members</strong>
               <div className="member-list">
