@@ -26,7 +26,6 @@ function useResolvedUrl(attachment: ResolvedAttachment | null, mediaState: Media
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
     if (!entry) { setUrl(null); return; }
 
-    // Check blob cache first, then entry.url
     const cached = blobCache.get(entry);
     if (cached) { setUrl(cached); return; }
     if (entry.url) { blobCache.put(entry, entry.url); setUrl(entry.url); return; }

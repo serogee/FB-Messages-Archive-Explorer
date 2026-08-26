@@ -40,6 +40,8 @@ function getAvatarColor(title: string): string {
   return colors[Math.abs(hash) % colors.length];
 }
 
+const MENU_DROP_UP_THRESHOLD_PX = 150;
+
 function formatEntrySize(entry: ChatListEntry): string {
   if (entry._messengerExport && !entry._sizeIncludesMedia) {
     return `${formatFileSize(entry.folderSize)} + media`;
@@ -53,7 +55,6 @@ function formatEntrySize(entry: ChatListEntry): string {
 }
 
 async function copyFolderPath(entry: ChatListEntry) {
-  // Build a human-readable path from the directory handle chain
   const subfolder =
     entry.source === 'inbox'    ? 'inbox' :
     entry.source === 'requests' ? 'message_requests' :
@@ -63,7 +64,7 @@ async function copyFolderPath(entry: ChatListEntry) {
   try {
     await navigator.clipboard.writeText(path);
   } catch {
-    // Fallback: show in a prompt
+    // Clipboard access may be unavailable outside a secure browser context.
     window.prompt('Folder path:', path);
   }
 }
@@ -84,14 +85,13 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
     return () => document.removeEventListener('mousedown', handler);
   }, [dropdownOpen]);
 
-  const showMenu = !selectionMode && (deletionEnabled || true); // Always show menu for "Open file location"
+  const showMenu = !selectionMode;
 
   const handleMenuClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!dropdownOpen) {
       const rect = e.currentTarget.getBoundingClientRect();
-      // Drop up if there's less than 150px of space below the button
-      if (window.innerHeight - rect.bottom < 150) {
+      if (window.innerHeight - rect.bottom < MENU_DROP_UP_THRESHOLD_PX) {
         setDropUp(true);
       } else {
         setDropUp(false);
@@ -252,7 +252,6 @@ export function ChatList({ chatList, activeEntry, onSelectChat, onDeleteChat, de
     if (!onToggleSelectChat) return;
 
     if (e.shiftKey && lastSelectedRef.current) {
-      // Find the range in mainFiltered or extras
       const allDisplayed = [
         ...mainFiltered,
         ...extras.flatMap(extra => extra.items)

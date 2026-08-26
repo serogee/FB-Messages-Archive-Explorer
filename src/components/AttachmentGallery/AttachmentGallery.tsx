@@ -9,14 +9,14 @@ import { blobCache } from '../../services/blobCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
 
-// Shared IntersectionObserver for all gallery thumbnails to avoid creating thousands of observers
+// One observer handles all thumbnails so large galleries do not create thousands of observers.
 let sharedObserver: IntersectionObserver | null = null;
 let unloadObserver: IntersectionObserver | null = null;
 
 const observerCallbacks = new Map<Element, { load: () => void; unload: () => void }>();
 const loadingElements = new Set<Element>();
 
-// All items currently in the viewport or preload zone
+// Batch newly visible thumbnails to avoid a burst of media decoding during fast scrolling.
 const pendingElements = new Set<Element>();
 let loadTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -39,8 +39,7 @@ function resetObservers() {
   if (loadTimer) { clearTimeout(loadTimer); loadTimer = null; }
 }
 
-// Uses the .gallery-scroll container as root so rootMargin works relative
-// to the scroll container's visible area, not the viewport.
+// The margin must be relative to the gallery scroller rather than the browser viewport.
 function getSharedObserver() {
   if (!sharedObserver) {
     const root = document.querySelector('.gallery-scroll');
@@ -138,7 +137,6 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
       }
     }
 
-    // Non-video items with a cached blob URL: show immediately, no observer needed
     if (attachment.category !== 'videos') {
       const cached = blobCache.get(entry);
       if (cached) {
@@ -152,7 +150,6 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
       }
     }
 
-    // Nothing to load (no cached URL and no file handle)
     if (!entry.url && !entry.handle) return;
 
     let isMounted = true;
@@ -285,14 +282,13 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
          prev.isSelected === next.isSelected;
 });
 
-// Group attachments by month for date separators
 function groupByMonth(attachments: ResolvedAttachment[]): { label: string; items: ResolvedAttachment[] }[] {
   if (attachments.length === 0) return [];
 
   const groups: { label: string; items: ResolvedAttachment[] }[] = [];
   let currentLabel = '';
 
-  // Attachments are in chronological order (oldest first); display newest first
+  // Preserve the source order while presenting the newest attachments first.
   const reversed = [...attachments].reverse();
 
   for (const att of reversed) {
@@ -320,7 +316,6 @@ const AttachmentGalleryBase = function AttachmentGallery({
 }: AttachmentGalleryProps) {
   const { all, getFiltered } = useAttachments(chatData, mediaState);
 
-  // Persistent tab and scroll state
   const [activeTab, setActiveTab] = useState<AttachmentCategory>(defaultTab);
   const scrollPositions = useRef<Record<string, number>>({});
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -341,27 +336,23 @@ const AttachmentGalleryBase = function AttachmentGallery({
     }
   }, [selection.selectedCount]);
 
-  // Reset observers on mount/unmount.
-  // useLayoutEffect ensures reset runs BEFORE children's useEffect (which sets up observers).
+  // Reset before child effects register targets, and disconnect everything on unmount.
   useLayoutEffect(() => {
     resetObservers();
     return () => resetObservers();
   }, []);
 
-  // Media viewer state
   const [viewerState, setViewerState] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
 
   const currentItems = useMemo(() => getFiltered(activeTab), [activeTab, getFiltered]);
   const groups = useMemo(() => groupByMonth(currentItems), [currentItems]);
 
-  // Save scroll position before switching tab
   const saveScrollPosition = useCallback(() => {
     if (scrollContainerRef.current) {
       scrollPositions.current[activeTab] = scrollContainerRef.current.scrollTop;
     }
   }, [activeTab]);
 
-  // Restore scroll position on tab switch
   useEffect(() => {
     if (scrollContainerRef.current) {
       const saved = scrollPositions.current[activeTab];
@@ -394,7 +385,6 @@ const AttachmentGalleryBase = function AttachmentGallery({
     onClose();
   }, [onJumpToMessage, onClose]);
 
-  // Tab counts
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = { all: all.length };
     for (const tab of TABS) {
@@ -407,7 +397,6 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
   return (
     <>
-      {/* Header */}
       <div className="chat-header">
         <button
           className="gallery-back-btn"
@@ -439,7 +428,6 @@ const AttachmentGalleryBase = function AttachmentGallery({
         ><Info size={18} /></button>
       </div>
 
-      {/* Tabs */}
       <div className="gallery-tabs">
         {TABS.map(tab => (
           <button
@@ -457,7 +445,6 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
       <div id="line" />
 
-      {/* Grid */}
       <div className={`gallery-scroll ${selectionMode ? 'selection-mode-active' : ''}`} ref={scrollContainerRef}>
         {groups.length === 0 ? (
           <div className="gallery-empty">No attachments found</div>
@@ -483,7 +470,6 @@ const AttachmentGalleryBase = function AttachmentGallery({
         )}
       </div>
 
-      {/* Media Viewer */}
       {viewerState.open && (
         <MediaViewer
           attachments={getFiltered(activeTab)}
