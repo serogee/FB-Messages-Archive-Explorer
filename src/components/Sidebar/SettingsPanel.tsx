@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { Settings } from '../../hooks/useSettings';
 import type { MessengerThread } from '../../types/messenger';
+import type { ReadableDirectoryHandle } from '../../types/fileSystem';
 import { getParticipantNames } from '../../services/parser';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
 import { EnableDeletionModal } from '../Modals/EnableDeletionModal';
@@ -13,7 +14,7 @@ interface SettingsPanelProps {
   selectedPerspective: string;
   setSelectedPerspective: (name: string) => void;
   onOpenFolder: () => Promise<void>;
-  rootHandle: FileSystemDirectoryHandle | null;
+  rootHandle: ReadableDirectoryHandle | null;
 }
 
 function ToggleRow({ id, label, checked, onChange, disabled }: {

@@ -2,6 +2,50 @@ import type { ChatListEntry, MessengerThread } from '../types/messenger';
 import { parseMessengerJsonContent, getOrderedMessageFileNames, getMessageTimestamp } from './parser';
 import { processMediaFromDirectory, createMediaState } from './media';
 import type { MediaState } from '../types/messenger';
+import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../types/fileSystem';
+
+const SELECTED_MESSAGES_DIRECTORY = [] as const;
+const FACEBOOK_EXPORT_MESSAGES_DIRECTORY = ['messages'] as const;
+const ACCOUNTS_CENTER_MESSAGES_DIRECTORY = ['your_facebook_activity', 'messages'] as const;
+const FACEBOOK_MESSAGES_ROOT_PATHS = [
+  SELECTED_MESSAGES_DIRECTORY,
+  FACEBOOK_EXPORT_MESSAGES_DIRECTORY,
+  ACCOUNTS_CENTER_MESSAGES_DIRECTORY,
+] as const;
+const FACEBOOK_CONVERSATION_SECTIONS = ['inbox', 'archived_threads'] as const;
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'NotFoundError';
+}
+
+async function containsFacebookConversations(handle: ReadableDirectoryHandle): Promise<boolean> {
+  for (const section of FACEBOOK_CONVERSATION_SECTIONS) {
+    try {
+      await handle.getDirectoryHandle(section);
+      return true;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+  return false;
+}
+
+export async function resolveFacebookMessagesRoot(
+  handle: ReadableDirectoryHandle
+): Promise<ReadableDirectoryHandle | null> {
+  for (const path of FACEBOOK_MESSAGES_ROOT_PATHS) {
+    try {
+      let current = handle;
+      for (const segment of path) {
+        current = await current.getDirectoryHandle(segment);
+      }
+      if (await containsFacebookConversations(current)) return current;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+  return null;
+}
 
 // ── Browser support detection ──────────────────────────────────────
 
@@ -17,14 +61,14 @@ export function isWriteAccessSupported(): boolean {
 
 import { openFolderPolyfill } from './polyfill';
 
-export async function pickMessagesFolder(): Promise<FileSystemDirectoryHandle> {
+export async function pickMessagesFolder(): Promise<ReadableDirectoryHandle> {
   if (!isFileSystemAccessSupported()) {
     return openFolderPolyfill();
   }
   return window.showDirectoryPicker({ id: 'messages-folder', mode: 'read' });
 }
 
-export async function pickFolderWithWriteAccess(): Promise<FileSystemDirectoryHandle> {
+export async function pickFolderWithWriteAccess(): Promise<ReadableDirectoryHandle> {
   if (!isFileSystemAccessSupported()) {
     // Write access is not supported via polyfill, but we can still read
     return openFolderPolyfill();
@@ -35,13 +79,13 @@ export async function pickFolderWithWriteAccess(): Promise<FileSystemDirectoryHa
 // ── List chat folders ──────────────────────────────────────────────
 
 export async function listChatFolders(
-  parentHandle: FileSystemDirectoryHandle,
+  parentHandle: ReadableDirectoryHandle,
   subfolderName: 'inbox' | 'archived_threads' | 'message_requests' | 'e2ee_cutover',
   source: 'inbox' | 'archived' | 'requests' | 'e2ee',
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal
 ): Promise<ChatListEntry[]> {
-  let subfolderDir: FileSystemDirectoryHandle;
+  let subfolderDir: ReadableDirectoryHandle;
   try {
     subfolderDir = await parentHandle.getDirectoryHandle(subfolderName);
   } catch {
@@ -50,12 +94,12 @@ export async function listChatFolders(
   }
 
   const entries: ChatListEntry[] = [];
-  const handles: { name: string; handle: FileSystemDirectoryHandle }[] = [];
+  const handles: { name: string; handle: ReadableDirectoryHandle }[] = [];
 
   for await (const [name, handle] of subfolderDir.entries()) {
     if (signal?.aborted) return entries;
     if (handle.kind === 'directory') {
-      handles.push({ name, handle: handle as FileSystemDirectoryHandle });
+      handles.push({ name, handle });
     }
   }
 
@@ -146,7 +190,7 @@ export async function listChatFolders(
 // ── Load full chat ─────────────────────────────────────────────────
 
 export async function loadChatMessages(
-  chatDirHandle: FileSystemDirectoryHandle,
+  chatDirHandle: ReadableDirectoryHandle,
   onProgress?: (progress: number, statusText: string) => void,
   signal?: AbortSignal
 ): Promise<MessengerThread> {
@@ -220,16 +264,16 @@ export async function loadChatMessages(
 
 // ── Compute folder size ────────────────────────────────────────────
 
-export async function computeFolderSize(dirHandle: FileSystemDirectoryHandle): Promise<number> {
+export async function computeFolderSize(dirHandle: ReadableDirectoryHandle): Promise<number> {
   let total = 0;
   for await (const [, entry] of dirHandle.entries()) {
     if (entry.kind === 'file') {
       try {
-        const file = await (entry as FileSystemFileHandle).getFile();
+        const file = await entry.getFile();
         total += file.size;
       } catch { /* ignore */ }
     } else if (entry.kind === 'directory') {
-      total += await computeFolderSize(entry as FileSystemDirectoryHandle);
+      total += await computeFolderSize(entry);
     }
   }
   return total;
@@ -238,7 +282,7 @@ export async function computeFolderSize(dirHandle: FileSystemDirectoryHandle): P
 // ── Delete a chat folder ───────────────────────────────────────────
 
 export async function deleteChat(
-  parentHandle: FileSystemDirectoryHandle,
+  parentHandle: WritableDirectoryHandle,
   subfolderName: string,
   chatFolderName: string
 ): Promise<void> {
@@ -249,7 +293,7 @@ export async function deleteChat(
 // ── Load media for a chat ─────────────────────────────────────────
 
 export async function loadChatMedia(
-  chatDirHandle: FileSystemDirectoryHandle
+  chatDirHandle: ReadableDirectoryHandle
 ): Promise<MediaState> {
   const state = createMediaState();
   await processMediaFromDirectory(chatDirHandle, state);

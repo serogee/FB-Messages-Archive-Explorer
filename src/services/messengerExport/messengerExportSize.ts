@@ -1,5 +1,6 @@
 import { getMessageAttachmentReferences } from '../media';
 import { parseMessengerExportJson } from './messengerExportParser';
+import type { ReadableDirectoryHandle } from '../../types/fileSystem';
 
 type MediaSizeIndex = Map<string, number>;
 
@@ -20,7 +21,7 @@ function isMessengerMediaRef(path: string): boolean {
 }
 
 async function collectMediaSizes(
-  dirHandle: FileSystemDirectoryHandle,
+  dirHandle: ReadableDirectoryHandle,
   prefix: string,
   index: MediaSizeIndex,
   signal?: AbortSignal
@@ -33,7 +34,7 @@ async function collectMediaSizes(
     const path = prefix ? `${prefix}/${name}` : name;
     if (entry.kind === 'file') {
       try {
-        const file = await (entry as FileSystemFileHandle).getFile();
+        const file = await entry.getFile();
         const normalizedPath = normalizeMediaPath(path);
         const basename = getBasename(path);
 
@@ -43,7 +44,7 @@ async function collectMediaSizes(
         }
       } catch { /* ignore unreadable files */ }
     } else if (entry.kind === 'directory') {
-      await collectMediaSizes(entry as FileSystemDirectoryHandle, path, index, signal);
+      await collectMediaSizes(entry, path, index, signal);
     }
 
     if (performance.now() - lastYield > 16) {
@@ -54,7 +55,7 @@ async function collectMediaSizes(
 }
 
 export async function buildMessengerExportMediaSizeIndex(
-  rootHandle: FileSystemDirectoryHandle,
+  rootHandle: ReadableDirectoryHandle,
   signal?: AbortSignal
 ): Promise<MediaSizeIndex> {
   const index: MediaSizeIndex = new Map();
@@ -71,7 +72,7 @@ export async function buildMessengerExportMediaSizeIndex(
 }
 
 export async function computeMessengerExportChatSize(
-  rootHandle: FileSystemDirectoryHandle,
+  rootHandle: ReadableDirectoryHandle,
   jsonFileName: string,
   mediaSizeIndex?: MediaSizeIndex,
   signal?: AbortSignal

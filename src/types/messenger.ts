@@ -1,3 +1,5 @@
+import type { ReadableDirectoryHandle, ReadableFileHandle } from './fileSystem';
+
 // ── Media & Reactions ──────────────────────────────────────────────
 
 export interface MediaItem {
@@ -68,7 +70,7 @@ export interface ChatListEntry {
   messageCount: number;
   /** Total folder size in bytes (computed lazily) */
   folderSize: number;
-  dirHandle: FileSystemDirectoryHandle;
+  dirHandle: ReadableDirectoryHandle;
   jsonFileCount: number;
   source: 'inbox' | 'archived' | 'requests' | 'e2ee';
   _messengerExport?: boolean;
@@ -143,7 +145,7 @@ export interface SearchResult {
 
 export interface MediaEntry {
   url?: string;
-  handle?: FileSystemFileHandle;
+  handle?: ReadableFileHandle;
   type: string;
 }
 

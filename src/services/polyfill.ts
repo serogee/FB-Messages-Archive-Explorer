@@ -1,4 +1,6 @@
-export class VirtualFileHandle {
+import type { ReadableDirectoryHandle, ReadableEntryHandle, ReadableFileHandle } from '../types/fileSystem';
+
+export class VirtualFileHandle implements ReadableFileHandle {
   kind = 'file' as const;
   name: string;
   private file: File;
@@ -13,7 +15,7 @@ export class VirtualFileHandle {
   }
 }
 
-export class VirtualDirectoryHandle {
+export class VirtualDirectoryHandle implements ReadableDirectoryHandle {
   kind = 'directory' as const;
   name: string;
   private children: Map<string, VirtualFileHandle | VirtualDirectoryHandle> = new Map();
@@ -30,10 +32,10 @@ export class VirtualDirectoryHandle {
         this.children.set(name, newDir);
         return newDir;
       }
-      throw new Error(`Directory not found: ${name}`);
+      throw new DOMException(`Directory not found: ${name}`, 'NotFoundError');
     }
     if (child.kind !== 'directory') {
-      throw new Error(`${name} is a file, not a directory`);
+      throw new DOMException(`${name} is a file, not a directory`, 'TypeMismatchError');
     }
     return child;
   }
@@ -41,22 +43,18 @@ export class VirtualDirectoryHandle {
   async getFileHandle(name: string, _options?: { create?: boolean }): Promise<VirtualFileHandle> {
     const child = this.children.get(name);
     if (!child) {
-      throw new Error(`File not found: ${name}`);
+      throw new DOMException(`File not found: ${name}`, 'NotFoundError');
     }
     if (child.kind !== 'file') {
-      throw new Error(`${name} is a directory, not a file`);
+      throw new DOMException(`${name} is a directory, not a file`, 'TypeMismatchError');
     }
     return child;
   }
 
-  async *entries(): AsyncIterableIterator<[string, VirtualFileHandle | VirtualDirectoryHandle]> {
+  async *entries(): AsyncIterableIterator<[string, ReadableEntryHandle]> {
     for (const [name, handle] of this.children.entries()) {
       yield [name, handle];
     }
-  }
-
-  async removeEntry(_name: string, _options?: { recursive?: boolean }): Promise<void> {
-    throw new Error('Deletion is not supported in fallback mode.');
   }
 
   addChild(name: string, handle: VirtualFileHandle | VirtualDirectoryHandle) {
@@ -64,15 +62,15 @@ export class VirtualDirectoryHandle {
   }
 }
 
-export function createVirtualFileSystem(files: FileList | File[]): FileSystemDirectoryHandle {
+export function createVirtualFileSystem(files: FileList | File[]): ReadableDirectoryHandle {
   const root = new VirtualDirectoryHandle('root');
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    // webkitRelativePath contains the full path e.g. "facebook-xxx/messages/inbox/chat/message_1.json"
-    // If not present, fallback to just the file name (though this won't work for folder structures)
-    const path = file.webkitRelativePath || file.name;
-    const parts = path.split('/');
+    // Folder uploads include the selected directory name; native handles expose its contents.
+    const relativePath = file.webkitRelativePath;
+    const parts = (relativePath || file.name).split('/').filter(Boolean);
+    if (relativePath && parts.length > 1) parts.shift();
     
     let currentDir = root;
     
@@ -92,11 +90,10 @@ export function createVirtualFileSystem(files: FileList | File[]): FileSystemDir
     currentDir.addChild(fileName, new VirtualFileHandle(fileName, file));
   }
 
-  // Cast to the native interface so TypeScript accepts it throughout the app
-  return root as unknown as FileSystemDirectoryHandle;
+  return root;
 }
 
-export async function openFolderPolyfill(): Promise<FileSystemDirectoryHandle> {
+export async function openFolderPolyfill(): Promise<ReadableDirectoryHandle> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';

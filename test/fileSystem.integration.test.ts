@@ -1,9 +1,47 @@
 import { describe, expect, it } from 'vitest';
-import { computeFolderSize, deleteChat, listChatFolders } from '../src/services/fileSystem';
+import {
+  computeFolderSize,
+  deleteChat,
+  listChatFolders,
+  resolveFacebookMessagesRoot,
+} from '../src/services/fileSystem';
 import { createMediaState, findMediaFile, processMediaFromDirectory } from '../src/services/media';
 import { createMockDirectoryHandle } from './helpers/mockFileSystem';
 
 describe('Facebook archive filesystem services', () => {
+  it('resolves every documented Facebook messages root layout', async () => {
+    const selectedMessages = createMockDirectoryHandle('messages', { inbox: {} });
+    const exportRoot = createMockDirectoryHandle('facebook-export', { messages: { inbox: {} } });
+    const accountsCenterRoot = createMockDirectoryHandle('facebook-export', {
+      your_facebook_activity: { messages: { inbox: {} } },
+    });
+
+    await expect(resolveFacebookMessagesRoot(selectedMessages)).resolves.toBe(selectedMessages);
+
+    const nestedMessages = await exportRoot.getDirectoryHandle('messages');
+    await expect(resolveFacebookMessagesRoot(exportRoot)).resolves.toBe(nestedMessages);
+
+    const activity = await accountsCenterRoot.getDirectoryHandle('your_facebook_activity');
+    const accountsCenterMessages = await activity.getDirectoryHandle('messages');
+    await expect(resolveFacebookMessagesRoot(accountsCenterRoot)).resolves.toBe(accountsCenterMessages);
+  });
+
+  it('accepts an archived-only Facebook messages root', async () => {
+    const root = createMockDirectoryHandle('messages', { archived_threads: {} });
+
+    await expect(resolveFacebookMessagesRoot(root)).resolves.toBe(root);
+  });
+
+  it('rejects undocumented and invalid archive layouts', async () => {
+    const instagramRoot = createMockDirectoryHandle('instagram-export', {
+      your_instagram_activity: { messages: { inbox: {} } },
+    });
+    const invalidRoot = createMockDirectoryHandle('invalid', { messages: {} });
+
+    await expect(resolveFacebookMessagesRoot(instagramRoot)).resolves.toBeNull();
+    await expect(resolveFacebookMessagesRoot(invalidRoot)).resolves.toBeNull();
+  });
+
   it('lists chat folders from a Facebook inbox', async () => {
     const root = createMockDirectoryHandle('messages', {
       inbox: {
