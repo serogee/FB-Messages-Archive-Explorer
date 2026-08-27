@@ -1,5 +1,3 @@
-/* ── Selection Panel (Info Panel replacement) ───────────────────── */
-
 .selection-panel {
   display: flex;
   flex-direction: column;
@@ -32,7 +30,6 @@
   gap: 4px;
 }
 
-/* Clear all button */
 .selection-clear-btn {
   width: 32px;
   height: 32px;
@@ -53,7 +50,6 @@
   background: rgba(255,85,85,0.06);
 }
 
-/* 3-dot options menu */
 .selection-menu-wrap {
   position: relative;
 }
@@ -141,7 +137,6 @@
   gap: var(--attachment-grid-gap);
 }
 
-/* Progress */
 .selection-progress-section {
   flex: 1;
   display: flex;

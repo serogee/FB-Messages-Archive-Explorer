@@ -1,4 +1,3 @@
-/* Sidebar tab bar */
 .sidebar-tabs { display:flex; gap:0; border-bottom:1px solid var(--border); margin-bottom:8px; flex-shrink:0; }
 .sidebar-tab {
   flex:1; padding:10px 0; text-align:center; font-size:14px; font-weight:500;
@@ -9,10 +8,8 @@
 .sidebar-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
 .sidebar-tab:hover { color:var(--text); }
 
-/* Persistent search bar */
 .sidebar-search { position:relative; padding:0 0 8px 0; flex-shrink:0; }
 
-/* Both search and filter share the same row layout */
 .sidebar-search-row,
 .filter-row {
   display: flex;
@@ -39,7 +36,6 @@
 .sidebar-search-input::placeholder,
 .chat-list-filter::placeholder { color: var(--muted); }
 
-/* Scope toggle (Chat / All) — always visible beside search */
 .sidebar-scope-btn {
   flex-shrink: 0;
   padding: 0 10px;
@@ -58,7 +54,6 @@
 .sidebar-scope-btn:hover { color: var(--text); border-color: var(--text); }
 .sidebar-scope-btn.active { color: var(--accent); border-color: var(--accent); background: rgba(0,132,255,0.07); }
 
-/* Shared X clear button */
 .sidebar-clear-btn {
   flex-shrink: 0;
   width: 28px;
@@ -78,7 +73,6 @@
 }
 .sidebar-clear-btn:hover { color: var(--text); border-color: var(--text); }
 
-/* Search results overlay */
 .sidebar-search-results {
   position:absolute; top:100%; left:0; right:0; z-index:200;
   max-height:320px; overflow-y:auto; border:1px solid var(--border);
@@ -93,7 +87,6 @@
 .search-result-item.search-no-results { cursor: default; color: var(--muted); font-size: 13px; text-align: center; padding: 16px 10px; }
 .search-result-item.search-no-results:hover { background: none; }
 
-/* Search progress bar — absolutely positioned under search input */
 .sidebar-search-progress {
   position: absolute; left: 0; right: 0; top: 100%; z-index: 50;
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
@@ -105,7 +98,6 @@
 .sidebar-search-progress-fill { height: 100%; background: var(--accent); transition: width 0.2s linear; }
 .sidebar-search-progress-text { font-size: 12px; color: var(--text); min-width: 40px; text-align: right; font-weight: 500; }
 
-/* Header three-dot menu */
 .header-menu-wrap { position:relative; flex-shrink:0; }
 .header-menu-btn {
   width:36px; height:36px; border:none; border-radius:8px;
@@ -131,7 +123,6 @@
 .dark .header-menu-item:hover { background:var(--hover-overlay-dark); }
 .header-menu-item:disabled { opacity:0.5; cursor:not-allowed; }
 
-/* Archived list back button */
 .archived-back {
   display:flex; align-items:center; gap:8px; padding:8px 4px 12px 4px;
   color:var(--accent); font-size:14px; font-weight:500;
@@ -154,17 +145,13 @@
   z-index: 5;
 }
 
-/* Browser compatibility notice */
 .browser-notice { color:var(--muted); font-size:12px; font-style:italic; padding:4px 0; line-height:1.4; }
 
-/* Deletion warning */
 .deletion-warning { color:#e53e3e; font-size:12px; margin-top:4px; line-height:1.4; }
 
-/* Folder picker */
 .folder-picker { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px 16px; text-align:center; flex:1; }
 .folder-picker p { color:var(--muted); font-size:14px; line-height:1.5; margin:0; }
 
-/* Action bar for multi-select */
 .sidebar-action-bar {
   display: flex;
   align-items: center;
@@ -206,7 +193,6 @@
   cursor: not-allowed;
 }
 
-/* Error alert styling */
 .sidebar-error-alert {
   margin: 12px 16px;
   padding: 12px;

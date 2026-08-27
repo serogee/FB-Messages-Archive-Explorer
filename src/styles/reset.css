@@ -6,7 +6,6 @@ body {
     overflow: hidden;
 }
 
-/* Typography */
 h3 { margin: 0; position: relative; font-size: 16px; }
 
 hr {
@@ -25,7 +24,6 @@ a:hover {
     text-decoration: underline;
 }
 
-/* Common Interactive Resets */
 .clickable { position:relative; overflow:visible; }
 .clickable::after {
     content: '';
