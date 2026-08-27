@@ -18,6 +18,21 @@ describe('message jump coordination', () => {
     expect(renderChunk).not.toHaveBeenCalled();
   });
 
+  it('ignores an already rendered target after the active chat changes', async () => {
+    const target = element('previous-chat-target');
+    const renderChunk = vi.fn<() => Promise<boolean>>();
+    const requestedChat = 'first';
+    let activeChat = requestedChat;
+    activeChat = 'second';
+
+    await expect(resolveMessageJumpTarget({
+      findMessage: () => target,
+      renderChunk,
+      isCurrent: () => activeChat === requestedChat,
+    })).resolves.toBeNull();
+    expect(renderChunk).not.toHaveBeenCalled();
+  });
+
   it('finds the target after its chunk reports that rendering completed', async () => {
     const target = element('target');
     let rendered = false;

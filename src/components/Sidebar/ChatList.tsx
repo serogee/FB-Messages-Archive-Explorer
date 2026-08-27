@@ -252,6 +252,7 @@ export function ChatList({ chatList, activeEntry, onSelectChat, onDeleteChat, de
     if (!onToggleSelectChat) return;
 
     if (e.shiftKey && lastSelectedRef.current) {
+      // Shift-selection follows rendered order, including auxiliary chat sections.
       const allDisplayed = [
         ...mainFiltered,
         ...extras.flatMap(extra => extra.items)

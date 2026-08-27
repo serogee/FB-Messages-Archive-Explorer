@@ -1,3 +1,5 @@
+// Settings storage is best-effort: prefer localStorage, fall back to cookies,
+// and never block startup when either mechanism is unavailable.
 const STORAGE_PREFIX = 'majv_' + (window.location.hostname || 'local') + '_';
 
 function setCookie(name: string, value: string, days = 365): void {
@@ -6,7 +8,7 @@ function setCookie(name: string, value: string, days = 365): void {
     document.cookie =
       encodeURIComponent(name) + '=' + encodeURIComponent(value) +
       '; expires=' + expires + '; path=/';
-  } catch { /* ignore */ }
+  } catch {}
 }
 
 function getCookie(name: string): string | null {
@@ -16,27 +18,27 @@ function getCookie(name: string): string | null {
       const [k, v] = c.split('=');
       if (decodeURIComponent(k) === name) return decodeURIComponent(v || '');
     }
-  } catch { /* ignore */ }
+  } catch {}
   return null;
 }
 
 export function storageSet(key: string, value: string): void {
   const k = STORAGE_PREFIX + key;
-  try { localStorage.setItem(k, String(value)); return; } catch { /* ignore */ }
-  try { setCookie(k, String(value)); } catch { /* ignore */ }
+  try { localStorage.setItem(k, String(value)); return; } catch {}
+  try { setCookie(k, String(value)); } catch {}
 }
 
 export function storageGet(key: string): string | null {
   const k = STORAGE_PREFIX + key;
-  try { const v = localStorage.getItem(k); if (v !== null) return v; } catch { /* ignore */ }
-  try { const v = getCookie(k); if (v !== null) return v; } catch { /* ignore */ }
+  try { const v = localStorage.getItem(k); if (v !== null) return v; } catch {}
+  try { const v = getCookie(k); if (v !== null) return v; } catch {}
   return null;
 }
 
 export function storageRemove(key: string): void {
   const k = STORAGE_PREFIX + key;
-  try { localStorage.removeItem(k); } catch { /* ignore */ }
-  try { setCookie(k, '', -1); } catch { /* ignore */ }
+  try { localStorage.removeItem(k); } catch {}
+  try { setCookie(k, '', -1); } catch {}
 }
 
 export function escapeHtml(s: string): string {

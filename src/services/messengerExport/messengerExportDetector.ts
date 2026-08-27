@@ -20,12 +20,12 @@ export async function isMessengerExport(handle: ReadableDirectoryHandle): Promis
   try {
     await handle.getDirectoryHandle('inbox');
     return false;
-  } catch { /* not a Facebook messages root */ }
+  } catch { /* Continue checking the remaining Facebook root markers. */ }
 
   try {
     await handle.getDirectoryHandle('archived_threads');
     return false;
-  } catch { /* not a Facebook messages root */ }
+  } catch { /* No Facebook root markers found; inspect standalone Messenger JSON. */ }
 
   let checked = 0;
   for await (const [name, entry] of handle.entries()) {

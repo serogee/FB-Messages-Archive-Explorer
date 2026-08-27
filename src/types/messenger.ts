@@ -1,7 +1,5 @@
 import type { ReadableDirectoryHandle, ReadableFileHandle } from './fileSystem';
 
-// ── Media & Reactions ──────────────────────────────────────────────
-
 export interface MediaItem {
   uri?: string;
   filename?: string;
@@ -17,8 +15,6 @@ export interface Reaction {
   /** Enriched from reaction-notice messages */
   __timestamp?: number;
 }
-
-// ── Messages ───────────────────────────────────────────────────────
 
 export interface MessengerMessage {
   sender_name: string;
@@ -42,8 +38,6 @@ export interface MessengerMessage {
   _isReactionNotice?: boolean;
 }
 
-// ── Thread (single conversation JSON) ──────────────────────────────
-
 export interface MessengerThread {
   participants: { name: string }[];
   messages: MessengerMessage[];
@@ -58,8 +52,6 @@ export interface MessengerThread {
   /** Cached height estimates for virtualized message chunks. */
   _chunkHeights?: number[];
 }
-
-// ── Chat list entry (lightweight, for sidebar) ─────────────────────
 
 export interface ChatListEntry {
   folderName: string;
@@ -78,8 +70,6 @@ export interface ChatListEntry {
   _sizeIncludesMedia?: boolean;
 }
 
-// ── Attachment counts ──────────────────────────────────────────────
-
 export interface AttachmentCounts {
   photos: number;
   videos: number;
@@ -89,8 +79,6 @@ export interface AttachmentCounts {
   total: number;
 }
 
-// ── Resolved attachment (for media viewer / gallery) ───────────────
-
 export interface ResolvedAttachment {
   mediaPath: string;
   category: 'photos' | 'videos' | 'audio' | 'gifs' | 'files';
@@ -99,8 +87,6 @@ export interface ResolvedAttachment {
   sender: string;
   mediaEntry: MediaEntry | null;
 }
-
-// ── Date navigator ─────────────────────────────────────────────────
 
 export type DateScale = 'month' | 'week' | 'day';
 
@@ -124,8 +110,6 @@ export interface DateNavState {
   syncing: boolean;
 }
 
-// ── Search ─────────────────────────────────────────────────────────
-
 export interface SearchIndexEntry {
   text: string;
   normalized: string;
@@ -140,8 +124,6 @@ export interface SearchIndexEntry {
 export interface SearchResult {
   item: SearchIndexEntry;
 }
-
-// ── Media lookup ───────────────────────────────────────────────────
 
 export interface MediaEntry {
   url?: string;
