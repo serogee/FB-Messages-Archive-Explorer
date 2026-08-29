@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { storageGet, storageSet } from '../services/storage';
 
 export interface Settings {
@@ -67,10 +67,10 @@ export function useSettings(): {
     document.documentElement.style.setProperty('--info-panel-width', `${settings.infoPanelWidth}px`);
   }, [settings.infoPanelWidth]);
 
-  const setSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
+  const setSetting = useCallback(<K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
     storageSet('setting_' + key, typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
-  };
+  }, []);
 
   return { settings, setSetting };
 }

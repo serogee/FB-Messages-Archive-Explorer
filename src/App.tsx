@@ -48,19 +48,23 @@ export default function App() {
     minWidth: 260,
     maxWidthFraction: 0.55,
     maxWidthAbsolute: 640,
-    storageKey: 'sidebarWidth',
     initialWidth: settings.sidebarWidth,
     onWidthChange: (w) => setSetting('sidebarWidth', w as typeof settings.sidebarWidth),
+    cssVariable: '--sidebar-width',
+    minMainWidth: 320,
+    layoutDependency: settings.infoPanelOpen,
     side: 'left',
   });
 
   const { handleRef: infoHandleRef } = useResizable({
-    minWidth: 340,
+    minWidth: 240,
     maxWidthFraction: 0.45,
     maxWidthAbsolute: 520,
-    storageKey: 'infoPanelWidth',
     initialWidth: settings.infoPanelWidth,
     onWidthChange: (w) => setSetting('infoPanelWidth', w as typeof settings.infoPanelWidth),
+    cssVariable: '--info-panel-width',
+    minMainWidth: 320,
+    layoutDependency: settings.infoPanelOpen,
     side: 'right',
   });
 
@@ -266,6 +270,7 @@ export default function App() {
         ref={sidebarHandleRef}
         role="separator"
         aria-label="Resize sidebar"
+        aria-orientation="vertical"
         tabIndex={0}
       />
 
@@ -297,6 +302,7 @@ export default function App() {
         ref={infoHandleRef}
         role="separator"
         aria-label="Resize info panel"
+        aria-orientation="vertical"
         tabIndex={0}
       />
 

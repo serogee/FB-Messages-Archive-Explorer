@@ -1,26 +1,37 @@
 #line { border-bottom: 1.5px solid var(--border); }
 .container { display:grid; grid-template-columns:minmax(260px, var(--sidebar-width)) 28px minmax(0, 1fr) 0 0; height:100vh; }
-.container.info-open { grid-template-columns:minmax(260px, var(--sidebar-width)) 28px minmax(0, 1fr) 28px minmax(340px, var(--info-panel-width)); }
+.container.info-open { grid-template-columns:minmax(260px, var(--sidebar-width)) 28px minmax(0, 1fr) 28px minmax(240px, var(--info-panel-width)); }
 .container.resizing { cursor:col-resize; user-select:none; }
+.container.resizing::after {
+    content:"";
+    position:fixed;
+    inset:0;
+    z-index:4000;
+    background:var(--resize-overlay);
+    pointer-events:none;
+}
+.container.resizing img,
+.container.resizing video,
+.container.resize-settling img,
+.container.resize-settling video { transition:none; }
 .container.info-open .chat-container { margin-right:0; }
 
-.resize-ghost-line {
+.resize-handle-preview {
     position:fixed;
-    top:0;
-    bottom:0;
+    top:20px;
+    bottom:20px;
+    left:0;
     width:5px;
     border-radius:999px;
     background:var(--accent);
-    box-shadow:0 0 0 3px rgba(62,166,255,0.16);
     pointer-events:none;
     z-index:5000;
     opacity:0;
-    transform:translateX(-50%);
-    transition:opacity 0.08s ease;
+    transform:translate3d(0, 0, 0) translateX(-50%);
+    transition:opacity 0.06s ease;
+    will-change:transform;
 }
-.resize-ghost-line.active {
-    opacity:1;
-}
+.resize-handle-preview.active { opacity:1; }
 
 .sub-container { display: flex; flex-direction: column; height: calc(100vh - 40px); box-sizing: border-box; margin:20px 0 20px 20px; background:var(--panel-bg); padding:15px; border-radius:10px; box-shadow:0 2px 6px rgba(0,0,0,0.06); position:relative; }
 
@@ -31,6 +42,7 @@
     position:relative;
     width:28px;
     margin:0 auto;
+    touch-action:none;
 }
 .sidebar-resize-handle::before,
 .info-resize-handle::before {
@@ -45,15 +57,8 @@
     background:var(--border);
     transition:background 0.15s ease, width 0.15s ease;
 }
-.sidebar-resize-handle:hover::before,
-.sidebar-resize-handle:focus-visible::before,
-.info-resize-handle:hover::before,
-.info-resize-handle:focus-visible::before,
-.container.resizing .sidebar-resize-handle::before,
-.container.resizing .info-resize-handle::before {
-    width:5px;
-    background:var(--accent);
-}
+.container.resizing-left .sidebar-resize-handle::before,
+.container.resizing-right .info-resize-handle::before { opacity:0; }
 .info-resize-handle,
 .chat-info-panel {
     display:none;
