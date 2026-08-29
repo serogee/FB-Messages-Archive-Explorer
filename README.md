@@ -10,30 +10,31 @@ Browse, search, and manage your exported Facebook or Messenger message archive p
 
 ## Contents
 
-- [🚀 1. Quick Start](#quick-start)
-- [🖥️ 2. Demo](#demo)
-- [🔍 3. Features](#features)
-- [❓ 4. How to Export Your Messages](#how-to-export-your-facebook-or-messenger-messages)
-    - [4.1. Option A: Facebook](#option-a-facebook-all-facebook-messages)
-    - [4.2. Option B: Messenger](#option-b-messenger-standalone-messenger-export)
-    - [4.x. Which folder structure does the app recognize?](#which-folder-structure-does-the-app-recognize)
-- [❔ 5. Browser Support and Limitations](#browser-support-and-limitations)
-- [⚙️ 6. Run the App Locally](#run-the-app-locally)
-    - [6.1. Prerequisites](#prerequisites)
-    - [6.2. Setup](#setup)
-    - [6.3. Build for Production](#build-for-production)
-    - [6.4. Other Developer Commands](#other-developer-commands)
-- [🤖 7. Tech Stack](#tech-stack)
-- [🔏 8. Privacy and Data Handling](#privacy-and-data-handling)
-- [🔗 9. Related Project and Credits](#related-project)
-- [📜 10. License](#license)
-- [📡 11. Contact and Support](#contact-and-support)
+- [🚀 1. Quick Start](#1-quick-start)
+- [🖥️ 2. Demo](#2-demo)
+- [🔍 3. Features](#3-features)
+- [❓ 4. How to Export Your Messages](#4-how-to-export-your-facebook-or-messenger-messages)
+    - [4.1. Option A: Facebook](#41-option-a-facebook-all-facebook-messages)
+    - [4.2. Option B: Messenger](#42-option-b-messenger-standalone-messenger-export)
+    - [4.x. Which folder structure does the app recognize?](#4x-which-folder-structure-does-the-app-recognize)
+- [❔ 5. Browser Support and Limitations](#5-browser-support-and-limitations)
+- [⚙️ 6. Run the App Locally](#6-run-the-app-locally)
+    - [6.1. Prerequisites](#61-prerequisites)
+    - [6.2. Setup](#62-setup)
+    - [6.3. Build for Production](#63-build-for-production)
+    - [6.4. Other Developer Commands](#64-other-developer-commands)
+- [🤖 7. Tech Stack](#7-tech-stack)
+- [🔏 8. Privacy and Data Handling](#8-privacy-and-data-handling)
+- [🔗 9. Related Project and Credits](#9-related-project-and-credits)
+- [📜 10. License](#10-license)
+- [📡 11. Contact and Support](#11-contact-and-support)
 
 ---
 
+<a name="1-quick-start"></a>
 ## 🚀 1. Quick Start
 
-Before you begin, you need a Facebook or Messenger export in **JSON format** (not HTML). See [How to Export Your Messages](#how-to-export-your-facebook-or-messenger-messages) for step-by-step instructions.
+Before you begin, you need a Facebook or Messenger export in **JSON format** (not HTML). See [How to Export Your Messages](#4-how-to-export-your-facebook-or-messenger-messages) for step-by-step instructions.
 
 1. Download your Facebook or Messenger export from Meta.
 2. **Extract** (unzip) the downloaded `.zip` file to a folder on your computer.
@@ -54,12 +55,14 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 
 ---
 
+<a name="2-demo"></a>
 ## 🖥️ 2. Demo
 
 ![Screenshot of FB Messages Archive Explorer showing a chat conversation with message bubbles, a sidebar chat list, and a statistics panel](public/demo.png)
 
 ---
 
+<a name="3-features"></a>
 ## 🔍 3. Features
 
 **Viewing**
@@ -103,6 +106,7 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 
 ---
 
+<a name="4-how-to-export-your-facebook-or-messenger-messages"></a>
 ## ❓ 4. How to Export Your Facebook or Messenger Messages
 
 Meta offers two ways to download your messages.
@@ -110,6 +114,7 @@ Meta offers two ways to download your messages.
 > [!NOTE]
 > Meta can change its interface at any time. If the steps look different from what is described below, visit the [Meta Help Center](https://www.facebook.com/help/) for current instructions.
 
+<a name="41-option-a-facebook-all-facebook-messages"></a>
 ### 4.1. Option A: Facebook (all Facebook messages)
 
 1. Go to [https://www.facebook.com/dyi](https://www.facebook.com/dyi).
@@ -133,6 +138,7 @@ Meta offers two ways to download your messages.
 
 12. In the app, select the extracted folder, or the `messages` folder inside it.
 
+<a name="42-option-b-messenger-standalone-messenger-export"></a>
 ### 4.2. Option B: Messenger (standalone Messenger export)
 
 1. Go to [https://www.messenger.com/dyi](https://www.messenger.com/dyi).
@@ -141,6 +147,7 @@ Meta offers two ways to download your messages.
 4. Download and extract the `.zip` file.
 5. In the app, select the folder that contains your conversation `.json` files.
 
+<a name="4x-which-folder-structure-does-the-app-recognize"></a>
 ### 4.x. Which folder structure does the app recognize?
 
 The app automatically finds your messages if you select any of these:
@@ -156,6 +163,7 @@ Conversations are loaded from `inbox`, `archived_threads`, `message_requests`, a
 
 ---
 
+<a name="5-browser-support-and-limitations"></a>
 ## ❔ 5. Browser Support and Limitations
 
 | Feature                      | Chrome, Edge, Brave        | Firefox, Safari                 |
@@ -183,17 +191,20 @@ Conversations are loaded from `inbox`, `archived_threads`, `message_requests`, a
 
 ---
 
+<a name="6-run-the-app-locally"></a>
 ## ⚙️ 6. Run the App Locally
 
 Running locally means downloading the source code and starting your own copy of the app on your computer. Most users do not need to do this: the hosted version works the same way and requires no setup.
 
 If you want to verify that the app does exactly what it claims, you can run it locally. When you run the app from the source code on your own machine, your browser loads the app directly from your filesystem. You can inspect the code before you run it, and the app cannot contact any server that is not in the code you reviewed.
 
+<a name="61-prerequisites"></a>
 ### 6.1. Prerequisites
 
 - [Node.js](https://nodejs.org/) (the project's CI pipeline uses Node 20; other recent versions likely work)
 - [Git](https://git-scm.com/)
 
+<a name="62-setup"></a>
 ### 6.2. Setup
 
 **1. Clone the repository**
@@ -224,6 +235,7 @@ Open the local address shown in the terminal (usually `http://localhost:5173/FB-
 
 Press `Ctrl + C` to stop the server.
 
+<a name="63-build-for-production"></a>
 ### 6.3. Build for Production
 
 **Build**
@@ -238,6 +250,7 @@ npm run build
 npm run preview
 ```
 
+<a name="64-other-developer-commands"></a>
 ### 6.4. Other Developer Commands
 
 | Command              | Description                |
@@ -249,6 +262,7 @@ npm run preview
 
 ---
 
+<a name="7-tech-stack"></a>
 ## 🤖 7. Tech Stack
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
@@ -268,6 +282,7 @@ npm run preview
 
 ---
 
+<a name="8-privacy-and-data-handling"></a>
 ## 🔏 8. Privacy and Data Handling
 
 - **No data is uploaded.** After the initial page load, the app makes no network requests.
@@ -280,6 +295,7 @@ npm run preview
 
 ---
 
+<a name="9-related-project-and-credits"></a>
 ## 🔗 9. Related Project and credits
 
 For a simpler tool that opens one Messenger conversation file at a time (no full archive required), see **[Simple Messenger JSON Explorer](https://github.com/serogee/Simple-Messenger-JSON-Explorer)**.
@@ -288,12 +304,14 @@ This project builds upon the work of **[DuckCIT/Facebook-Messenger-JSON-Viewer](
 
 ---
 
+<a name="10-license"></a>
 ## 📜 10. License
 
 [MIT License](LICENSE)
 
 ---
 
+<a name="11-contact-and-support"></a>
 ## 📡 11. Contact and Support
 
 For bug reports, feature requests, or questions, open an issue on GitHub:
