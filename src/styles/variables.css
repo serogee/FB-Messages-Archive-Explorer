@@ -30,6 +30,7 @@
     --attachment-grid-min-width: 110px;
     --attachment-grid-gap: 4px;
     --hover-overlay: rgba(0,0,0,0.04);
+    --resize-overlay: rgba(255,255,255,0.58);
 }
 
 .dark {
@@ -44,4 +45,5 @@
     --highlight: rgba(255, 221, 64, 0.32);
     --border: #1b2330;
     --hover-overlay: rgba(255,255,255,0.04);
+    --resize-overlay: rgba(5,9,12,0.62);
 }

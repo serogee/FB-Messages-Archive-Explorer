@@ -171,3 +171,18 @@
   border-radius: 999px;
   transition: width 0.1s linear;
 }
+
+@container info-panel (max-width: 300px) {
+  .selection-panel-header {
+    min-height: 46px;
+    padding: 7px 10px;
+  }
+
+  .selection-panel-content {
+    padding: 0 8px 8px;
+  }
+
+  .selection-grid {
+    --attachment-grid-min-width: 90px;
+  }
+}

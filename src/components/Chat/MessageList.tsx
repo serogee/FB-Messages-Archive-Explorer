@@ -407,5 +407,7 @@ export const MessageList = React.memo(MessageListBase, (prev, next) => {
          prev.mediaState === next.mediaState &&
          prev.highlightQuery === next.highlightQuery &&
          prev.selectedPerspective === next.selectedPerspective &&
-         prev.settings === next.settings;
+         prev.settings.showMyName === next.settings.showMyName &&
+         prev.settings.showTheirName === next.settings.showTheirName &&
+         prev.settings.showReactions === next.settings.showReactions;
 });

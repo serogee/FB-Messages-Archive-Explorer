@@ -1,7 +1,12 @@
 import { useMemo } from 'react';
 import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
 import { Image as ImageIcon, Film, Music, FileText, Smile } from 'lucide-react';
-import { formatInfoNumber, formatInfoDate } from '../../services/storage';
+import {
+  formatCompactInfoDate,
+  formatCompactInfoNumber,
+  formatInfoDate,
+  formatInfoNumber,
+} from '../../services/storage';
 import { getMessageTimestamp } from '../../services/parser';
 import { getMessageAttachmentReferences } from '../../services/media';
 import { isReactionNoticeMessage } from '../../services/reactions';
@@ -19,6 +24,33 @@ interface MemberStat {
   name: string;
   count: number;
   percent: number;
+}
+
+function ResponsiveValue({ full, compact }: { full: string; compact: string }) {
+  return (
+    <span className="responsive-value" title={full !== compact ? full : undefined}>
+      <span className="responsive-full">{full}</span>
+      <span className="responsive-compact">{compact}</span>
+    </span>
+  );
+}
+
+function ResponsiveNumber({ value }: { value: number }) {
+  return (
+    <ResponsiveValue
+      full={formatInfoNumber(value)}
+      compact={formatCompactInfoNumber(value)}
+    />
+  );
+}
+
+function ResponsiveDate({ timestamp }: { timestamp: number | null }) {
+  return (
+    <ResponsiveValue
+      full={formatInfoDate(timestamp)}
+      compact={formatCompactInfoDate(timestamp)}
+    />
+  );
 }
 
 function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
@@ -100,19 +132,22 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
               <div className="info-stats">
                 <div className="info-metric">
                   <span>Messages</span>
-                  <strong>{formatInfoNumber(stats.visibleCount)}</strong>
+                  <strong><ResponsiveNumber value={stats.visibleCount} /></strong>
                 </div>
                 <div className="info-metric">
                   <span>Members</span>
-                  <strong>{formatInfoNumber(chatData.participants.length)}</strong>
+                  <strong><ResponsiveNumber value={chatData.participants.length} /></strong>
                 </div>
                 <div className="info-row">
                   <span>Created</span>
-                  <span>{formatInfoDate(stats.minTs)}</span>
+                  <span><ResponsiveDate timestamp={stats.minTs} /></span>
                 </div>
                 <div className="info-row">
-                  <span>Last message</span>
-                  <span>{formatInfoDate(stats.maxTs)}</span>
+                  <span>
+                    <span className="responsive-full">Last message</span>
+                    <span className="responsive-compact">Most Recent</span>
+                  </span>
+                  <span><ResponsiveDate timestamp={stats.maxTs} /></span>
                 </div>
               </div>
             </div>
@@ -146,22 +181,28 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                       {label}
                     </span>
                     <span className="attachment-count">
-                      {formatInfoNumber(count)}
+                      <ResponsiveNumber value={count} />
                     </span>
                   </div>
                 ))}
                 <div className="info-row">
-                  <span>Media loaded</span>
+                  <span>
+                    <span className="responsive-full">Total Media</span>
+                    <span className="responsive-compact">Total</span>
+                  </span>
                   <span className="attachment-count">
-                    {formatInfoNumber(stats.attachments.mediaFound)}
-                    <span className="attachment-found"> / {formatInfoNumber(stats.attachments.foundTotal)}</span>
+                    <ResponsiveNumber value={stats.attachments.mediaFound} />
+                    <span className="attachment-found"> / <ResponsiveNumber value={stats.attachments.foundTotal} /></span>
                   </span>
                 </div>
               </div>
             </div>
 
             <div className="info-section">
-              <strong>Messages Per Member</strong>
+              <strong>
+                <span className="responsive-full">Messages Per Member</span>
+                <span className="responsive-compact">By Member</span>
+              </strong>
               <div className="info-list">
                 {stats.memberStats.map(({ name, count, percent }: MemberStat) => (
                   <div
@@ -174,7 +215,12 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                     onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onSelectPerspective(name); }}
                   >
                     <span className="member-stat-name" title={name}>{name}</span>
-                    <span className="member-stat-meta">{formatInfoNumber(count)} ({percent}%)</span>
+                    <span className="member-stat-meta">
+                      <ResponsiveValue
+                        full={`${formatInfoNumber(count)} (${percent}%)`}
+                        compact={`${formatCompactInfoNumber(count)} · ${percent}%`}
+                      />
+                    </span>
                     <div className="member-stat-bar">
                       <span style={{ width: `${Math.max(1, percent)}%` }} />
                     </div>

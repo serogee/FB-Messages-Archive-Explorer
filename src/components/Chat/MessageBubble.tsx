@@ -144,6 +144,12 @@ function LazyMedia({
     const observer = getSharedLazyMediaResizeObserver();
     lazyMediaResizeCallbacks.set(el, (entry) => {
       const newHeight = entry.borderBoxSize ? entry.borderBoxSize[0].blockSize : entry.contentRect.height;
+
+      const appContainer = el.closest('.container');
+      if (appContainer?.classList.contains('resizing') || appContainer?.classList.contains('resize-settling')) {
+        prevHeight.current = newHeight;
+        return;
+      }
       
       const oldHeight = prevHeight.current;
       if (oldHeight !== null && oldHeight !== newHeight) {

@@ -59,9 +59,22 @@ export function formatInfoNumber(value: number): string {
   return Number(value || 0).toLocaleString();
 }
 
+export function formatCompactInfoNumber(value: number): string {
+  return new Intl.NumberFormat([], {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(Number(value || 0));
+}
+
 export function formatInfoDate(timestamp: number | null): string {
   return timestamp
     ? new Date(timestamp).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+    : 'Unknown';
+}
+
+export function formatCompactInfoDate(timestamp: number | null): string {
+  return timestamp
+    ? new Date(timestamp).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })
     : 'Unknown';
 }
 
