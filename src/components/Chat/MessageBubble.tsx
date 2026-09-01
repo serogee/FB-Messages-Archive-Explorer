@@ -6,6 +6,7 @@ import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
+import { MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
 import { ReactionModal } from './ReactionModal';
 import { MediaFileSize } from '../MediaFileSize';
 import { ExternalLink, FileText, Info, Link as LinkIcon, Pause, Play, Volume2, VolumeX } from 'lucide-react';
@@ -80,19 +81,6 @@ function getReactionTimeText(ts: number): string {
   return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-const MESSAGE_URL_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
-const TRAILING_URL_PUNCTUATION = /[.,!?;:)\]}]$/;
-
-function normalizeExternalUrl(value: string): string | null {
-  const candidate = value.startsWith('www.') ? `https://${value}` : value;
-  try {
-    const parsed = new URL(candidate);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
-  } catch {
-    return null;
-  }
-}
-
 function renderHighlightedText(text: string, highlightQuery: string, key: string) {
   const html = highlightQuery ? highlightText(text, highlightQuery) : escapeHtml(text);
   return <React.Fragment key={key}><span dangerouslySetInnerHTML={{ __html: html }} /></React.Fragment>;
@@ -105,8 +93,7 @@ function MessageText({ text, highlightQuery }: { text: string; highlightQuery: s
   MESSAGE_URL_PATTERN.lastIndex = 0;
 
   while ((match = MESSAGE_URL_PATTERN.exec(text)) !== null) {
-    let label = match[0];
-    while (label.length > 0 && TRAILING_URL_PUNCTUATION.test(label)) label = label.slice(0, -1);
+    const label = trimTrailingUrlPunctuation(match[0]);
     if (!label) continue;
 
     const start = match.index;

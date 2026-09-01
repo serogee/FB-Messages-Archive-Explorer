@@ -10,6 +10,7 @@ import {
 import { getMessageTimestamp } from '../../services/parser';
 import { getMessageAttachmentReferences, isMediaReferenceFound } from '../../services/media';
 import { isReactionNoticeMessage } from '../../services/reactions';
+import { getMessageLinks } from '../../services/messageLinks';
 
 interface InfoPanelProps {
   chatData: MessengerThread | null;
@@ -77,7 +78,7 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
     const sender = msg.senderName || msg.sender_name || 'Unknown';
     memberCounts[sender] = (memberCounts[sender] || 0) + 1;
 
-    if (msg.share && (msg.share.link?.trim() || msg.share.href?.trim())) links++;
+    links += getMessageLinks(msg).length;
 
     const refs = getMessageAttachmentReferences(msg);
     for (const { path, category } of refs) {
