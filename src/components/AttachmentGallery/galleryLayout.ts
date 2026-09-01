@@ -22,6 +22,22 @@ export interface GalleryLayout {
   rows: GalleryLayoutRow[];
 }
 
+/** Finds the active month without scanning every preceding virtual row. */
+export function getStickyMonth(rows: GalleryLayoutRow[], scrollTop: number): string {
+  let low = 0;
+  let high = rows.length;
+  const target = scrollTop + 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (rows[middle].top <= target) low = middle + 1;
+    else high = middle;
+  }
+
+  const row = rows[low - 1];
+  if (!row) return '';
+  return row.type === 'header' && scrollTop <= row.top ? '' : row.label;
+}
+
 export function calculateGalleryLayout(
   groups: GalleryGroup[],
   width: number,

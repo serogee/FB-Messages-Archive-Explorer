@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateGalleryLayout } from '../src/components/AttachmentGallery/galleryLayout';
+import { calculateGalleryLayout, getStickyMonth } from '../src/components/AttachmentGallery/galleryLayout';
 import type { ResolvedAttachment } from '../src/types/messenger';
 
 function attachments(count: number): ResolvedAttachment[] {
@@ -35,5 +35,19 @@ describe('attachment gallery layout', () => {
     expect(layout.columns).toBe(5);
     expect(layout.rows).toHaveLength(601);
     expect(layout.totalHeight).toBeGreaterThan(0);
+  });
+
+  it('finds the sticky month while hiding it at a visible header boundary', () => {
+    const layout = calculateGalleryLayout([
+      { key: 'first', label: 'January 2026', items: attachments(7) },
+      { key: 'second', label: 'December 2025', items: attachments(2) },
+    ], 338);
+    const secondHeader = layout.rows.find(row => row.type === 'header' && row.label === 'December 2025');
+
+    expect(getStickyMonth(layout.rows, 0)).toBe('');
+    expect(getStickyMonth(layout.rows, 10)).toBe('January 2026');
+    expect(secondHeader).toBeDefined();
+    expect(getStickyMonth(layout.rows, secondHeader!.top)).toBe('');
+    expect(getStickyMonth(layout.rows, secondHeader!.top + 2)).toBe('December 2025');
   });
 });

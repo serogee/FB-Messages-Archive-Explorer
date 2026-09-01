@@ -9,9 +9,14 @@ const DEFAULT_MAX_POSTERS = 200;
 const POSTER_WIDTH = MEDIA_THUMBNAIL_SIZE;
 const MAX_CONCURRENT_POSTER_JOBS = 2;
 const VIDEO_EVENT_TIMEOUT_MS = 5_000;
+const SEEK_FALLBACK_SECONDS = 0.5;
 
-class VideoPosterCache {
+type PosterCreator = (entry: MediaEntry) => Promise<string | null>;
+
+export class VideoPosterCache {
   private maxSize: number;
+  private maxConcurrentJobs: number;
+  private createPoster: PosterCreator;
   private cache = new Map<MediaEntry, PosterCacheEntry>();
   private pending = new Map<MediaEntry, Promise<string | null>>();
   private activeJobs = 0;
@@ -19,8 +24,14 @@ class VideoPosterCache {
   private generation = 0;
   private failed = new WeakSet<MediaEntry>();
 
-  constructor(maxSize = DEFAULT_MAX_POSTERS) {
+  constructor(
+    maxSize = DEFAULT_MAX_POSTERS,
+    maxConcurrentJobs = MAX_CONCURRENT_POSTER_JOBS,
+    createPoster: PosterCreator = createVideoPosterForEntry,
+  ) {
     this.maxSize = maxSize;
+    this.maxConcurrentJobs = maxConcurrentJobs;
+    this.createPoster = createPoster;
   }
 
   get(entry: MediaEntry): string | null {
@@ -42,12 +53,14 @@ class VideoPosterCache {
 
     const requestGeneration = this.generation;
     const task = this.enqueue(async () => {
+      if (requestGeneration !== this.generation) return null;
+
       const afterWait = this.get(entry);
       if (afterWait) return afterWait;
 
-      const posterUrl = await createVideoPosterForEntry(entry);
+      const posterUrl = await this.createPoster(entry);
       if (!posterUrl) {
-        this.failed.add(entry);
+        if (requestGeneration === this.generation) this.failed.add(entry);
         return null;
       }
 
@@ -77,7 +90,7 @@ class VideoPosterCache {
   }
 
   private async enqueue<T>(task: () => Promise<T>): Promise<T> {
-    if (this.activeJobs >= MAX_CONCURRENT_POSTER_JOBS) {
+    if (this.activeJobs >= this.maxConcurrentJobs) {
       await new Promise<void>(resolve => {
         this.waitingJobs.push(resolve);
       });
@@ -178,9 +191,34 @@ function waitForVideoState(
   });
 }
 
-async function createVideoPoster(videoUrl: string): Promise<string | null> {
+function waitForVideoEvent(video: HTMLVideoElement, eventName: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeout);
+      video.removeEventListener(eventName, handleSuccess);
+      video.removeEventListener('error', handleError);
+    };
+    const handleSuccess = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error(`Video ${eventName} failed`));
+    };
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Video ${eventName} timed out`));
+    }, VIDEO_EVENT_TIMEOUT_MS);
+
+    video.addEventListener(eventName, handleSuccess, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+  });
+}
+
+export async function createVideoPoster(videoUrl: string): Promise<string | null> {
   const video = document.createElement('video');
-  video.preload = 'auto';
+  video.preload = 'metadata';
   video.muted = true;
   video.playsInline = true;
 
@@ -191,6 +229,14 @@ async function createVideoPoster(videoUrl: string): Promise<string | null> {
     video.src = videoUrl;
     video.load();
     await metadataReady;
+
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const targetTime = duration > 0 ? Math.min(duration * 0.1, SEEK_FALLBACK_SECONDS) : 0;
+    if (targetTime > 0) {
+      const seeked = waitForVideoEvent(video, 'seeked');
+      video.currentTime = targetTime;
+      await seeked;
+    }
     await waitForVideoState(video, 'loadeddata', HTMLMediaElement.HAVE_CURRENT_DATA);
 
     const sourceWidth = video.videoWidth || POSTER_WIDTH;
@@ -213,6 +259,7 @@ async function createVideoPoster(videoUrl: string): Promise<string | null> {
   } catch {
     return null;
   } finally {
+    video.pause();
     video.removeAttribute('src');
     video.load();
   }

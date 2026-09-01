@@ -8,7 +8,7 @@ import { findMediaFile } from '../../services/media';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
-import { calculateGalleryLayout, type GalleryGroup, type GalleryLayoutRow } from './galleryLayout';
+import { calculateGalleryLayout, getStickyMonth, type GalleryGroup, type GalleryLayoutRow } from './galleryLayout';
 
 const VIRTUAL_OVERSCAN_PX = 600;
 
@@ -216,7 +216,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
   const [viewerState, setViewerState] = useState({ open: false, index: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
-  const scrollPositions = useRef<Record<string, number>>({});
+  const scrollPositions = useRef<Partial<Record<AttachmentCategory, number>>>({});
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollFrameRef = useRef<number | null>(null);
 
@@ -276,6 +276,10 @@ const AttachmentGalleryBase = function AttachmentGallery({
   const handleTabChange = useCallback((tab: AttachmentCategory) => {
     const container = scrollContainerRef.current;
     if (container) scrollPositions.current[activeTab] = container.scrollTop;
+    if (scrollFrameRef.current != null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
     setActiveTab(tab);
   }, [activeTab]);
 
@@ -303,19 +307,10 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, [layout.rows, scrollTop, viewport.height]);
 
   const stickyMonth = useMemo(() => {
-    let label = groups[0]?.label || '';
-    let headerTop = 0;
-    for (const row of layout.rows) {
-      if (row.top > scrollTop + 1) break;
-      if (row.type === 'header') {
-        label = row.label;
-        headerTop = row.top;
-      }
-    }
-    return scrollTop > headerTop ? label : '';
-  }, [groups, layout.rows, scrollTop]);
+    return getStickyMonth(layout.rows, scrollTop);
+  }, [layout.rows, scrollTop]);
 
-  const tabCounts = useMemo(() => ({
+  const tabCounts = useMemo<Record<AttachmentCategory, number>>(() => ({
     all: all.length,
     photos: byCategory.photos.length,
     videos: byCategory.videos.length,
