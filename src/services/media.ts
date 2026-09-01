@@ -1,6 +1,8 @@
 import type { MediaItem, MediaState, MediaEntry, MessengerMessage } from '../types/messenger';
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../types/fileSystem';
 import { blobCache } from './blobCache';
+import { imageThumbnailCache } from './imageThumbnailCache';
+import { videoPosterCache } from './videoPosterCache';
 
 
 function normalizeMediaPath(path: string): string {
@@ -31,6 +33,7 @@ export function createMediaState(): MediaState {
     lookup: new Map(),
     pathIndex: new Set(),
     basenameIndex: new Set(),
+    mediaFileCount: 0,
   };
 }
 
@@ -70,6 +73,8 @@ export function findMediaFile(state: MediaState, path: string): MediaEntry | nul
 }
 
 export function revokeAllMedia(state: MediaState): void {
+  imageThumbnailCache.clear();
+  videoPosterCache.clear();
   blobCache.clear();
   for (const url of Object.values(state.files)) {
     try { URL.revokeObjectURL(url); } catch { /* ignore */ }
@@ -79,6 +84,7 @@ export function revokeAllMedia(state: MediaState): void {
   state.lookup = new Map();
   state.pathIndex = new Set();
   state.basenameIndex = new Set();
+  state.mediaFileCount = 0;
 }
 
 export function getMessageMediaItems(msg: MessengerMessage): MediaItem[] {
@@ -184,6 +190,7 @@ export async function processMediaFromDirectory(
 
   if (signal?.aborted) return;
   const total = fileHandles.length;
+  state.mediaFileCount = total;
   let done = 0;
   onProgress?.(0, total);
 
@@ -198,10 +205,10 @@ export async function processMediaFromDirectory(
           state.types[path] = type;
           addMediaToIndex(state, path, entry);
         } catch { /* One unreadable attachment must not stop media indexing. */ }
-        done++;
-        onProgress?.(done, total);
       })
     );
+    done += batch.length;
+    onProgress?.(done, total);
     // Yield only after a frame budget to balance throughput and responsiveness.
     if (performance.now() - lastYield > 16) {
       await new Promise(r => setTimeout(r, 0));

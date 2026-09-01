@@ -1,84 +1,16 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, memo } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { MessengerThread, MediaState, ResolvedAttachment } from '../../types/messenger';
 import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, Info } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import { useAttachments, type AttachmentCategory } from '../../hooks/useAttachments';
 import type { useSelection } from '../../hooks/useSelection';
 import { findMediaFile } from '../../services/media';
-import { blobCache } from '../../services/blobCache';
+import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
+import { calculateGalleryLayout, type GalleryGroup, type GalleryLayoutRow } from './galleryLayout';
 
-// One observer handles all thumbnails so large galleries do not create thousands of observers.
-let sharedObserver: IntersectionObserver | null = null;
-let unloadObserver: IntersectionObserver | null = null;
-
-const observerCallbacks = new Map<Element, { load: () => void; unload: () => void }>();
-const loadingElements = new Set<Element>();
-
-// Batch newly visible thumbnails to avoid a burst of media decoding during fast scrolling.
-const pendingElements = new Set<Element>();
-let loadTimer: ReturnType<typeof setTimeout> | null = null;
-
-function processPending() {
-  loadTimer = null;
-  for (const el of pendingElements) {
-    if (loadingElements.has(el)) continue;
-    loadingElements.add(el);
-    const cbs = observerCallbacks.get(el);
-    if (cbs) cbs.load();
-  }
-}
-
-function resetObservers() {
-  if (sharedObserver) { sharedObserver.disconnect(); sharedObserver = null; }
-  if (unloadObserver) { unloadObserver.disconnect(); unloadObserver = null; }
-  pendingElements.clear();
-  loadingElements.clear();
-  observerCallbacks.clear();
-  if (loadTimer) { clearTimeout(loadTimer); loadTimer = null; }
-}
-
-// The margin must be relative to the gallery scroller rather than the browser viewport.
-function getSharedObserver() {
-  if (!sharedObserver) {
-    const root = document.querySelector('.gallery-scroll');
-    sharedObserver = new IntersectionObserver((entries) => {
-      let changed = false;
-      for (let i = 0; i < entries.length; i++) {
-        const entry = entries[i];
-        if (entry.isIntersecting) {
-          pendingElements.add(entry.target);
-          changed = true;
-        } else {
-          pendingElements.delete(entry.target);
-        }
-      }
-      if (changed) {
-        if (loadTimer) clearTimeout(loadTimer);
-        loadTimer = setTimeout(processPending, 150);
-      }
-    }, { root, rootMargin: '500px' });
-  }
-  return sharedObserver;
-}
-
-function getUnloadObserver() {
-  if (!unloadObserver) {
-    const root = document.querySelector('.gallery-scroll');
-    unloadObserver = new IntersectionObserver((entries) => {
-      for (let i = 0; i < entries.length; i++) {
-        const entry = entries[i];
-        if (!entry.isIntersecting) {
-          loadingElements.delete(entry.target);
-          const cbs = observerCallbacks.get(entry.target);
-          if (cbs) cbs.unload();
-        }
-      }
-    }, { root, rootMargin: '2000px' });
-  }
-  return unloadObserver;
-}
+const VIRTUAL_OVERSCAN_PX = 600;
 
 interface AttachmentGalleryProps {
   chatData: MessengerThread;
@@ -105,11 +37,40 @@ function formatMonthYear(ts: number): string {
   return new Date(ts).toLocaleDateString([], { month: 'long', year: 'numeric' });
 }
 
+function findFirstRow(rows: GalleryLayoutRow[], target: number): number {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const row = rows[middle];
+    if (row.top + row.height < target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function groupByMonth(attachments: ResolvedAttachment[]): GalleryGroup[] {
+  const groups: GalleryGroup[] = [];
+  let currentLabel = '';
+
+  for (let index = attachments.length - 1; index >= 0; index--) {
+    const attachment = attachments[index];
+    const label = attachment.timestamp ? formatMonthYear(attachment.timestamp) : 'Unknown Date';
+    if (label !== currentLabel) {
+      currentLabel = label;
+      groups.push({ key: `${label}:${groups.length}`, label, items: [] });
+    }
+    groups[groups.length - 1].items.push(attachment);
+  }
+
+  return groups;
+}
+
 interface GalleryThumbnailProps {
   attachment: ResolvedAttachment;
   mediaState: MediaState;
-  onOpen: (e: React.MouseEvent | React.KeyboardEvent) => void;
-  onSelect: (e: React.MouseEvent | React.KeyboardEvent) => void;
+  onOpen: (attachment: ResolvedAttachment) => void;
+  onSelect: (attachment: ResolvedAttachment) => void;
   selectionMode: boolean;
   isSelected: boolean;
 }
@@ -123,96 +84,53 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   isSelected,
 }: GalleryThumbnailProps) {
   const [url, setUrl] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (attachment.category !== 'photos' && attachment.category !== 'gifs' && attachment.category !== 'videos') {
+      setUrl(null);
+      return;
+    }
+
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
-    if (!entry) return;
-
-    if (attachment.category === 'videos') {
-      const cachedPoster = videoPosterCache.get(entry);
-      if (cachedPoster) {
-        setUrl(cachedPoster);
-        return;
-      }
+    if (!entry) {
+      setUrl(null);
+      return;
     }
 
-    if (attachment.category !== 'videos') {
-      const cached = blobCache.get(entry);
-      if (cached) {
-        setUrl(cached);
-        return;
-      }
-      if (entry.url) {
-        blobCache.put(entry, entry.url);
-        setUrl(entry.url);
-        return;
-      }
+    const cache = attachment.category === 'videos' ? videoPosterCache : imageThumbnailCache;
+    const cached = cache.get(entry);
+    if (cached) {
+      setUrl(cached);
+      return;
     }
 
-    if (!entry.url && !entry.handle) return;
-
-    let isMounted = true;
-    const el = containerRef.current;
-    if (!el) return;
-
-    observerCallbacks.set(el, {
-      load: () => {
-        const cachedUrl = attachment.category === 'videos'
-          ? videoPosterCache.get(entry)
-          : blobCache.get(entry);
-        if (cachedUrl) {
-          if (isMounted) setUrl(cachedUrl);
-          return;
-        }
-        if (!entry.handle) return;
-        const loader = attachment.category === 'videos'
-          ? videoPosterCache.getOrCreate(entry)
-          : blobCache.getOrCreate(entry);
-        loader.then(blobUrl => {
-          if (isMounted && blobUrl) setUrl(blobUrl);
-        });
-      },
-      unload: () => {
-        if (isMounted) setUrl(null);
-      }
+    let mounted = true;
+    setUrl(null);
+    void cache.getOrCreate(entry).then(thumbnailUrl => {
+      if (mounted && thumbnailUrl) setUrl(thumbnailUrl);
     });
 
-    getSharedObserver().observe(el);
-    getUnloadObserver().observe(el);
-
-    return () => { 
-      isMounted = false;
-      getSharedObserver().unobserve(el);
-      getUnloadObserver().unobserve(el);
-      observerCallbacks.delete(el);
-      pendingElements.delete(el);
-      loadingElements.delete(el);
-    };
+    return () => { mounted = false; };
   }, [attachment, mediaState]);
 
-  const cat = attachment.category;
+  const category = attachment.category;
   const filename = attachment.mediaPath.split('/').pop() || 'File';
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === ' ' || e.key === 'Enter') {
-      e.preventDefault();
-      e.stopPropagation();
-      if (selectionMode) {
-        onSelect(e);
-      } else {
-        onOpen(e);
-      }
-    }
+  const activate = (event: React.MouseEvent | React.KeyboardEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (selectionMode) onSelect(attachment);
+    else onOpen(attachment);
   };
 
-  const wrapperClass = `gallery-thumb ${cat === 'audio' || cat === 'files' ? 'gallery-thumb-file' : ''} ${isSelected ? 'selected' : ''}`;
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === ' ' || event.key === 'Enter') activate(event);
+  };
 
   return (
     <div
-      ref={containerRef}
-      className={wrapperClass}
-      onClick={selectionMode ? onSelect : onOpen}
+      className={`gallery-thumb ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${isSelected ? 'selected' : ''}`}
+      onClick={activate}
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
@@ -223,31 +141,27 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         role="checkbox"
         aria-checked={isSelected}
         tabIndex={-1}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onSelect(e);
+        onClick={event => {
+          event.preventDefault();
+          event.stopPropagation();
+          onSelect(attachment);
         }}
       >
         {isSelected && <Check size={14} />}
       </div>
-      
-      {(cat === 'photos' || cat === 'gifs') ? (
-        url ? (
-          <img src={url} alt={filename} className="gallery-thumb-img" loading="lazy" />
-        ) : (
-          <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
-        )
-      ) : cat === 'videos' ? (
+
+      {(category === 'photos' || category === 'gifs') ? (
+        url
+          ? <img src={url} alt={filename} className="gallery-thumb-img" />
+          : <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
+      ) : category === 'videos' ? (
         <>
-          {url ? (
-            <img src={url} alt={filename} className="gallery-thumb-img" loading="lazy" />
-          ) : (
-            <div className="gallery-thumb-placeholder"><Film size={24} /></div>
-          )}
+          {url
+            ? <img src={url} alt={filename} className="gallery-thumb-img" />
+            : <div className="gallery-thumb-placeholder"><Film size={24} /></div>}
           <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>
         </>
-      ) : cat === 'audio' ? (
+      ) : category === 'audio' ? (
         <>
           <div className="gallery-thumb-icon"><Music size={24} /></div>
           <div className="gallery-thumb-name">{filename}</div>
@@ -258,14 +172,15 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
           <div className="gallery-thumb-name">{filename}</div>
         </>
       )}
+
       {selectionMode && (
         <button
           type="button"
           className="gallery-open-viewer-btn"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onOpen(e);
+          onClick={event => {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpen(attachment);
           }}
           aria-label={`Open ${filename}`}
           title="Open"
@@ -275,33 +190,14 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
       )}
     </div>
   );
-}, (prev, next) => {
-  return prev.attachment === next.attachment &&
-         prev.mediaState === next.mediaState &&
-         prev.selectionMode === next.selectionMode &&
-         prev.isSelected === next.isSelected;
-});
-
-function groupByMonth(attachments: ResolvedAttachment[]): { label: string; items: ResolvedAttachment[] }[] {
-  if (attachments.length === 0) return [];
-
-  const groups: { label: string; items: ResolvedAttachment[] }[] = [];
-  let currentLabel = '';
-
-  // Preserve the source order while presenting the newest attachments first.
-  const reversed = [...attachments].reverse();
-
-  for (const att of reversed) {
-    const label = att.timestamp ? formatMonthYear(att.timestamp) : 'Unknown Date';
-    if (label !== currentLabel) {
-      currentLabel = label;
-      groups.push({ label, items: [] });
-    }
-    groups[groups.length - 1].items.push(att);
-  }
-
-  return groups;
-}
+}, (previous, next) => (
+  previous.attachment === next.attachment
+  && previous.mediaState === next.mediaState
+  && previous.onOpen === next.onOpen
+  && previous.onSelect === next.onSelect
+  && previous.selectionMode === next.selectionMode
+  && previous.isSelected === next.isSelected
+));
 
 const AttachmentGalleryBase = function AttachmentGallery({
   chatData,
@@ -314,68 +210,81 @@ const AttachmentGalleryBase = function AttachmentGallery({
   defaultTab = 'all',
   selection,
 }: AttachmentGalleryProps) {
-  const { all, getFiltered } = useAttachments(chatData, mediaState);
-
+  const { all, byCategory } = useAttachments(chatData, mediaState);
   const [activeTab, setActiveTab] = useState<AttachmentCategory>(defaultTab);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [viewerState, setViewerState] = useState({ open: false, index: 0 });
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [scrollTop, setScrollTop] = useState(0);
   const scrollPositions = useRef<Record<string, number>>({});
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  
-  const [selectionMode, setSelectionMode] = useState(false);
+  const scrollFrameRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (defaultTab) {
-      setActiveTab(defaultTab);
-    }
-  }, [defaultTab]);
-  
-  useEffect(() => {
-    if (selection.selectedCount > 0) {
-      setSelectionMode(true);
-    } else {
-      setSelectionMode(false);
-    }
-  }, [selection.selectedCount]);
+  const currentItems = activeTab === 'all' ? all : byCategory[activeTab];
+  const groups = useMemo(() => groupByMonth(currentItems), [currentItems]);
+  const layout = useMemo(() => calculateGalleryLayout(groups, viewport.width), [groups, viewport.width]);
 
-  // Reset before child effects register targets, and disconnect everything on unmount.
+  useEffect(() => setActiveTab(defaultTab), [defaultTab]);
+  useEffect(() => setSelectionMode(selection.selectedCount > 0), [selection.selectedCount]);
+
   useLayoutEffect(() => {
-    resetObservers();
-    return () => resetObservers();
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const updateSize = () => {
+      const styles = getComputedStyle(container);
+      const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+      const verticalPadding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+      const next = {
+        width: Math.max(0, container.clientWidth - horizontalPadding),
+        height: Math.max(0, container.clientHeight - verticalPadding),
+      };
+      setViewport(previous => (
+        previous.width === next.width && previous.height === next.height ? previous : next
+      ));
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(container);
+    return () => observer.disconnect();
   }, []);
 
-  const [viewerState, setViewerState] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
+  useEffect(() => () => {
+    if (scrollFrameRef.current != null) cancelAnimationFrame(scrollFrameRef.current);
+  }, []);
 
-  const currentItems = useMemo(() => getFiltered(activeTab), [activeTab, getFiltered]);
-  const groups = useMemo(() => groupByMonth(currentItems), [currentItems]);
-
-  const saveScrollPosition = useCallback(() => {
-    if (scrollContainerRef.current) {
-      scrollPositions.current[activeTab] = scrollContainerRef.current.scrollTop;
-    }
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const savedPosition = scrollPositions.current[activeTab] || 0;
+    container.scrollTop = savedPosition;
+    setScrollTop(savedPosition);
   }, [activeTab]);
 
-  useEffect(() => {
-    if (scrollContainerRef.current) {
-      const saved = scrollPositions.current[activeTab];
-      scrollContainerRef.current.scrollTop = saved || 0;
-    }
+  const handleScroll = useCallback(() => {
+    if (scrollFrameRef.current != null) return;
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      scrollPositions.current[activeTab] = container.scrollTop;
+      setScrollTop(container.scrollTop);
+    });
   }, [activeTab]);
 
   const handleTabChange = useCallback((tab: AttachmentCategory) => {
-    saveScrollPosition();
+    const container = scrollContainerRef.current;
+    if (container) scrollPositions.current[activeTab] = container.scrollTop;
     setActiveTab(tab);
-  }, [saveScrollPosition]);
+  }, [activeTab]);
 
   const openViewer = useCallback((attachment: ResolvedAttachment) => {
-    const filtered = getFiltered(activeTab);
-    const idx = filtered.indexOf(attachment);
-    setViewerState({ open: true, index: idx >= 0 ? idx : 0 });
-  }, [activeTab, getFiltered]);
+    const index = currentItems.indexOf(attachment);
+    setViewerState({ open: true, index: index >= 0 ? index : 0 });
+  }, [currentItems]);
 
-  const handleThumbnailClick = useCallback((attachment: ResolvedAttachment) => {
-    openViewer(attachment);
-  }, [openViewer]);
-
-  const handleThumbnailToggleSelect = useCallback((attachment: ResolvedAttachment) => {
+  const toggleAttachment = useCallback((attachment: ResolvedAttachment) => {
     selection.toggle(attachment);
   }, [selection]);
 
@@ -385,33 +294,48 @@ const AttachmentGalleryBase = function AttachmentGallery({
     onClose();
   }, [onJumpToMessage, onClose]);
 
-  const tabCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: all.length };
-    for (const tab of TABS) {
-      if (tab.key !== 'all') {
-        counts[tab.key] = getFiltered(tab.key).length;
+  const visibleRows = useMemo(() => {
+    const start = findFirstRow(layout.rows, Math.max(0, scrollTop - VIRTUAL_OVERSCAN_PX));
+    const limit = scrollTop + viewport.height + VIRTUAL_OVERSCAN_PX;
+    let end = start;
+    while (end < layout.rows.length && layout.rows[end].top < limit) end++;
+    return layout.rows.slice(start, end);
+  }, [layout.rows, scrollTop, viewport.height]);
+
+  const stickyMonth = useMemo(() => {
+    let label = groups[0]?.label || '';
+    let headerTop = 0;
+    for (const row of layout.rows) {
+      if (row.top > scrollTop + 1) break;
+      if (row.type === 'header') {
+        label = row.label;
+        headerTop = row.top;
       }
     }
-    return counts;
-  }, [all, getFiltered]);
+    return scrollTop > headerTop ? label : '';
+  }, [groups, layout.rows, scrollTop]);
+
+  const tabCounts = useMemo(() => ({
+    all: all.length,
+    photos: byCategory.photos.length,
+    videos: byCategory.videos.length,
+    audio: byCategory.audio.length,
+    gifs: byCategory.gifs.length,
+    files: byCategory.files.length,
+  }), [all, byCategory]);
 
   return (
     <>
       <div className="chat-header">
-        <button
-          className="gallery-back-btn"
-          onClick={onClose}
-          aria-label="Back to chat"
-          title="Back to chat"
-        ><ArrowLeft size={18} /></button>
+        <button className="gallery-back-btn" onClick={onClose} aria-label="Back to chat" title="Back to chat">
+          <ArrowLeft size={18} />
+        </button>
         <h3>Attachments</h3>
 
         <button
           className={`gallery-select-mode-toggle ${selectionMode ? 'active' : ''}`}
           onClick={() => {
-            if (selectionMode && selection.selectedCount > 0) {
-              selection.deselectAll();
-            }
+            if (selectionMode && selection.selectedCount > 0) selection.deselectAll();
             setSelectionMode(!selectionMode);
           }}
           title="Select attachments"
@@ -425,7 +349,9 @@ const AttachmentGalleryBase = function AttachmentGallery({
           aria-expanded={infoPanelOpen}
           onClick={onToggleInfoPanel}
           title="Chat info"
-        ><Info size={18} /></button>
+        >
+          <Info size={18} />
+        </button>
       </div>
 
       <div className="gallery-tabs">
@@ -436,43 +362,63 @@ const AttachmentGalleryBase = function AttachmentGallery({
             onClick={() => handleTabChange(tab.key)}
           >
             {tab.label}
-            {tabCounts[tab.key] > 0 && (
-              <span className="gallery-tab-count">{tabCounts[tab.key]}</span>
-            )}
+            {tabCounts[tab.key] > 0 && <span className="gallery-tab-count">{tabCounts[tab.key]}</span>}
           </button>
         ))}
       </div>
 
       <div id="line" />
 
-      <div className={`gallery-scroll ${selectionMode ? 'selection-mode-active' : ''}`} ref={scrollContainerRef}>
+      <div
+        className={`gallery-scroll ${selectionMode ? 'selection-mode-active' : ''}`}
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+      >
         {groups.length === 0 ? (
           <div className="gallery-empty">No attachments found</div>
         ) : (
-          groups.map((group, gi) => (
-            <div key={gi} className="gallery-group">
-              <div className="gallery-date-separator">{group.label}</div>
-              <div className="gallery-grid">
-                {group.items.map((att, ai) => (
-                  <GalleryThumbnail
-                    key={`${att.messageIndex}-${att.mediaPath}-${gi}-${ai}`}
-                    attachment={att}
-                    mediaState={mediaState}
-                    onOpen={() => handleThumbnailClick(att)}
-                    onSelect={() => handleThumbnailToggleSelect(att)}
-                    selectionMode={selectionMode}
-                    isSelected={selection.isSelected(att)}
-                  />
-                ))}
-              </div>
+          <>
+            {stickyMonth && <div className="gallery-sticky-month">{stickyMonth}</div>}
+            <div className="gallery-virtual-canvas" style={{ height: layout.totalHeight }}>
+              {visibleRows.map(row => row.type === 'header' ? (
+                <div
+                  key={row.key}
+                  className="gallery-date-separator gallery-virtual-row"
+                  style={{ transform: `translateY(${row.top}px)`, height: row.height }}
+                >
+                  {row.label}
+                </div>
+              ) : (
+                <div
+                  key={row.key}
+                  className="gallery-grid gallery-virtual-row"
+                  style={{
+                    transform: `translateY(${row.top}px)`,
+                    height: layout.itemSize,
+                    gridTemplateColumns: `repeat(${layout.columns}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {row.items.map(attachment => (
+                    <GalleryThumbnail
+                      key={`${attachment.category}:${attachment.mediaPath.toLowerCase()}`}
+                      attachment={attachment}
+                      mediaState={mediaState}
+                      onOpen={openViewer}
+                      onSelect={toggleAttachment}
+                      selectionMode={selectionMode}
+                      isSelected={selection.isSelected(attachment)}
+                    />
+                  ))}
+                </div>
+              ))}
             </div>
-          ))
+          </>
         )}
       </div>
 
       {viewerState.open && (
         <MediaViewer
-          attachments={getFiltered(activeTab)}
+          attachments={currentItems}
           initialIndex={viewerState.index}
           mediaState={mediaState}
           onClose={() => setViewerState({ open: false, index: viewerState.index })}
@@ -482,13 +428,13 @@ const AttachmentGalleryBase = function AttachmentGallery({
       )}
     </>
   );
-}
+};
 
-export const AttachmentGallery = memo(AttachmentGalleryBase, (prev, next) => {
-  return prev.chatData === next.chatData &&
-         prev.mediaState === next.mediaState &&
-         prev.settings === next.settings &&
-         prev.infoPanelOpen === next.infoPanelOpen &&
-         prev.defaultTab === next.defaultTab &&
-         prev.selection === next.selection;
-});
+export const AttachmentGallery = memo(AttachmentGalleryBase, (previous, next) => (
+  previous.chatData === next.chatData
+  && previous.mediaState === next.mediaState
+  && previous.settings === next.settings
+  && previous.infoPanelOpen === next.infoPanelOpen
+  && previous.defaultTab === next.defaultTab
+  && previous.selection === next.selection
+));

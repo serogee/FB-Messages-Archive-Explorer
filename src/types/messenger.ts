@@ -137,4 +137,6 @@ export interface MediaState {
   lookup: Map<string, MediaEntry>;
   pathIndex: Set<string>;
   basenameIndex: Set<string>;
+  /** Number of physical files discovered, excluding lookup aliases. */
+  mediaFileCount: number;
 }

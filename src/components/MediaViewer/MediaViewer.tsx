@@ -17,30 +17,41 @@ interface MediaViewerProps {
   selection?: ReturnType<typeof useSelection>;
 }
 
-function useResolvedUrl(attachment: ResolvedAttachment | null, mediaState: MediaState): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+type MediaUrlState = { url: string | null; status: 'loading' | 'ready' | 'missing' };
+
+function useResolvedUrl(attachment: ResolvedAttachment | null, mediaState: MediaState): MediaUrlState {
+  const [state, setState] = useState<MediaUrlState>({ url: null, status: 'loading' });
 
   useEffect(() => {
-    if (!attachment) { setUrl(null); return; }
+    if (!attachment) { setState({ url: null, status: 'missing' }); return; }
 
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
-    if (!entry) { setUrl(null); return; }
+    if (!entry) { setState({ url: null, status: 'missing' }); return; }
 
     const cached = blobCache.get(entry);
-    if (cached) { setUrl(cached); return; }
-    if (entry.url) { blobCache.put(entry, entry.url); setUrl(entry.url); return; }
+    if (cached) { setState({ url: cached, status: 'ready' }); return; }
+    if (entry.url) {
+      blobCache.put(entry, entry.url);
+      setState({ url: entry.url, status: 'ready' });
+      return;
+    }
 
     if (entry.handle) {
       let cancelled = false;
+      setState({ url: null, status: 'loading' });
       blobCache.getOrCreate(entry).then(blobUrl => {
-        if (!cancelled) setUrl(blobUrl);
+        if (!cancelled) {
+          setState(blobUrl
+            ? { url: blobUrl, status: 'ready' }
+            : { url: null, status: 'missing' });
+        }
       });
       return () => { cancelled = true; };
     }
-    setUrl(null);
+    setState({ url: null, status: 'missing' });
   }, [attachment, mediaState]);
 
-  return url;
+  return state;
 }
 
 function getDisplayType(attachment: ResolvedAttachment): 'image' | 'video' | 'audio' | 'file' {
@@ -64,7 +75,7 @@ export function MediaViewer({
   const menuRef = useRef<HTMLDivElement>(null);
 
   const attachment = attachments[currentIndex] || null;
-  const url = useResolvedUrl(attachment, mediaState);
+  const { url, status: urlStatus } = useResolvedUrl(attachment, mediaState);
   const displayType = attachment ? getDisplayType(attachment) : 'file';
 
   const hasPrev = currentIndex > 0;
@@ -194,6 +205,12 @@ export function MediaViewer({
       <div className={`media-viewer-content ${attachment && selection?.isSelected(attachment) ? 'viewer-selected' : ''}`}>
         {!attachment ? (
           <div className="media-viewer-empty">No attachment</div>
+        ) : urlStatus === 'loading' ? (
+          <div className="media-viewer-placeholder">
+            <div className="media-viewer-file-icon"><Paperclip size={48} /></div>
+            <div className="media-viewer-file-name">{filename}</div>
+            <div className="media-viewer-file-status">Loading attachment…</div>
+          </div>
         ) : !url ? (
           <div className="media-viewer-placeholder">
             <div className="media-viewer-file-icon"><Paperclip size={48} /></div>

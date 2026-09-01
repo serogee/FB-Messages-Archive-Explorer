@@ -374,7 +374,7 @@
 .placeholder { width:150px; height:60px; display:flex; align-items:center; justify-content:center; border-radius:10px; background:#ddd; color:#555; transition:all .2s ease; }
 .preview:hover { transform: scale(1.05); }
 .preview-video, .preview { max-width:250px; max-height:300px; }
-img, video { max-width:100%; border-radius:10px; margin:5px; cursor:pointer; transition:all .3s ease; object-fit:cover; }
+img, video { max-width:100%; border-radius:10px; margin:5px; cursor:pointer; object-fit:cover; }
 
 .date-nav-controls {
     display:none;

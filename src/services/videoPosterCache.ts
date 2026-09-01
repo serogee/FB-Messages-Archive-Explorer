@@ -1,14 +1,14 @@
 import type { MediaEntry } from '../types/messenger';
-import { blobCache } from './blobCache';
+import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
 
 interface PosterCacheEntry {
   url: string;
 }
 
 const DEFAULT_MAX_POSTERS = 200;
-const POSTER_WIDTH = 140;
+const POSTER_WIDTH = MEDIA_THUMBNAIL_SIZE;
 const MAX_CONCURRENT_POSTER_JOBS = 2;
-const SEEK_FALLBACK_SECONDS = 0.5;
+const VIDEO_EVENT_TIMEOUT_MS = 5_000;
 
 class VideoPosterCache {
   private maxSize: number;
@@ -16,6 +16,8 @@ class VideoPosterCache {
   private pending = new Map<MediaEntry, Promise<string | null>>();
   private activeJobs = 0;
   private waitingJobs: (() => void)[] = [];
+  private generation = 0;
+  private failed = new WeakSet<MediaEntry>();
 
   constructor(maxSize = DEFAULT_MAX_POSTERS) {
     this.maxSize = maxSize;
@@ -33,24 +35,31 @@ class VideoPosterCache {
   getOrCreate(entry: MediaEntry): Promise<string | null> {
     const cached = this.get(entry);
     if (cached) return Promise.resolve(cached);
+    if (this.failed.has(entry)) return Promise.resolve(null);
 
     const existing = this.pending.get(entry);
     if (existing) return existing;
 
+    const requestGeneration = this.generation;
     const task = this.enqueue(async () => {
       const afterWait = this.get(entry);
       if (afterWait) return afterWait;
 
-      const videoUrl = await blobCache.getOrCreate(entry);
-      if (!videoUrl) return null;
+      const posterUrl = await createVideoPosterForEntry(entry);
+      if (!posterUrl) {
+        this.failed.add(entry);
+        return null;
+      }
 
-      const posterUrl = await createVideoPoster(videoUrl);
-      if (!posterUrl) return null;
+      if (requestGeneration !== this.generation) {
+        this.revoke(posterUrl);
+        return null;
+      }
 
       this.put(entry, posterUrl);
       return posterUrl;
     }).finally(() => {
-      this.pending.delete(entry);
+      if (this.pending.get(entry) === task) this.pending.delete(entry);
     });
 
     this.pending.set(entry, task);
@@ -58,11 +67,13 @@ class VideoPosterCache {
   }
 
   clear(): void {
+    this.generation++;
     for (const cached of this.cache.values()) {
       this.revoke(cached.url);
     }
     this.cache.clear();
     this.pending.clear();
+    this.failed = new WeakSet();
   }
 
   private async enqueue<T>(task: () => Promise<T>): Promise<T> {
@@ -107,11 +118,45 @@ class VideoPosterCache {
   }
 }
 
-function waitForEvent(target: EventTarget, eventName: string): Promise<void> {
+async function createVideoPosterForEntry(entry: MediaEntry): Promise<string | null> {
+  if (entry.handle) {
+    let temporaryUrl: string | null = null;
+    try {
+      const file = await entry.handle.getFile();
+      const source = file.type ? file : new Blob([file], { type: getVideoMimeType(entry.handle.name) });
+      temporaryUrl = URL.createObjectURL(source);
+      return await createVideoPoster(temporaryUrl);
+    } catch {
+      return null;
+    } finally {
+      if (temporaryUrl) URL.revokeObjectURL(temporaryUrl);
+    }
+  }
+
+  return entry.url ? createVideoPoster(entry.url) : null;
+}
+
+function getVideoMimeType(filename: string): string {
+  const extension = filename.split('.').pop()?.toLowerCase();
+  if (extension === 'webm') return 'video/webm';
+  if (extension === 'mov') return 'video/quicktime';
+  if (extension === 'mkv') return 'video/x-matroska';
+  if (extension === 'avi') return 'video/x-msvideo';
+  return 'video/mp4';
+}
+
+function waitForVideoState(
+  video: HTMLVideoElement,
+  eventName: string,
+  minimumReadyState: number,
+): Promise<void> {
+  if (video.readyState >= minimumReadyState) return Promise.resolve();
+
   return new Promise((resolve, reject) => {
     const cleanup = () => {
-      target.removeEventListener(eventName, handleSuccess);
-      target.removeEventListener('error', handleError);
+      clearTimeout(timeout);
+      video.removeEventListener(eventName, handleSuccess);
+      video.removeEventListener('error', handleError);
     };
     const handleSuccess = () => {
       cleanup();
@@ -121,30 +166,32 @@ function waitForEvent(target: EventTarget, eventName: string): Promise<void> {
       cleanup();
       reject(new Error(`Video ${eventName} failed`));
     };
-    target.addEventListener(eventName, handleSuccess, { once: true });
-    target.addEventListener('error', handleError, { once: true });
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Video ${eventName} timed out`));
+    }, VIDEO_EVENT_TIMEOUT_MS);
+
+    video.addEventListener(eventName, handleSuccess, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+    // Close the small race between the initial readyState check and listener setup.
+    if (video.readyState >= minimumReadyState) handleSuccess();
   });
 }
 
 async function createVideoPoster(videoUrl: string): Promise<string | null> {
   const video = document.createElement('video');
-  video.preload = 'metadata';
+  video.preload = 'auto';
   video.muted = true;
   video.playsInline = true;
-  video.src = videoUrl;
 
   try {
-    await waitForEvent(video, 'loadedmetadata');
-
-    const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    const targetTime = duration > 1 ? Math.min(duration * 0.1, SEEK_FALLBACK_SECONDS) : 0;
-
-    if (targetTime > 0) {
-      video.currentTime = targetTime;
-      await waitForEvent(video, 'seeked');
-    } else if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-      await waitForEvent(video, 'loadeddata');
-    }
+    // Register readiness listeners before assigning src; local blob URLs can load
+    // metadata quickly enough to otherwise fire before a listener is attached.
+    const metadataReady = waitForVideoState(video, 'loadedmetadata', HTMLMediaElement.HAVE_METADATA);
+    video.src = videoUrl;
+    video.load();
+    await metadataReady;
+    await waitForVideoState(video, 'loadeddata', HTMLMediaElement.HAVE_CURRENT_DATA);
 
     const sourceWidth = video.videoWidth || POSTER_WIDTH;
     const sourceHeight = video.videoHeight || POSTER_WIDTH;

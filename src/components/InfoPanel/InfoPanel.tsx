@@ -99,7 +99,7 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
     }));
 
   const foundTotal = photos + videos + audio + gifs + files;
-  const mediaFound = _mediaState.pathIndex.size;
+  const mediaFound = _mediaState.mediaFileCount;
 
   return {
     visibleCount, minTs, maxTs, memberStats, memberCounts,
@@ -186,10 +186,7 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                   </div>
                 ))}
                 <div className="info-row">
-                  <span>
-                    <span className="responsive-full">Total Media</span>
-                    <span className="responsive-compact">Total</span>
-                  </span>
+                  <span>Attachments</span>
                   <span className="attachment-count">
                     <ResponsiveNumber value={stats.attachments.mediaFound} />
                     <span className="attachment-found"> / <ResponsiveNumber value={stats.attachments.foundTotal} /></span>
