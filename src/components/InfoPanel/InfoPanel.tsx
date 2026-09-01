@@ -8,7 +8,7 @@ import {
   formatInfoNumber,
 } from '../../services/storage';
 import { getMessageTimestamp } from '../../services/parser';
-import { getMessageAttachmentReferences } from '../../services/media';
+import { getMessageAttachmentReferences, isMediaReferenceFound } from '../../services/media';
 import { isReactionNoticeMessage } from '../../services/reactions';
 
 interface InfoPanelProps {
@@ -53,7 +53,7 @@ function ResponsiveDate({ timestamp }: { timestamp: number | null }) {
   );
 }
 
-function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
+function computeStats(messages: MessengerMessage[], mediaState: MediaState, countChatMediaOnly: boolean) {
   let minTs: number | null = null;
   let maxTs: number | null = null;
   let visibleCount = 0;
@@ -61,6 +61,7 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
   const memberCounts: Record<string, number> = {};
   const seenAttachments = new Set<string>();
   let photos = 0, videos = 0, audio = 0, gifs = 0, files = 0, totalReported = 0;
+  let loadedChatAttachments = 0;
 
   for (const msg of messages) {
     if (isReactionNoticeMessage(msg)) continue;
@@ -81,6 +82,7 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
       const key = `${category}:${path.toLowerCase()}`;
       if (!seenAttachments.has(key)) {
         seenAttachments.add(key);
+        if (isMediaReferenceFound(mediaState, path)) loadedChatAttachments++;
         if (category === 'photos') photos++;
         else if (category === 'videos') videos++;
         else if (category === 'audio') audio++;
@@ -99,7 +101,7 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
     }));
 
   const foundTotal = photos + videos + audio + gifs + files;
-  const mediaFound = _mediaState.mediaFileCount;
+  const mediaFound = countChatMediaOnly ? loadedChatAttachments : mediaState.mediaFileCount;
 
   return {
     visibleCount, minTs, maxTs, memberStats, memberCounts,
@@ -110,8 +112,8 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
 export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery }: InfoPanelProps) {
   const stats = useMemo(() => {
     if (!chatData) return null;
-    return computeStats(chatData.messages, mediaState);
-  }, [chatData, mediaState]);
+    return computeStats(chatData.messages, mediaState, activeEntry?._messengerExport === true);
+  }, [activeEntry?._messengerExport, chatData, mediaState]);
 
   return (
     <div className="chat-info-panel" id="chatInfoPanel" aria-hidden={!chatData ? 'true' : 'false'}>
