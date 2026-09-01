@@ -79,12 +79,16 @@ describe('Messenger export filesystem services', () => {
 
   it('indexes Messenger export media', async () => {
     const state = createMediaState();
+    const progress = vi.fn();
 
-    await processMessengerExportMedia(messengerRoot(), state);
+    await processMessengerExportMedia(messengerRoot(), state, progress);
 
     expect(findMediaFile(state, 'media/photo1.jpg')?.type).toBe('image');
     expect(findMediaFile(state, './media/video1.mp4')?.type).toBe('video');
     expect(findMediaFile(state, 'shared.jpg')?.type).toBe('image');
+    expect(state.mediaFileCount).toBe(3);
+    expect(state.pathIndex.size).toBeGreaterThan(state.mediaFileCount);
+    expect(progress.mock.calls).toEqual([[0, 3], [3, 3]]);
   });
 
   it('computes deletion info with exclusive and shared media', async () => {

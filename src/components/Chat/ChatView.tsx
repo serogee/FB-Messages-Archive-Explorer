@@ -3,7 +3,7 @@ import type { MessengerThread, MediaState, ChatListEntry } from '../../types/mes
 import { Info } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import type { useSearch } from '../../hooks/useSearch';
-import type { AttachmentCategory } from '../../hooks/useAttachments';
+import type { GalleryCategory } from '../../hooks/useAttachments';
 import { useAttachments } from '../../hooks/useAttachments';
 import { useSelection } from '../../hooks/useSelection';
 import { DateNavigator } from './DateNavigator';
@@ -27,7 +27,8 @@ interface ChatViewProps {
   search: ReturnType<typeof useSearch>;
   onSelectPerspective: (name: string) => void;
   galleryOpen: boolean;
-  galleryDefaultTab?: AttachmentCategory;
+  galleryDefaultTab?: GalleryCategory;
+  onGalleryTabChange: (tab: GalleryCategory) => void;
   onCloseGallery: () => void;
   selection: ReturnType<typeof useSelection>;
 }
@@ -70,6 +71,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     onSelectPerspective: _onSelectPerspective,
     galleryOpen,
     galleryDefaultTab,
+    onGalleryTabChange,
     onCloseGallery,
     selection,
   },
@@ -114,25 +116,32 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
 
   return (
     <div className="chat-container">
-      {/* Gallery mode: hidden when not active to preserve scroll position */}
-      <div style={{ display: galleryOpen && chatData ? 'flex' : 'none', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Keep both views laid out so their native scroll positions survive view switches. */}
+      <div
+        className={`chat-view-layer ${galleryOpen && chatData ? 'active' : 'inactive'}`}
+        aria-hidden={!galleryOpen || !chatData}
+      >
         {chatData && (
           <AttachmentGallery
             chatData={chatData}
             mediaState={mediaState}
             settings={settings}
+            isOpen={galleryOpen}
             infoPanelOpen={settings.infoPanelOpen}
             onClose={onCloseGallery}
             onJumpToMessage={handleViewerJump}
             onToggleInfoPanel={onToggleInfoPanel}
+            onTabChange={onGalleryTabChange}
             defaultTab={galleryDefaultTab}
             selection={selection}
           />
         )}
       </div>
 
-      {/* Chat mode: hidden when gallery is open to preserve scroll position */}
-      <div style={{ display: !galleryOpen ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div
+        className={`chat-view-layer ${!galleryOpen ? 'active' : 'inactive'}`}
+        aria-hidden={galleryOpen}
+      >
         <>
           <div className={`chat-header ${settings.autoCollapseDateNav ? 'date-nav-auto' : ''}`}>
             <h3 title={chatData?.title || activeEntry?.title || ''}>

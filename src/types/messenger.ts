@@ -16,6 +16,12 @@ export interface Reaction {
   __timestamp?: number;
 }
 
+export interface SharedLink {
+  link?: string;
+  href?: string;
+  share_text?: string;
+}
+
 export interface MessengerMessage {
   sender_name: string;
   senderName?: string;
@@ -30,6 +36,7 @@ export interface MessengerMessage {
   gifs?: MediaItem[];
   files?: MediaItem[];
   media?: MediaItem[];
+  share?: SharedLink;
   reactions?: Reaction[];
   is_unsent?: boolean;
   is_geoblocked_for_viewer?: boolean;
@@ -88,6 +95,15 @@ export interface ResolvedAttachment {
   mediaEntry: MediaEntry | null;
 }
 
+export interface ResolvedLink {
+  category: 'links';
+  url: string;
+  label?: string;
+  messageIndex: number;
+  timestamp: number;
+  sender: string;
+}
+
 export type DateScale = 'month' | 'week' | 'day';
 
 export interface DateBucket {
@@ -137,4 +153,6 @@ export interface MediaState {
   lookup: Map<string, MediaEntry>;
   pathIndex: Set<string>;
   basenameIndex: Set<string>;
+  /** Number of physical files discovered, excluding lookup aliases. */
+  mediaFileCount: number;
 }

@@ -2,11 +2,13 @@ import React, { memo, useState, useEffect, useRef } from 'react';
 import type { MessengerMessage, MediaState } from '../../types/messenger';
 import { getMessageTimestamp, fixEncoding } from '../../services/parser';
 import { findMediaFile, getMediaReferencePath, getMediaType } from '../../services/media';
-import { blobCache } from '../../services/blobCache';
+import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
 import { ReactionModal } from './ReactionModal';
+import { MediaFileSize } from '../MediaFileSize';
+import { ExternalLink, FileText, Info, Link as LinkIcon, Pause, Play, Volume2, VolumeX } from 'lucide-react';
 
 const lazyMediaLoadCallbacks = new Map<Element, () => void>();
 const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => void>();
@@ -78,8 +80,153 @@ function getReactionTimeText(ts: number): string {
   return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function getAudioSourceType(mediaPath: string): string {
-  return mediaPath.toLowerCase().endsWith('.mp4') ? 'audio/mp4' : 'audio/mpeg';
+const MESSAGE_URL_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+const TRAILING_URL_PUNCTUATION = /[.,!?;:)\]}]$/;
+
+function normalizeExternalUrl(value: string): string | null {
+  const candidate = value.startsWith('www.') ? `https://${value}` : value;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderHighlightedText(text: string, highlightQuery: string, key: string) {
+  const html = highlightQuery ? highlightText(text, highlightQuery) : escapeHtml(text);
+  return <React.Fragment key={key}><span dangerouslySetInnerHTML={{ __html: html }} /></React.Fragment>;
+}
+
+function MessageText({ text, highlightQuery }: { text: string; highlightQuery: string }) {
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  MESSAGE_URL_PATTERN.lastIndex = 0;
+
+  while ((match = MESSAGE_URL_PATTERN.exec(text)) !== null) {
+    let label = match[0];
+    while (label.length > 0 && TRAILING_URL_PUNCTUATION.test(label)) label = label.slice(0, -1);
+    if (!label) continue;
+
+    const start = match.index;
+    const end = start + label.length;
+    if (start > lastIndex) parts.push(renderHighlightedText(text.slice(lastIndex, start), highlightQuery, `text:${lastIndex}`));
+
+    const href = normalizeExternalUrl(label);
+    parts.push(href ? (
+      <a key={`link:${start}`} href={href} target="_blank" rel="noreferrer" className="message-inline-link">
+        {renderHighlightedText(label, highlightQuery, `label:${start}`)}
+      </a>
+    ) : renderHighlightedText(label, highlightQuery, `invalid:${start}`));
+    lastIndex = end;
+    MESSAGE_URL_PATTERN.lastIndex = end;
+  }
+
+  if (lastIndex < text.length) parts.push(renderHighlightedText(text.slice(lastIndex), highlightQuery, `text:${lastIndex}`));
+  return <>{parts}</>;
+}
+
+function SharedLinkPreview({ link, label }: { link: string; label?: string }) {
+  const href = normalizeExternalUrl(link);
+  if (!href) return null;
+
+  const hostname = new URL(href).hostname.replace(/^www\./i, '');
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="message-shared-link" title={href}>
+      <span className="message-shared-link-icon"><LinkIcon size={17} /></span>
+      <span className="message-shared-link-copy">
+        <strong>{hostname}</strong>
+        <span>{label || href}</span>
+      </span>
+      <ExternalLink size={15} className="message-shared-link-external" />
+    </a>
+  );
+}
+
+function formatPlayerTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+    : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+function InlineAudioPlayer({ src }: { src: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    setPlaying(false);
+    setMuted(false);
+    setCurrentTime(0);
+    setDuration(0);
+    return () => audio?.pause();
+  }, [src]);
+
+  const togglePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) void audio.play().catch(() => setPlaying(false));
+    else audio.pause();
+  };
+
+  const toggleMuted = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.muted = !audio.muted;
+    setMuted(audio.muted);
+  };
+
+  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+
+  return (
+    <div className="media-audio-control">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onTimeUpdate={event => setCurrentTime(event.currentTarget.currentTime)}
+        onDurationChange={event => {
+          const nextDuration = event.currentTarget.duration;
+          setDuration(Number.isFinite(nextDuration) ? nextDuration : 0);
+        }}
+      />
+      <button type="button" className="media-audio-button" onClick={togglePlayback} aria-label={playing ? 'Pause' : 'Play'}>
+        {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
+      </button>
+      <input
+        type="range"
+        className="media-audio-seek"
+        min={0}
+        max={duration || 0}
+        step={0.1}
+        value={Math.min(currentTime, duration || 0)}
+        disabled={duration <= 0}
+        aria-label="Seek audio"
+        style={{ '--audio-progress': `${progress}%` } as React.CSSProperties}
+        onChange={event => {
+          const nextTime = Number(event.target.value);
+          if (audioRef.current) audioRef.current.currentTime = nextTime;
+          setCurrentTime(nextTime);
+        }}
+      />
+      <span className="media-audio-time">{formatPlayerTime(currentTime)} / {formatPlayerTime(duration)}</span>
+      <button type="button" className="media-audio-button" onClick={toggleMuted} aria-label={muted ? 'Unmute' : 'Mute'}>
+        {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+      </button>
+    </div>
+  );
 }
 
 function LazyMedia({
@@ -231,17 +378,37 @@ function LazyMedia({
   } else if (mediaType === 'audio') {
     content = fileURL
       ? <div className="media-audio-wrap">
-          <audio controls className="media-audio-control">
-            <source src={fileURL} type={getAudioSourceType(mediaPath)} />
-          </audio>
+          <InlineAudioPlayer src={fileURL} />
           {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} title="Open in viewer">⛶</button>}
         </div>
       : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
   } else {
     const filename = mediaPath.split('/').pop() || 'File attachment';
-    content = fileURL
-      ? <div className="media-file-link" onClick={onMediaClick} role="button" tabIndex={0} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: 'rgba(0,0,0,0.08)', borderRadius: '8px', textDecoration: 'none', color: 'inherit', fontWeight: '500', margin: '4px 0', fontSize: '14px', border: '1px solid rgba(0,0,0,0.1)', cursor: 'pointer' }}>
-          {filename}
+    content = mediaFile
+      ? <div className="media-file-card">
+          <button
+            type="button"
+            className="media-file-open"
+            onClick={() => openMediaEntryInNewTab(mediaFile)}
+            title={`Open ${filename} in a new tab`}
+          >
+            <FileText size={17} />
+            <span className="media-file-copy">
+              <span className="media-file-name">{filename}</span>
+              <MediaFileSize entry={mediaFile} className="media-file-size" />
+            </span>
+          </button>
+          {onMediaClick && (
+            <button
+              type="button"
+              className="media-file-info"
+              onClick={onMediaClick}
+              aria-label={`View information for ${filename}`}
+              title="Open in viewer"
+            >
+              <Info size={15} />
+            </button>
+          )}
         </div>
       : <span className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
   }
@@ -287,9 +454,8 @@ export const MessageBubble = memo(function MessageBubble({
     return true;
   });
 
-  const highlightedText = highlightQuery
-    ? highlightText(rawText, highlightQuery)
-    : escapeHtml(rawText);
+  const sharedLink = msg.share?.link?.trim() || msg.share?.href?.trim();
+  const sharedLinkLabel = msg.share?.share_text ? fixEncoding(msg.share.share_text).trim() : undefined;
 
   const showName = isMe ? showMyName : showTheirName;
   
@@ -314,8 +480,10 @@ export const MessageBubble = memo(function MessageBubble({
         ) : (
           <>
             {rawText && (
-              <span dangerouslySetInnerHTML={{ __html: highlightedText }} />
+              <MessageText text={rawText} highlightQuery={highlightQuery} />
             )}
+
+            {sharedLink && <SharedLinkPreview link={sharedLink} label={sharedLinkLabel} />}
 
             {mediaItems.map(({ media, preferredType }, i) => {
               const mediaPath = getMediaReferencePath(media);

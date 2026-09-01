@@ -1,56 +1,92 @@
 import type { MediaEntry } from '../types/messenger';
-import { blobCache } from './blobCache';
+import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
 
 interface PosterCacheEntry {
   url: string;
+  duration: number | null;
 }
 
 const DEFAULT_MAX_POSTERS = 200;
-const POSTER_WIDTH = 140;
+const POSTER_WIDTH = MEDIA_THUMBNAIL_SIZE;
 const MAX_CONCURRENT_POSTER_JOBS = 2;
+const VIDEO_EVENT_TIMEOUT_MS = 5_000;
 const SEEK_FALLBACK_SECONDS = 0.5;
 
-class VideoPosterCache {
+export interface VideoPosterDetails {
+  url: string;
+  duration: number | null;
+}
+
+type PosterCreator = (entry: MediaEntry) => Promise<VideoPosterDetails | null>;
+
+export class VideoPosterCache {
   private maxSize: number;
+  private maxConcurrentJobs: number;
+  private createPoster: PosterCreator;
   private cache = new Map<MediaEntry, PosterCacheEntry>();
-  private pending = new Map<MediaEntry, Promise<string | null>>();
+  private pending = new Map<MediaEntry, Promise<VideoPosterDetails | null>>();
   private activeJobs = 0;
   private waitingJobs: (() => void)[] = [];
+  private generation = 0;
+  private failed = new WeakSet<MediaEntry>();
 
-  constructor(maxSize = DEFAULT_MAX_POSTERS) {
+  constructor(
+    maxSize = DEFAULT_MAX_POSTERS,
+    maxConcurrentJobs = MAX_CONCURRENT_POSTER_JOBS,
+    createPoster: PosterCreator = createVideoPosterForEntry,
+  ) {
     this.maxSize = maxSize;
+    this.maxConcurrentJobs = maxConcurrentJobs;
+    this.createPoster = createPoster;
   }
 
   get(entry: MediaEntry): string | null {
+    return this.getDetails(entry)?.url ?? null;
+  }
+
+  getDetails(entry: MediaEntry): VideoPosterDetails | null {
     const cached = this.cache.get(entry);
     if (!cached) return null;
 
     this.cache.delete(entry);
     this.cache.set(entry, cached);
-    return cached.url;
+    return { url: cached.url, duration: cached.duration };
   }
 
   getOrCreate(entry: MediaEntry): Promise<string | null> {
-    const cached = this.get(entry);
+    return this.getOrCreateDetails(entry).then(details => details?.url ?? null);
+  }
+
+  getOrCreateDetails(entry: MediaEntry): Promise<VideoPosterDetails | null> {
+    const cached = this.getDetails(entry);
     if (cached) return Promise.resolve(cached);
+    if (this.failed.has(entry)) return Promise.resolve(null);
 
     const existing = this.pending.get(entry);
     if (existing) return existing;
 
+    const requestGeneration = this.generation;
     const task = this.enqueue(async () => {
-      const afterWait = this.get(entry);
+      if (requestGeneration !== this.generation) return null;
+
+      const afterWait = this.getDetails(entry);
       if (afterWait) return afterWait;
 
-      const videoUrl = await blobCache.getOrCreate(entry);
-      if (!videoUrl) return null;
+      const poster = await this.createPoster(entry);
+      if (!poster) {
+        if (requestGeneration === this.generation) this.failed.add(entry);
+        return null;
+      }
 
-      const posterUrl = await createVideoPoster(videoUrl);
-      if (!posterUrl) return null;
+      if (requestGeneration !== this.generation) {
+        this.revoke(poster.url);
+        return null;
+      }
 
-      this.put(entry, posterUrl);
-      return posterUrl;
+      this.put(entry, poster);
+      return poster;
     }).finally(() => {
-      this.pending.delete(entry);
+      if (this.pending.get(entry) === task) this.pending.delete(entry);
     });
 
     this.pending.set(entry, task);
@@ -58,15 +94,17 @@ class VideoPosterCache {
   }
 
   clear(): void {
+    this.generation++;
     for (const cached of this.cache.values()) {
       this.revoke(cached.url);
     }
     this.cache.clear();
     this.pending.clear();
+    this.failed = new WeakSet();
   }
 
   private async enqueue<T>(task: () => Promise<T>): Promise<T> {
-    if (this.activeJobs >= MAX_CONCURRENT_POSTER_JOBS) {
+    if (this.activeJobs >= this.maxConcurrentJobs) {
       await new Promise<void>(resolve => {
         this.waitingJobs.push(resolve);
       });
@@ -82,10 +120,10 @@ class VideoPosterCache {
     }
   }
 
-  private put(entry: MediaEntry, url: string): void {
+  private put(entry: MediaEntry, poster: VideoPosterDetails): void {
     if (this.cache.has(entry)) {
       const previous = this.cache.get(entry);
-      if (previous?.url !== url) this.revoke(previous!.url);
+      if (previous?.url !== poster.url) this.revoke(previous!.url);
       this.cache.delete(entry);
     }
 
@@ -97,7 +135,7 @@ class VideoPosterCache {
       this.revoke(oldCached.url);
     }
 
-    this.cache.set(entry, { url });
+    this.cache.set(entry, poster);
   }
 
   private revoke(url: string): void {
@@ -107,11 +145,45 @@ class VideoPosterCache {
   }
 }
 
-function waitForEvent(target: EventTarget, eventName: string): Promise<void> {
+async function createVideoPosterForEntry(entry: MediaEntry): Promise<VideoPosterDetails | null> {
+  if (entry.handle) {
+    let temporaryUrl: string | null = null;
+    try {
+      const file = await entry.handle.getFile();
+      const source = file.type ? file : new Blob([file], { type: getVideoMimeType(entry.handle.name) });
+      temporaryUrl = URL.createObjectURL(source);
+      return await createVideoPosterDetails(temporaryUrl);
+    } catch {
+      return null;
+    } finally {
+      if (temporaryUrl) URL.revokeObjectURL(temporaryUrl);
+    }
+  }
+
+  return entry.url ? createVideoPosterDetails(entry.url) : null;
+}
+
+function getVideoMimeType(filename: string): string {
+  const extension = filename.split('.').pop()?.toLowerCase();
+  if (extension === 'webm') return 'video/webm';
+  if (extension === 'mov') return 'video/quicktime';
+  if (extension === 'mkv') return 'video/x-matroska';
+  if (extension === 'avi') return 'video/x-msvideo';
+  return 'video/mp4';
+}
+
+function waitForVideoState(
+  video: HTMLVideoElement,
+  eventName: string,
+  minimumReadyState: number,
+): Promise<void> {
+  if (video.readyState >= minimumReadyState) return Promise.resolve();
+
   return new Promise((resolve, reject) => {
     const cleanup = () => {
-      target.removeEventListener(eventName, handleSuccess);
-      target.removeEventListener('error', handleError);
+      clearTimeout(timeout);
+      video.removeEventListener(eventName, handleSuccess);
+      video.removeEventListener('error', handleError);
     };
     const handleSuccess = () => {
       cleanup();
@@ -121,30 +193,69 @@ function waitForEvent(target: EventTarget, eventName: string): Promise<void> {
       cleanup();
       reject(new Error(`Video ${eventName} failed`));
     };
-    target.addEventListener(eventName, handleSuccess, { once: true });
-    target.addEventListener('error', handleError, { once: true });
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Video ${eventName} timed out`));
+    }, VIDEO_EVENT_TIMEOUT_MS);
+
+    video.addEventListener(eventName, handleSuccess, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+    // Close the small race between the initial readyState check and listener setup.
+    if (video.readyState >= minimumReadyState) handleSuccess();
   });
 }
 
-async function createVideoPoster(videoUrl: string): Promise<string | null> {
+function waitForVideoEvent(video: HTMLVideoElement, eventName: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeout);
+      video.removeEventListener(eventName, handleSuccess);
+      video.removeEventListener('error', handleError);
+    };
+    const handleSuccess = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error(`Video ${eventName} failed`));
+    };
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Video ${eventName} timed out`));
+    }, VIDEO_EVENT_TIMEOUT_MS);
+
+    video.addEventListener(eventName, handleSuccess, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+  });
+}
+
+export async function createVideoPoster(videoUrl: string): Promise<string | null> {
+  return createVideoPosterDetails(videoUrl).then(details => details?.url ?? null);
+}
+
+export async function createVideoPosterDetails(videoUrl: string): Promise<VideoPosterDetails | null> {
   const video = document.createElement('video');
   video.preload = 'metadata';
   video.muted = true;
   video.playsInline = true;
-  video.src = videoUrl;
 
   try {
-    await waitForEvent(video, 'loadedmetadata');
+    // Register readiness listeners before assigning src; local blob URLs can load
+    // metadata quickly enough to otherwise fire before a listener is attached.
+    const metadataReady = waitForVideoState(video, 'loadedmetadata', HTMLMediaElement.HAVE_METADATA);
+    video.src = videoUrl;
+    video.load();
+    await metadataReady;
 
-    const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    const targetTime = duration > 1 ? Math.min(duration * 0.1, SEEK_FALLBACK_SECONDS) : 0;
-
+    const duration = Number.isFinite(video.duration) ? video.duration : null;
+    const targetTime = duration && duration > 0 ? Math.min(duration * 0.1, SEEK_FALLBACK_SECONDS) : 0;
     if (targetTime > 0) {
+      const seeked = waitForVideoEvent(video, 'seeked');
       video.currentTime = targetTime;
-      await waitForEvent(video, 'seeked');
-    } else if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-      await waitForEvent(video, 'loadeddata');
+      await seeked;
     }
+    await waitForVideoState(video, 'loadeddata', HTMLMediaElement.HAVE_CURRENT_DATA);
 
     const sourceWidth = video.videoWidth || POSTER_WIDTH;
     const sourceHeight = video.videoHeight || POSTER_WIDTH;
@@ -162,10 +273,11 @@ async function createVideoPoster(videoUrl: string): Promise<string | null> {
     const blob = await new Promise<Blob | null>(resolve => {
       canvas.toBlob(resolve, 'image/jpeg', 0.72);
     });
-    return blob ? URL.createObjectURL(blob) : null;
+    return blob ? { url: URL.createObjectURL(blob), duration } : null;
   } catch {
     return null;
   } finally {
+    video.pause();
     video.removeAttribute('src');
     video.load();
   }

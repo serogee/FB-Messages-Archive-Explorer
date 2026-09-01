@@ -306,6 +306,17 @@
     margin-top: 4px;
     transition: background 0.15s;
 }
+.media-viewer-file-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.media-viewer-download-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}
 .media-viewer-download-btn:hover {
     filter: brightness(1.1);
 }

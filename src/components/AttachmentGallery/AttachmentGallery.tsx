@@ -1,218 +1,221 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, memo } from 'react';
-import type { MessengerThread, MediaState, ResolvedAttachment } from '../../types/messenger';
-import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, Info } from 'lucide-react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink } from '../../types/messenger';
+import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, Info, ExternalLink, Link as LinkIcon, MessageSquare, UserRound } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
-import { useAttachments, type AttachmentCategory } from '../../hooks/useAttachments';
+import { useAttachments, useSharedLinks, type GalleryCategory } from '../../hooks/useAttachments';
 import type { useSelection } from '../../hooks/useSelection';
 import { findMediaFile } from '../../services/media';
-import { blobCache } from '../../services/blobCache';
+import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
+import { openMediaEntryInNewTab } from '../../services/blobCache';
+import { getAudioMetadata, type AudioMetadata } from '../../services/audioMetadata';
+import { formatFileSize } from '../../services/storage';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
+import { MediaFileSize } from '../MediaFileSize';
+import { calculateGalleryLayout, getStickyMonth, type GalleryGroup, type GalleryItem, type GalleryLayoutRow } from './galleryLayout';
 
-// One observer handles all thumbnails so large galleries do not create thousands of observers.
-let sharedObserver: IntersectionObserver | null = null;
-let unloadObserver: IntersectionObserver | null = null;
-
-const observerCallbacks = new Map<Element, { load: () => void; unload: () => void }>();
-const loadingElements = new Set<Element>();
-
-// Batch newly visible thumbnails to avoid a burst of media decoding during fast scrolling.
-const pendingElements = new Set<Element>();
-let loadTimer: ReturnType<typeof setTimeout> | null = null;
-
-function processPending() {
-  loadTimer = null;
-  for (const el of pendingElements) {
-    if (loadingElements.has(el)) continue;
-    loadingElements.add(el);
-    const cbs = observerCallbacks.get(el);
-    if (cbs) cbs.load();
-  }
-}
-
-function resetObservers() {
-  if (sharedObserver) { sharedObserver.disconnect(); sharedObserver = null; }
-  if (unloadObserver) { unloadObserver.disconnect(); unloadObserver = null; }
-  pendingElements.clear();
-  loadingElements.clear();
-  observerCallbacks.clear();
-  if (loadTimer) { clearTimeout(loadTimer); loadTimer = null; }
-}
-
-// The margin must be relative to the gallery scroller rather than the browser viewport.
-function getSharedObserver() {
-  if (!sharedObserver) {
-    const root = document.querySelector('.gallery-scroll');
-    sharedObserver = new IntersectionObserver((entries) => {
-      let changed = false;
-      for (let i = 0; i < entries.length; i++) {
-        const entry = entries[i];
-        if (entry.isIntersecting) {
-          pendingElements.add(entry.target);
-          changed = true;
-        } else {
-          pendingElements.delete(entry.target);
-        }
-      }
-      if (changed) {
-        if (loadTimer) clearTimeout(loadTimer);
-        loadTimer = setTimeout(processPending, 150);
-      }
-    }, { root, rootMargin: '500px' });
-  }
-  return sharedObserver;
-}
-
-function getUnloadObserver() {
-  if (!unloadObserver) {
-    const root = document.querySelector('.gallery-scroll');
-    unloadObserver = new IntersectionObserver((entries) => {
-      for (let i = 0; i < entries.length; i++) {
-        const entry = entries[i];
-        if (!entry.isIntersecting) {
-          loadingElements.delete(entry.target);
-          const cbs = observerCallbacks.get(entry.target);
-          if (cbs) cbs.unload();
-        }
-      }
-    }, { root, rootMargin: '2000px' });
-  }
-  return unloadObserver;
-}
+const VIRTUAL_OVERSCAN_PX = 600;
+const COMPACT_CARD_MIN_WIDTH = 220;
+const COMPACT_CARD_HEIGHT = 128;
 
 interface AttachmentGalleryProps {
   chatData: MessengerThread;
   mediaState: MediaState;
   settings: Settings;
+  isOpen: boolean;
   infoPanelOpen: boolean;
   onClose: () => void;
   onJumpToMessage: (messageIndex: number) => void;
   onToggleInfoPanel: () => void;
-  defaultTab?: AttachmentCategory;
+  onTabChange: (tab: GalleryCategory) => void;
+  defaultTab?: GalleryCategory;
   selection: ReturnType<typeof useSelection>;
 }
 
-const TABS: { key: AttachmentCategory; label: string }[] = [
+const TABS: { key: GalleryCategory; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'photos', label: 'Photos' },
   { key: 'videos', label: 'Videos' },
   { key: 'audio', label: 'Audio' },
   { key: 'gifs', label: 'GIFs' },
   { key: 'files', label: 'Files' },
+  { key: 'links', label: 'Links' },
 ];
 
 function formatMonthYear(ts: number): string {
   return new Date(ts).toLocaleDateString([], { month: 'long', year: 'numeric' });
 }
 
+function findFirstRow(rows: GalleryLayoutRow[], target: number): number {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const row = rows[middle];
+    if (row.top + row.height < target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function groupByMonth(items: GalleryItem[]): GalleryGroup[] {
+  const groups: GalleryGroup[] = [];
+  let currentLabel = '';
+
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index];
+    const label = item.timestamp ? formatMonthYear(item.timestamp) : 'Unknown Date';
+    if (label !== currentLabel) {
+      currentLabel = label;
+      groups.push({ key: `${label}:${groups.length}`, label, items: [] });
+    }
+    groups[groups.length - 1].items.push(item);
+  }
+
+  return groups;
+}
+
 interface GalleryThumbnailProps {
   attachment: ResolvedAttachment;
   mediaState: MediaState;
-  onOpen: (e: React.MouseEvent | React.KeyboardEvent) => void;
-  onSelect: (e: React.MouseEvent | React.KeyboardEvent) => void;
+  onOpen: (attachment: ResolvedAttachment) => void;
+  onOpenFile: (attachment: ResolvedAttachment) => void;
+  onJumpToMessage: (messageIndex: number) => void;
+  onSelect: (attachment: ResolvedAttachment) => void;
   selectionMode: boolean;
   isSelected: boolean;
+  compactFileCard: boolean;
+  compactAudioCard: boolean;
+}
+
+function formatAudioDuration(seconds: number | null): string {
+  if (seconds === null) return 'Unknown duration';
+  const totalSeconds = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+    : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+function AudioCardMetadata({ attachment, mediaState }: { attachment: ResolvedAttachment; mediaState: MediaState }) {
+  const [metadata, setMetadata] = useState<AudioMetadata | null>(null);
+
+  useEffect(() => {
+    const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
+    if (!entry) {
+      setMetadata({ duration: null, size: null });
+      return;
+    }
+
+    let mounted = true;
+    setMetadata(null);
+    void getAudioMetadata(entry).then(result => {
+      if (mounted) setMetadata(result);
+    });
+    return () => { mounted = false; };
+  }, [attachment, mediaState]);
+
+  return (
+    <div className="gallery-audio-meta">
+      <span className="gallery-link-sender" title={`Sent by ${attachment.sender}`}>
+        <UserRound size={12} />
+        <span>{attachment.sender}</span>
+      </span>
+      <span className="gallery-audio-details">
+        {metadata
+          ? `${formatAudioDuration(metadata.duration)} · ${metadata.size === null ? 'Unknown size' : formatFileSize(metadata.size)}`
+          : 'Loading…'}
+      </span>
+    </div>
+  );
 }
 
 const GalleryThumbnail = memo(function GalleryThumbnail({
   attachment,
   mediaState,
   onOpen,
+  onOpenFile,
+  onJumpToMessage,
   onSelect,
   selectionMode,
   isSelected,
+  compactFileCard,
+  compactAudioCard,
 }: GalleryThumbnailProps) {
   const [url, setUrl] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
 
   useEffect(() => {
+    if (attachment.category !== 'photos' && attachment.category !== 'gifs' && attachment.category !== 'videos') {
+      setUrl(null);
+      setVideoDuration(null);
+      return;
+    }
+
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
-    if (!entry) return;
+    if (!entry) {
+      setUrl(null);
+      setVideoDuration(null);
+      return;
+    }
 
     if (attachment.category === 'videos') {
-      const cachedPoster = videoPosterCache.get(entry);
-      if (cachedPoster) {
-        setUrl(cachedPoster);
-        return;
-      }
-    }
-
-    if (attachment.category !== 'videos') {
-      const cached = blobCache.get(entry);
+      const cached = videoPosterCache.getDetails(entry);
       if (cached) {
-        setUrl(cached);
+        setUrl(cached.url);
+        setVideoDuration(cached.duration);
         return;
       }
-      if (entry.url) {
-        blobCache.put(entry, entry.url);
-        setUrl(entry.url);
-        return;
-      }
+
+      let mounted = true;
+      setUrl(null);
+      setVideoDuration(null);
+      void videoPosterCache.getOrCreateDetails(entry).then(details => {
+        if (mounted && details) {
+          setUrl(details.url);
+          setVideoDuration(details.duration);
+        }
+      });
+
+      return () => { mounted = false; };
     }
 
-    if (!entry.url && !entry.handle) return;
-
-    let isMounted = true;
-    const el = containerRef.current;
-    if (!el) return;
-
-    observerCallbacks.set(el, {
-      load: () => {
-        const cachedUrl = attachment.category === 'videos'
-          ? videoPosterCache.get(entry)
-          : blobCache.get(entry);
-        if (cachedUrl) {
-          if (isMounted) setUrl(cachedUrl);
-          return;
-        }
-        if (!entry.handle) return;
-        const loader = attachment.category === 'videos'
-          ? videoPosterCache.getOrCreate(entry)
-          : blobCache.getOrCreate(entry);
-        loader.then(blobUrl => {
-          if (isMounted && blobUrl) setUrl(blobUrl);
-        });
-      },
-      unload: () => {
-        if (isMounted) setUrl(null);
-      }
+    let mounted = true;
+    setUrl(null);
+    setVideoDuration(null);
+    const cached = imageThumbnailCache.get(entry);
+    if (cached) {
+      setUrl(cached);
+      return;
+    }
+    void imageThumbnailCache.getOrCreate(entry).then(thumbnailUrl => {
+      if (mounted && thumbnailUrl) setUrl(thumbnailUrl);
     });
 
-    getSharedObserver().observe(el);
-    getUnloadObserver().observe(el);
-
-    return () => { 
-      isMounted = false;
-      getSharedObserver().unobserve(el);
-      getUnloadObserver().unobserve(el);
-      observerCallbacks.delete(el);
-      pendingElements.delete(el);
-      loadingElements.delete(el);
-    };
+    return () => { mounted = false; };
   }, [attachment, mediaState]);
 
-  const cat = attachment.category;
+  const category = attachment.category;
   const filename = attachment.mediaPath.split('/').pop() || 'File';
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === ' ' || e.key === 'Enter') {
-      e.preventDefault();
-      e.stopPropagation();
-      if (selectionMode) {
-        onSelect(e);
-      } else {
-        onOpen(e);
-      }
-    }
+  const activate = (event: React.MouseEvent | React.KeyboardEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (selectionMode) onSelect(attachment);
+    else if (compactFileCard) onOpenFile(attachment);
+    else onOpen(attachment);
   };
 
-  const wrapperClass = `gallery-thumb ${cat === 'audio' || cat === 'files' ? 'gallery-thumb-file' : ''} ${isSelected ? 'selected' : ''}`;
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === ' ' || event.key === 'Enter') activate(event);
+  };
 
   return (
     <div
-      ref={containerRef}
-      className={wrapperClass}
-      onClick={selectionMode ? onSelect : onOpen}
+      className={`gallery-thumb ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${compactFileCard ? 'gallery-thumb-file-compact' : ''} ${compactAudioCard ? 'gallery-thumb-audio-compact' : ''} ${isSelected ? 'selected' : ''}`}
+      onClick={activate}
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
@@ -223,49 +226,63 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         role="checkbox"
         aria-checked={isSelected}
         tabIndex={-1}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onSelect(e);
+        onClick={event => {
+          event.preventDefault();
+          event.stopPropagation();
+          onSelect(attachment);
         }}
       >
         {isSelected && <Check size={14} />}
       </div>
-      
-      {(cat === 'photos' || cat === 'gifs') ? (
-        url ? (
-          <img src={url} alt={filename} className="gallery-thumb-img" loading="lazy" />
-        ) : (
-          <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
-        )
-      ) : cat === 'videos' ? (
+
+      {(category === 'photos' || category === 'gifs') ? (
+        url
+          ? <img src={url} alt={filename} className="gallery-thumb-img" />
+          : <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
+      ) : category === 'videos' ? (
         <>
-          {url ? (
-            <img src={url} alt={filename} className="gallery-thumb-img" loading="lazy" />
-          ) : (
-            <div className="gallery-thumb-placeholder"><Film size={24} /></div>
-          )}
+          {url
+            ? <img src={url} alt={filename} className="gallery-thumb-img" />
+            : <div className="gallery-thumb-placeholder"><Film size={24} /></div>}
+          {videoDuration !== null && <div className="gallery-video-duration">{formatAudioDuration(videoDuration)}</div>}
           <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>
         </>
-      ) : cat === 'audio' ? (
+      ) : category === 'audio' ? (
         <>
           <div className="gallery-thumb-icon"><Music size={24} /></div>
           <div className="gallery-thumb-name">{filename}</div>
+          {compactAudioCard && <AudioCardMetadata attachment={attachment} mediaState={mediaState} />}
         </>
       ) : (
         <>
           <div className="gallery-thumb-icon"><FileText size={24} /></div>
           <div className="gallery-thumb-name">{filename}</div>
+          <MediaFileSize
+            entry={attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath)}
+            className="gallery-thumb-file-size"
+          />
+          {compactFileCard && (
+            <div className="gallery-file-meta">
+              <span className="gallery-link-sender" title={`Sent by ${attachment.sender}`}>
+                <UserRound size={12} />
+                <span>{attachment.sender}</span>
+              </span>
+              {!selectionMode && (
+                <span className="gallery-file-open"><FileText size={12} /> Open file</span>
+              )}
+            </div>
+          )}
         </>
       )}
+
       {selectionMode && (
         <button
           type="button"
           className="gallery-open-viewer-btn"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onOpen(e);
+          onClick={event => {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpen(attachment);
           }}
           aria-label={`Open ${filename}`}
           title="Open"
@@ -273,151 +290,292 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
           <Info size={15} />
         </button>
       )}
+
+      {!selectionMode && (
+        <button
+          type="button"
+          className="gallery-link-message"
+          onClick={event => {
+            event.preventDefault();
+            event.stopPropagation();
+            onJumpToMessage(attachment.messageIndex);
+          }}
+          title="Jump to message"
+          aria-label={`Jump to message containing ${filename}`}
+        >
+          <MessageSquare size={14} />
+        </button>
+      )}
     </div>
   );
-}, (prev, next) => {
-  return prev.attachment === next.attachment &&
-         prev.mediaState === next.mediaState &&
-         prev.selectionMode === next.selectionMode &&
-         prev.isSelected === next.isSelected;
-});
+}, (previous, next) => (
+  previous.attachment === next.attachment
+  && previous.mediaState === next.mediaState
+  && previous.onOpen === next.onOpen
+  && previous.onOpenFile === next.onOpenFile
+  && previous.onJumpToMessage === next.onJumpToMessage
+  && previous.onSelect === next.onSelect
+  && previous.selectionMode === next.selectionMode
+  && previous.isSelected === next.isSelected
+  && previous.compactFileCard === next.compactFileCard
+  && previous.compactAudioCard === next.compactAudioCard
+));
 
-function groupByMonth(attachments: ResolvedAttachment[]): { label: string; items: ResolvedAttachment[] }[] {
-  if (attachments.length === 0) return [];
-
-  const groups: { label: string; items: ResolvedAttachment[] }[] = [];
-  let currentLabel = '';
-
-  // Preserve the source order while presenting the newest attachments first.
-  const reversed = [...attachments].reverse();
-
-  for (const att of reversed) {
-    const label = att.timestamp ? formatMonthYear(att.timestamp) : 'Unknown Date';
-    if (label !== currentLabel) {
-      currentLabel = label;
-      groups.push({ label, items: [] });
-    }
-    groups[groups.length - 1].items.push(att);
+function getLinkHostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '') || url;
+  } catch {
+    return url;
   }
-
-  return groups;
 }
+
+const GalleryLinkCard = memo(function GalleryLinkCard({
+  link,
+  onJumpToMessage,
+}: {
+  link: ResolvedLink;
+  onJumpToMessage: (messageIndex: number) => void;
+}) {
+  const hostname = getLinkHostname(link.url);
+  return (
+    <div className="gallery-thumb gallery-link-card" title={link.url}>
+      <a href={link.url} target="_blank" rel="noreferrer" className="gallery-link-anchor">
+        <LinkIcon size={24} className="gallery-link-icon" />
+        <strong className="gallery-link-host">{hostname}</strong>
+        <span className="gallery-link-url">{link.label || link.url}</span>
+        <span className="gallery-link-meta">
+          <span className="gallery-link-sender" title={`Sent by ${link.sender}`}>
+            <UserRound size={12} />
+            <span>{link.sender}</span>
+          </span>
+          <span className="gallery-link-open"><ExternalLink size={13} /> Open link</span>
+        </span>
+      </a>
+      <button
+        type="button"
+        className="gallery-link-message"
+        onClick={() => onJumpToMessage(link.messageIndex)}
+        title="Jump to message"
+        aria-label={`Jump to message containing ${hostname}`}
+      >
+        <MessageSquare size={14} />
+      </button>
+    </div>
+  );
+});
 
 const AttachmentGalleryBase = function AttachmentGallery({
   chatData,
   mediaState,
   settings: _settings,
+  isOpen,
   infoPanelOpen,
   onClose,
   onJumpToMessage,
   onToggleInfoPanel,
+  onTabChange,
   defaultTab = 'all',
   selection,
 }: AttachmentGalleryProps) {
-  const { all, getFiltered } = useAttachments(chatData, mediaState);
-
-  const [activeTab, setActiveTab] = useState<AttachmentCategory>(defaultTab);
-  const scrollPositions = useRef<Record<string, number>>({});
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  
+  const { all, byCategory } = useAttachments(chatData, mediaState);
+  const links = useSharedLinks(chatData);
+  const [activeTab, setActiveTab] = useState<GalleryCategory>(defaultTab);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [viewerState, setViewerState] = useState({ open: false, index: 0 });
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [scrollTop, setScrollTop] = useState(0);
+  const scrollPositions = useRef<Partial<Record<GalleryCategory, number>>>({});
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const restoreFrameRef = useRef<number | null>(null);
+  const restoringScrollRef = useRef(false);
+  const isOpenRef = useRef(isOpen);
 
-  useEffect(() => {
-    if (defaultTab) {
-      setActiveTab(defaultTab);
-    }
-  }, [defaultTab]);
-  
-  useEffect(() => {
-    if (selection.selectedCount > 0) {
-      setSelectionMode(true);
-    } else {
-      setSelectionMode(false);
-    }
-  }, [selection.selectedCount]);
+  const currentAttachments = useMemo<ResolvedAttachment[]>(
+    () => activeTab === 'links' ? [] : activeTab === 'all' ? all : byCategory[activeTab],
+    [activeTab, all, byCategory],
+  );
+  const currentItems = useMemo<GalleryItem[]>(
+    () => activeTab === 'links' ? links : currentAttachments,
+    [activeTab, currentAttachments, links],
+  );
+  const compactCardTab = activeTab === 'links' || activeTab === 'files' || activeTab === 'audio';
+  const groups = useMemo(() => groupByMonth(currentItems), [currentItems]);
+  const layout = useMemo(
+    () => calculateGalleryLayout(
+      groups,
+      viewport.width,
+      compactCardTab ? COMPACT_CARD_MIN_WIDTH : undefined,
+      undefined,
+      compactCardTab ? COMPACT_CARD_HEIGHT : undefined,
+    ),
+    [compactCardTab, groups, viewport.width],
+  );
 
-  // Reset before child effects register targets, and disconnect everything on unmount.
+  useEffect(() => setActiveTab(defaultTab), [defaultTab]);
+  useEffect(() => setSelectionMode(selection.selectedCount > 0), [selection.selectedCount]);
+
   useLayoutEffect(() => {
-    resetObservers();
-    return () => resetObservers();
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const updateSize = () => {
+      const styles = getComputedStyle(container);
+      const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+      const verticalPadding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+      const next = {
+        width: Math.max(0, container.clientWidth - horizontalPadding),
+        height: Math.max(0, container.clientHeight - verticalPadding),
+      };
+      setViewport(previous => (
+        previous.width === next.width && previous.height === next.height ? previous : next
+      ));
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(container);
+    return () => observer.disconnect();
   }, []);
 
-  const [viewerState, setViewerState] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
+  useEffect(() => () => {
+    if (scrollFrameRef.current != null) cancelAnimationFrame(scrollFrameRef.current);
+    if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+  }, []);
 
-  const currentItems = useMemo(() => getFiltered(activeTab), [activeTab, getFiltered]);
-  const groups = useMemo(() => groupByMonth(currentItems), [currentItems]);
+  useLayoutEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  useLayoutEffect(() => {
+    if (!isOpen || viewport.width <= 0) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const savedPosition = scrollPositions.current[activeTab] || 0;
+    restoringScrollRef.current = true;
+    container.scrollTop = savedPosition;
+    setScrollTop(savedPosition);
+    if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+    restoreFrameRef.current = requestAnimationFrame(() => {
+      restoreFrameRef.current = null;
+      if (!isOpenRef.current) return;
+      container.scrollTop = savedPosition;
+      setScrollTop(savedPosition);
+      restoringScrollRef.current = false;
+    });
+
+    return () => {
+      if (restoreFrameRef.current != null) {
+        cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = null;
+      }
+      restoringScrollRef.current = false;
+    };
+  }, [activeTab, isOpen, viewport.width]);
+
+  const handleScroll = useCallback(() => {
+    if (!isOpenRef.current || restoringScrollRef.current) return;
+    if (scrollFrameRef.current != null) return;
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      if (!isOpenRef.current || restoringScrollRef.current) return;
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      scrollPositions.current[activeTab] = container.scrollTop;
+      setScrollTop(container.scrollTop);
+    });
+  }, [activeTab]);
 
   const saveScrollPosition = useCallback(() => {
-    if (scrollContainerRef.current) {
-      scrollPositions.current[activeTab] = scrollContainerRef.current.scrollTop;
+    if (scrollFrameRef.current != null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
     }
+    const container = scrollContainerRef.current;
+    if (container) scrollPositions.current[activeTab] = container.scrollTop;
   }, [activeTab]);
 
-  useEffect(() => {
-    if (scrollContainerRef.current) {
-      const saved = scrollPositions.current[activeTab];
-      scrollContainerRef.current.scrollTop = saved || 0;
-    }
-  }, [activeTab]);
-
-  const handleTabChange = useCallback((tab: AttachmentCategory) => {
+  const handleClose = useCallback(() => {
     saveScrollPosition();
+    isOpenRef.current = false;
+    onClose();
+  }, [onClose, saveScrollPosition]);
+
+  const handleTabChange = useCallback((tab: GalleryCategory) => {
+    const container = scrollContainerRef.current;
+    if (container) scrollPositions.current[activeTab] = container.scrollTop;
+    if (scrollFrameRef.current != null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
     setActiveTab(tab);
-  }, [saveScrollPosition]);
+    onTabChange(tab);
+  }, [activeTab, onTabChange]);
 
   const openViewer = useCallback((attachment: ResolvedAttachment) => {
-    const filtered = getFiltered(activeTab);
-    const idx = filtered.indexOf(attachment);
-    setViewerState({ open: true, index: idx >= 0 ? idx : 0 });
-  }, [activeTab, getFiltered]);
+    const index = currentAttachments.indexOf(attachment);
+    setViewerState({ open: true, index: index >= 0 ? index : 0 });
+  }, [currentAttachments]);
 
-  const handleThumbnailClick = useCallback((attachment: ResolvedAttachment) => {
-    openViewer(attachment);
-  }, [openViewer]);
+  const openFileInNewTab = useCallback((attachment: ResolvedAttachment) => {
+    const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
+    openMediaEntryInNewTab(entry);
+  }, [mediaState]);
 
-  const handleThumbnailToggleSelect = useCallback((attachment: ResolvedAttachment) => {
+  const toggleAttachment = useCallback((attachment: ResolvedAttachment) => {
     selection.toggle(attachment);
   }, [selection]);
 
   const handleViewerJump = useCallback((messageIndex: number) => {
+    saveScrollPosition();
+    isOpenRef.current = false;
     setViewerState({ open: false, index: 0 });
     onJumpToMessage(messageIndex);
     onClose();
-  }, [onJumpToMessage, onClose]);
+  }, [onJumpToMessage, onClose, saveScrollPosition]);
 
-  const tabCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: all.length };
-    for (const tab of TABS) {
-      if (tab.key !== 'all') {
-        counts[tab.key] = getFiltered(tab.key).length;
-      }
-    }
-    return counts;
-  }, [all, getFiltered]);
+  const visibleRows = useMemo(() => {
+    const start = findFirstRow(layout.rows, Math.max(0, scrollTop - VIRTUAL_OVERSCAN_PX));
+    const limit = scrollTop + viewport.height + VIRTUAL_OVERSCAN_PX;
+    let end = start;
+    while (end < layout.rows.length && layout.rows[end].top < limit) end++;
+    return layout.rows.slice(start, end);
+  }, [layout.rows, scrollTop, viewport.height]);
+
+  const stickyMonth = useMemo(() => {
+    return getStickyMonth(layout.rows, scrollTop);
+  }, [layout.rows, scrollTop]);
+
+  const tabCounts = useMemo<Record<GalleryCategory, number>>(() => ({
+    all: all.length,
+    photos: byCategory.photos.length,
+    videos: byCategory.videos.length,
+    audio: byCategory.audio.length,
+    gifs: byCategory.gifs.length,
+    files: byCategory.files.length,
+    links: links.length,
+  }), [all, byCategory, links]);
 
   return (
     <>
       <div className="chat-header">
-        <button
-          className="gallery-back-btn"
-          onClick={onClose}
-          aria-label="Back to chat"
-          title="Back to chat"
-        ><ArrowLeft size={18} /></button>
+        <button className="gallery-back-btn" onClick={handleClose} aria-label="Back to chat" title="Back to chat">
+          <ArrowLeft size={18} />
+        </button>
         <h3>Attachments</h3>
 
-        <button
-          className={`gallery-select-mode-toggle ${selectionMode ? 'active' : ''}`}
-          onClick={() => {
-            if (selectionMode && selection.selectedCount > 0) {
-              selection.deselectAll();
-            }
-            setSelectionMode(!selectionMode);
-          }}
-          title="Select attachments"
-        >
-          <CheckSquare size={18} />
-        </button>
+        {activeTab !== 'links' && (
+          <button
+            className={`gallery-select-mode-toggle ${selectionMode ? 'active' : ''}`}
+            onClick={() => {
+              if (selectionMode && selection.selectedCount > 0) selection.deselectAll();
+              setSelectionMode(!selectionMode);
+            }}
+            title="Select attachments"
+          >
+            <CheckSquare size={18} />
+          </button>
+        )}
         <button
           className="chat-info-toggle"
           id="galleryInfoToggle"
@@ -425,7 +583,9 @@ const AttachmentGalleryBase = function AttachmentGallery({
           aria-expanded={infoPanelOpen}
           onClick={onToggleInfoPanel}
           title="Chat info"
-        ><Info size={18} /></button>
+        >
+          <Info size={18} />
+        </button>
       </div>
 
       <div className="gallery-tabs">
@@ -436,43 +596,73 @@ const AttachmentGalleryBase = function AttachmentGallery({
             onClick={() => handleTabChange(tab.key)}
           >
             {tab.label}
-            {tabCounts[tab.key] > 0 && (
-              <span className="gallery-tab-count">{tabCounts[tab.key]}</span>
-            )}
+            {tabCounts[tab.key] > 0 && <span className="gallery-tab-count">{tabCounts[tab.key]}</span>}
           </button>
         ))}
       </div>
 
       <div id="line" />
 
-      <div className={`gallery-scroll ${selectionMode ? 'selection-mode-active' : ''}`} ref={scrollContainerRef}>
+      <div
+        className={`gallery-scroll ${selectionMode && activeTab !== 'links' ? 'selection-mode-active' : ''}`}
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+      >
         {groups.length === 0 ? (
-          <div className="gallery-empty">No attachments found</div>
+          <div className="gallery-empty">No {activeTab === 'links' ? 'links' : 'attachments'} found</div>
         ) : (
-          groups.map((group, gi) => (
-            <div key={gi} className="gallery-group">
-              <div className="gallery-date-separator">{group.label}</div>
-              <div className="gallery-grid">
-                {group.items.map((att, ai) => (
-                  <GalleryThumbnail
-                    key={`${att.messageIndex}-${att.mediaPath}-${gi}-${ai}`}
-                    attachment={att}
-                    mediaState={mediaState}
-                    onOpen={() => handleThumbnailClick(att)}
-                    onSelect={() => handleThumbnailToggleSelect(att)}
-                    selectionMode={selectionMode}
-                    isSelected={selection.isSelected(att)}
-                  />
-                ))}
-              </div>
+          <>
+            {stickyMonth && <div className="gallery-sticky-month">{stickyMonth}</div>}
+            <div className="gallery-virtual-canvas" style={{ height: layout.totalHeight }}>
+              {visibleRows.map(row => row.type === 'header' ? (
+                <div
+                  key={row.key}
+                  className="gallery-date-separator gallery-virtual-row"
+                  style={{ transform: `translateY(${row.top}px)`, height: row.height }}
+                >
+                  {row.label}
+                </div>
+              ) : (
+                <div
+                  key={row.key}
+                  className="gallery-grid gallery-virtual-row"
+                  style={{
+                    transform: `translateY(${row.top}px)`,
+                    height: layout.itemHeight,
+                    gridTemplateColumns: `repeat(${layout.columns}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {row.items.map(item => item.category === 'links' ? (
+                    <GalleryLinkCard
+                      key={`link:${item.messageIndex}:${item.url}`}
+                      link={item}
+                      onJumpToMessage={handleViewerJump}
+                    />
+                  ) : (
+                    <GalleryThumbnail
+                      key={`${item.category}:${item.mediaPath.toLowerCase()}`}
+                      attachment={item}
+                      mediaState={mediaState}
+                      onOpen={openViewer}
+                      onOpenFile={openFileInNewTab}
+                      onJumpToMessage={handleViewerJump}
+                      onSelect={toggleAttachment}
+                      selectionMode={selectionMode}
+                      isSelected={selection.isSelected(item)}
+                      compactFileCard={activeTab === 'files' && item.category === 'files'}
+                      compactAudioCard={activeTab === 'audio' && item.category === 'audio'}
+                    />
+                  ))}
+                </div>
+              ))}
             </div>
-          ))
+          </>
         )}
       </div>
 
-      {viewerState.open && (
+      {viewerState.open && activeTab !== 'links' && (
         <MediaViewer
-          attachments={getFiltered(activeTab)}
+          attachments={currentAttachments}
           initialIndex={viewerState.index}
           mediaState={mediaState}
           onClose={() => setViewerState({ open: false, index: viewerState.index })}
@@ -482,13 +672,15 @@ const AttachmentGalleryBase = function AttachmentGallery({
       )}
     </>
   );
-}
+};
 
-export const AttachmentGallery = memo(AttachmentGalleryBase, (prev, next) => {
-  return prev.chatData === next.chatData &&
-         prev.mediaState === next.mediaState &&
-         prev.settings === next.settings &&
-         prev.infoPanelOpen === next.infoPanelOpen &&
-         prev.defaultTab === next.defaultTab &&
-         prev.selection === next.selection;
-});
+export const AttachmentGallery = memo(AttachmentGalleryBase, (previous, next) => (
+  previous.chatData === next.chatData
+  && previous.mediaState === next.mediaState
+  && previous.settings === next.settings
+  && previous.isOpen === next.isOpen
+  && previous.infoPanelOpen === next.infoPanelOpen
+  && previous.defaultTab === next.defaultTab
+  && previous.onTabChange === next.onTabChange
+  && previous.selection === next.selection
+));

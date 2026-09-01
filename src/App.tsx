@@ -13,7 +13,7 @@ import { SelectionPanel } from './components/InfoPanel/SelectionPanel';
 import { TrustModal } from './components/Modals/TrustModal';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
 import type { ChatListEntry } from './types/messenger';
-import type { AttachmentCategory } from './hooks/useAttachments';
+import type { GalleryCategory } from './hooks/useAttachments';
 import type { MessengerExportDeletionInfo } from './services/messengerExport';
 
 export default function App() {
@@ -42,7 +42,7 @@ export default function App() {
   const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [galleryOpen, setGalleryOpen] = useState(false);
-  const [galleryDefaultTab, setGalleryDefaultTab] = useState<AttachmentCategory>('all');
+  const [galleryDefaultTab, setGalleryDefaultTab] = useState<GalleryCategory>('all');
 
   const { handleRef: sidebarHandleRef } = useResizable({
     minWidth: 260,
@@ -230,7 +230,7 @@ export default function App() {
   }, [chat.chatData, selection]);
 
   const handleOpenGallery = useCallback((tab?: string) => {
-    setGalleryDefaultTab((tab as AttachmentCategory) || 'all');
+    if (tab) setGalleryDefaultTab(tab as GalleryCategory);
     setGalleryOpen(true);
   }, []);
 
@@ -292,6 +292,7 @@ export default function App() {
         onSelectPerspective={chat.setSelectedPerspective}
         galleryOpen={galleryOpen}
         galleryDefaultTab={galleryDefaultTab}
+        onGalleryTabChange={setGalleryDefaultTab}
         onCloseGallery={() => setGalleryOpen(false)}
         selection={selection}
       />

@@ -50,6 +50,7 @@ function normalizeDisplayEncoding(data: MessengerThread): MessengerThread {
       if (typeof msg.sender_name === 'string') msg.sender_name = fixEncoding(msg.sender_name);
       if (typeof msg.content === 'string') msg.content = fixEncoding(msg.content);
       if (typeof msg.text === 'string') msg.text = fixEncoding(msg.text);
+      if (typeof msg.share?.share_text === 'string') msg.share.share_text = fixEncoding(msg.share.share_text);
       if (Array.isArray(msg.reactions)) {
         msg.reactions.forEach(reaction => {
           if (!reaction || typeof reaction !== 'object') return;

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
-import { Image as ImageIcon, Film, Music, FileText, Smile } from 'lucide-react';
+import { Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon, ChevronRight } from 'lucide-react';
 import {
   formatCompactInfoDate,
   formatCompactInfoNumber,
@@ -8,7 +8,7 @@ import {
   formatInfoNumber,
 } from '../../services/storage';
 import { getMessageTimestamp } from '../../services/parser';
-import { getMessageAttachmentReferences } from '../../services/media';
+import { getMessageAttachmentReferences, isMediaReferenceFound } from '../../services/media';
 import { isReactionNoticeMessage } from '../../services/reactions';
 
 interface InfoPanelProps {
@@ -53,7 +53,7 @@ function ResponsiveDate({ timestamp }: { timestamp: number | null }) {
   );
 }
 
-function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
+function computeStats(messages: MessengerMessage[], mediaState: MediaState, countChatMediaOnly: boolean) {
   let minTs: number | null = null;
   let maxTs: number | null = null;
   let visibleCount = 0;
@@ -61,6 +61,8 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
   const memberCounts: Record<string, number> = {};
   const seenAttachments = new Set<string>();
   let photos = 0, videos = 0, audio = 0, gifs = 0, files = 0, totalReported = 0;
+  let links = 0;
+  let loadedChatAttachments = 0;
 
   for (const msg of messages) {
     if (isReactionNoticeMessage(msg)) continue;
@@ -75,12 +77,15 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
     const sender = msg.senderName || msg.sender_name || 'Unknown';
     memberCounts[sender] = (memberCounts[sender] || 0) + 1;
 
+    if (msg.share && (msg.share.link?.trim() || msg.share.href?.trim())) links++;
+
     const refs = getMessageAttachmentReferences(msg);
     for (const { path, category } of refs) {
       totalReported++;
       const key = `${category}:${path.toLowerCase()}`;
       if (!seenAttachments.has(key)) {
         seenAttachments.add(key);
+        if (isMediaReferenceFound(mediaState, path)) loadedChatAttachments++;
         if (category === 'photos') photos++;
         else if (category === 'videos') videos++;
         else if (category === 'audio') audio++;
@@ -99,19 +104,20 @@ function computeStats(messages: MessengerMessage[], _mediaState: MediaState) {
     }));
 
   const foundTotal = photos + videos + audio + gifs + files;
-  const mediaFound = _mediaState.pathIndex.size;
+  const mediaFound = countChatMediaOnly ? loadedChatAttachments : mediaState.mediaFileCount;
 
   return {
     visibleCount, minTs, maxTs, memberStats, memberCounts,
     attachments: { photos, videos, audio, gifs, files, foundTotal, reported: totalReported, mediaFound },
+    links,
   };
 }
 
 export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery }: InfoPanelProps) {
   const stats = useMemo(() => {
     if (!chatData) return null;
-    return computeStats(chatData.messages, mediaState);
-  }, [chatData, mediaState]);
+    return computeStats(chatData.messages, mediaState, activeEntry?._messengerExport === true);
+  }, [activeEntry?._messengerExport, chatData, mediaState]);
 
   return (
     <div className="chat-info-panel" id="chatInfoPanel" aria-hidden={!chatData ? 'true' : 'false'}>
@@ -155,10 +161,10 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
             <div className="info-section">
               <strong
                 className={onOpenGallery ? 'info-section-clickable' : ''}
-                onClick={() => onOpenGallery?.('all')}
+                onClick={() => onOpenGallery?.()}
                 role={onOpenGallery ? 'button' : undefined}
                 tabIndex={onOpenGallery ? 0 : undefined}
-                title="View all attachments"
+                title="Open attachments"
               >Attachments</strong>
               <div className="info-list">
                 {[
@@ -167,6 +173,7 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                   { label: 'Audio', count: stats.attachments.audio, tab: 'audio', Icon: Music },
                   { label: 'GIFs', count: stats.attachments.gifs, tab: 'gifs', Icon: Smile },
                   { label: 'Files', count: stats.attachments.files, tab: 'files', Icon: FileText },
+                  { label: 'Links', count: stats.links, tab: 'links', Icon: LinkIcon },
                 ].map(({ label, count, tab, Icon }) => (
                   <div
                     key={label}
@@ -180,16 +187,14 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                       <Icon size={16} className="info-icon" />
                       {label}
                     </span>
-                    <span className="attachment-count">
+                    <span className={`${onOpenGallery ? 'info-row-action' : 'attachment-count'}${tab === 'links' ? ' info-row-action-muted' : ''}`}>
                       <ResponsiveNumber value={count} />
+                      {onOpenGallery && <ChevronRight size={14} />}
                     </span>
                   </div>
                 ))}
                 <div className="info-row">
-                  <span>
-                    <span className="responsive-full">Total Media</span>
-                    <span className="responsive-compact">Total</span>
-                  </span>
+                  <span>Media files</span>
                   <span className="attachment-count">
                     <ResponsiveNumber value={stats.attachments.mediaFound} />
                     <span className="attachment-found"> / <ResponsiveNumber value={stats.attachments.foundTotal} /></span>

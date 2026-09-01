@@ -50,6 +50,7 @@ export async function processMessengerExportMedia(
   if (signal?.aborted) return;
 
   const total = files.length;
+  state.mediaFileCount = total;
   const BATCH_SIZE = 30;
   let done = 0;
   let lastYield = performance.now();
@@ -71,9 +72,10 @@ export async function processMessengerExportMedia(
         addMediaToIndex(state, handle.name, entry);
       } catch { /* ignore individual media failures */ }
 
-      done++;
-      onProgress?.(done, total);
     }));
+
+    done += batch.length;
+    onProgress?.(done, total);
 
     if (performance.now() - lastYield > 16) {
       await new Promise(resolve => setTimeout(resolve, 0));

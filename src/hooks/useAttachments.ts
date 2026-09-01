@@ -1,10 +1,36 @@
 import { useMemo } from 'react';
-import type { MessengerThread, MediaState, ResolvedAttachment } from '../types/messenger';
+import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink } from '../types/messenger';
 import { getMessageAttachmentReferences, findMediaFile } from '../services/media';
 import { getMessageTimestamp } from '../services/parser';
 import { isReactionNoticeMessage } from '../services/reactions';
 
 export type AttachmentCategory = 'all' | 'photos' | 'videos' | 'audio' | 'gifs' | 'files';
+export type GalleryCategory = AttachmentCategory | 'links';
+
+export function useSharedLinks(chatData: MessengerThread | null): ResolvedLink[] {
+  return useMemo(() => {
+    if (!chatData) return [];
+
+    const links: ResolvedLink[] = [];
+    for (let i = 0; i < chatData.messages.length; i++) {
+      const msg = chatData.messages[i];
+      if (isReactionNoticeMessage(msg)) continue;
+
+      const url = msg.share?.link?.trim() || msg.share?.href?.trim();
+      if (!url) continue;
+
+      links.push({
+        category: 'links',
+        url,
+        label: msg.share?.share_text?.trim() || undefined,
+        messageIndex: i,
+        timestamp: getMessageTimestamp(msg) || 0,
+        sender: msg.senderName || msg.sender_name || 'Unknown',
+      });
+    }
+    return links;
+  }, [chatData]);
+}
 
 export function useAttachments(
   chatData: MessengerThread | null,

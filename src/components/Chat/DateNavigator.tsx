@@ -5,6 +5,7 @@ import type { Settings } from '../../hooks/useSettings';
 import { isReactionNoticeMessage } from '../../services/reactions';
 import { getMessageTimestamp } from '../../services/parser';
 import { escapeHtml, padDatePart } from '../../services/storage';
+import { estimateMessageIndexInChunk, shouldAcceptBucketChange } from './dateNavigatorScroll';
 
 type DateScale = 'month' | 'week' | 'day';
 
@@ -19,6 +20,7 @@ interface DateBucket {
 type BucketsByScale = Record<DateScale, DateBucket[]>;
 
 const DATE_NAV_SYNC_LOCK_MS = 900;
+const DATE_NAV_ACTIVE_LINE_OFFSET_PX = 40;
 
 function getLocalDateKey(date: Date): string {
   return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
@@ -94,6 +96,32 @@ function getBucketKeyForMessageIndex(buckets: DateBucket[], msgIndex: number): s
   return buckets[best].key;
 }
 
+function findMessageIndexInChunk(chunk: HTMLElement, activeLine: number): number | null {
+  const messages = Array.from(chunk.querySelectorAll('.message[data-msg-index]')) as HTMLElement[];
+  if (messages.length > 0) {
+    let low = 0;
+    let high = messages.length - 1;
+    let candidate = messages.length - 1;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (messages[middle].getBoundingClientRect().bottom >= activeLine) {
+        candidate = middle;
+        high = middle - 1;
+      } else {
+        low = middle + 1;
+      }
+    }
+    const index = Number(messages[candidate].dataset.msgIndex);
+    return Number.isFinite(index) ? index : null;
+  }
+
+  const startIndex = Number(chunk.dataset.startMsgIndex);
+  const endIndex = Number(chunk.dataset.endMsgIndex);
+  if (!Number.isFinite(startIndex) || !Number.isFinite(endIndex)) return null;
+  const rect = chunk.getBoundingClientRect();
+  return estimateMessageIndexInChunk(startIndex, endIndex, rect.top, rect.bottom, activeLine);
+}
+
 function findClosestChunkIndex(container: HTMLDivElement, activeLine: number): number | null {
   const chunks = Array.from(container.querySelectorAll('.message-chunk[data-start-msg-index]')) as HTMLElement[];
   if (chunks.length === 0) return null;
@@ -115,14 +143,16 @@ function findClosestChunkIndex(container: HTMLDivElement, activeLine: number): n
 
   const chunk = chunks[candidate];
   const chunkRect = chunk.getBoundingClientRect();
-  const attr = activeLine > chunkRect.bottom ? chunk.dataset.endMsgIndex : chunk.dataset.startMsgIndex;
-  const index = Number(attr);
-  return Number.isFinite(index) ? index : null;
+  if (activeLine > chunkRect.bottom) {
+    const endIndex = Number(chunk.dataset.endMsgIndex);
+    return Number.isFinite(endIndex) ? endIndex : null;
+  }
+  return findMessageIndexInChunk(chunk, activeLine);
 }
 
 function findMessageIndexAtActiveLine(container: HTMLDivElement): number | null {
   const containerRect = container.getBoundingClientRect();
-  const activeLine = containerRect.top + Math.max(60, containerRect.height * 0.2);
+  const activeLine = containerRect.top + DATE_NAV_ACTIVE_LINE_OFFSET_PX;
   const x = containerRect.left + Math.max(1, Math.min(containerRect.width - 1, containerRect.width * 0.5));
   const sampleYs = [activeLine, activeLine + 24, activeLine - 24, activeLine + 60, activeLine - 60];
 
@@ -139,8 +169,8 @@ function findMessageIndexAtActiveLine(container: HTMLDivElement): number | null 
 
     const chunkEl = el.closest('.message-chunk[data-start-msg-index]') as HTMLElement | null;
     if (chunkEl) {
-      const index = Number(chunkEl.dataset.startMsgIndex);
-      if (Number.isFinite(index)) return index;
+      const index = findMessageIndexInChunk(chunkEl, activeLine);
+      if (index !== null) return index;
     }
   }
 
@@ -201,7 +231,14 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
     if (msgIndex === null) return;
 
     const key = getBucketKeyForMessageIndex(bucketsForScale, msgIndex);
-    if (key && key !== activeKeyRef.current) setActiveKey(key);
+    if (!key || key === activeKeyRef.current) return;
+
+    const currentIndex = bucketsForScale.findIndex(bucket => bucket.key === activeKeyRef.current);
+    const nextIndex = bucketsForScale.findIndex(bucket => bucket.key === key);
+    if (shouldAcceptBucketChange(currentIndex, nextIndex, container.dataset.scrollDir)) {
+      activeKeyRef.current = key;
+      setActiveKey(key);
+    }
   }, [chatContainerRef]);
 
   useEffect(() => {
