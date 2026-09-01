@@ -1,4 +1,4 @@
-import type { MediaItem, MessengerMessage, MessengerThread, Reaction } from '../../types/messenger';
+import type { MediaItem, MessengerMessage, MessengerThread, Reaction, SharedLink } from '../../types/messenger';
 import { fixEncoding, getMessageTimestamp, normalizeMessengerData, sanitizeFileName } from '../parser';
 
 interface RawMessengerExportMessage {
@@ -11,6 +11,7 @@ interface RawMessengerExportMessage {
   isUnsent?: boolean;
   is_unsent?: boolean;
   media?: MediaItem[];
+  share?: SharedLink;
   reactions?: Reaction[];
   type?: string;
 }
@@ -70,6 +71,11 @@ function normalizeMessage(raw: RawMessengerExportMessage): MessengerMessage {
     content: text,
     text,
     media,
+    share: raw.share ? {
+      link: raw.share.link,
+      href: raw.share.href,
+      share_text: raw.share.share_text ? fixEncoding(raw.share.share_text) : undefined,
+    } : undefined,
     reactions: Array.isArray(raw.reactions)
       ? raw.reactions.map(reaction => ({
           actor: fixEncoding(String(reaction.actor || '')),

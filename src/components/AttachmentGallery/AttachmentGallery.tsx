@@ -1,36 +1,41 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { MessengerThread, MediaState, ResolvedAttachment } from '../../types/messenger';
-import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, Info } from 'lucide-react';
+import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink } from '../../types/messenger';
+import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, Info, ExternalLink, Link as LinkIcon, MessageSquare, UserRound } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
-import { useAttachments, type AttachmentCategory } from '../../hooks/useAttachments';
+import { useAttachments, useSharedLinks, type GalleryCategory } from '../../hooks/useAttachments';
 import type { useSelection } from '../../hooks/useSelection';
 import { findMediaFile } from '../../services/media';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
-import { calculateGalleryLayout, getStickyMonth, type GalleryGroup, type GalleryLayoutRow } from './galleryLayout';
+import { calculateGalleryLayout, getStickyMonth, type GalleryGroup, type GalleryItem, type GalleryLayoutRow } from './galleryLayout';
 
 const VIRTUAL_OVERSCAN_PX = 600;
+const LINK_CARD_MIN_WIDTH = 220;
+const LINK_CARD_HEIGHT = 128;
 
 interface AttachmentGalleryProps {
   chatData: MessengerThread;
   mediaState: MediaState;
   settings: Settings;
+  isOpen: boolean;
   infoPanelOpen: boolean;
   onClose: () => void;
   onJumpToMessage: (messageIndex: number) => void;
   onToggleInfoPanel: () => void;
-  defaultTab?: AttachmentCategory;
+  onTabChange: (tab: GalleryCategory) => void;
+  defaultTab?: GalleryCategory;
   selection: ReturnType<typeof useSelection>;
 }
 
-const TABS: { key: AttachmentCategory; label: string }[] = [
+const TABS: { key: GalleryCategory; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'photos', label: 'Photos' },
   { key: 'videos', label: 'Videos' },
   { key: 'audio', label: 'Audio' },
   { key: 'gifs', label: 'GIFs' },
   { key: 'files', label: 'Files' },
+  { key: 'links', label: 'Links' },
 ];
 
 function formatMonthYear(ts: number): string {
@@ -49,18 +54,18 @@ function findFirstRow(rows: GalleryLayoutRow[], target: number): number {
   return low;
 }
 
-function groupByMonth(attachments: ResolvedAttachment[]): GalleryGroup[] {
+function groupByMonth(items: GalleryItem[]): GalleryGroup[] {
   const groups: GalleryGroup[] = [];
   let currentLabel = '';
 
-  for (let index = attachments.length - 1; index >= 0; index--) {
-    const attachment = attachments[index];
-    const label = attachment.timestamp ? formatMonthYear(attachment.timestamp) : 'Unknown Date';
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index];
+    const label = item.timestamp ? formatMonthYear(item.timestamp) : 'Unknown Date';
     if (label !== currentLabel) {
       currentLabel = label;
       groups.push({ key: `${label}:${groups.length}`, label, items: [] });
     }
-    groups[groups.length - 1].items.push(attachment);
+    groups[groups.length - 1].items.push(item);
   }
 
   return groups;
@@ -199,30 +204,95 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   && previous.isSelected === next.isSelected
 ));
 
+function getLinkHostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '') || url;
+  } catch {
+    return url;
+  }
+}
+
+const GalleryLinkCard = memo(function GalleryLinkCard({
+  link,
+  onJumpToMessage,
+}: {
+  link: ResolvedLink;
+  onJumpToMessage: (messageIndex: number) => void;
+}) {
+  const hostname = getLinkHostname(link.url);
+  return (
+    <div className="gallery-thumb gallery-link-card" title={link.url}>
+      <a href={link.url} target="_blank" rel="noreferrer" className="gallery-link-anchor">
+        <LinkIcon size={24} className="gallery-link-icon" />
+        <strong className="gallery-link-host">{hostname}</strong>
+        <span className="gallery-link-url">{link.label || link.url}</span>
+        <span className="gallery-link-meta">
+          <span className="gallery-link-sender" title={`Sent by ${link.sender}`}>
+            <UserRound size={12} />
+            <span>{link.sender}</span>
+          </span>
+          <span className="gallery-link-open"><ExternalLink size={13} /> Open link</span>
+        </span>
+      </a>
+      <button
+        type="button"
+        className="gallery-link-message"
+        onClick={() => onJumpToMessage(link.messageIndex)}
+        title="Jump to message"
+        aria-label={`Jump to message containing ${hostname}`}
+      >
+        <MessageSquare size={14} />
+      </button>
+    </div>
+  );
+});
+
 const AttachmentGalleryBase = function AttachmentGallery({
   chatData,
   mediaState,
   settings: _settings,
+  isOpen,
   infoPanelOpen,
   onClose,
   onJumpToMessage,
   onToggleInfoPanel,
+  onTabChange,
   defaultTab = 'all',
   selection,
 }: AttachmentGalleryProps) {
   const { all, byCategory } = useAttachments(chatData, mediaState);
-  const [activeTab, setActiveTab] = useState<AttachmentCategory>(defaultTab);
+  const links = useSharedLinks(chatData);
+  const [activeTab, setActiveTab] = useState<GalleryCategory>(defaultTab);
   const [selectionMode, setSelectionMode] = useState(false);
   const [viewerState, setViewerState] = useState({ open: false, index: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
-  const scrollPositions = useRef<Partial<Record<AttachmentCategory, number>>>({});
+  const scrollPositions = useRef<Partial<Record<GalleryCategory, number>>>({});
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollFrameRef = useRef<number | null>(null);
+  const restoreFrameRef = useRef<number | null>(null);
+  const restoringScrollRef = useRef(false);
+  const isOpenRef = useRef(isOpen);
 
-  const currentItems = activeTab === 'all' ? all : byCategory[activeTab];
+  const currentAttachments = useMemo<ResolvedAttachment[]>(
+    () => activeTab === 'links' ? [] : activeTab === 'all' ? all : byCategory[activeTab],
+    [activeTab, all, byCategory],
+  );
+  const currentItems = useMemo<GalleryItem[]>(
+    () => activeTab === 'links' ? links : currentAttachments,
+    [activeTab, currentAttachments, links],
+  );
   const groups = useMemo(() => groupByMonth(currentItems), [currentItems]);
-  const layout = useMemo(() => calculateGalleryLayout(groups, viewport.width), [groups, viewport.width]);
+  const layout = useMemo(
+    () => calculateGalleryLayout(
+      groups,
+      viewport.width,
+      activeTab === 'links' ? LINK_CARD_MIN_WIDTH : undefined,
+      undefined,
+      activeTab === 'links' ? LINK_CARD_HEIGHT : undefined,
+    ),
+    [activeTab, groups, viewport.width],
+  );
 
   useEffect(() => setActiveTab(defaultTab), [defaultTab]);
   useEffect(() => setSelectionMode(selection.selectedCount > 0), [selection.selectedCount]);
@@ -252,20 +322,45 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
   useEffect(() => () => {
     if (scrollFrameRef.current != null) cancelAnimationFrame(scrollFrameRef.current);
+    if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
   }, []);
 
   useLayoutEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  useLayoutEffect(() => {
+    if (!isOpen || viewport.width <= 0) return;
     const container = scrollContainerRef.current;
     if (!container) return;
     const savedPosition = scrollPositions.current[activeTab] || 0;
+    restoringScrollRef.current = true;
     container.scrollTop = savedPosition;
     setScrollTop(savedPosition);
-  }, [activeTab]);
+    if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+    restoreFrameRef.current = requestAnimationFrame(() => {
+      restoreFrameRef.current = null;
+      if (!isOpenRef.current) return;
+      container.scrollTop = savedPosition;
+      setScrollTop(savedPosition);
+      restoringScrollRef.current = false;
+    });
+
+    return () => {
+      if (restoreFrameRef.current != null) {
+        cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = null;
+      }
+      restoringScrollRef.current = false;
+    };
+  }, [activeTab, isOpen, viewport.width]);
 
   const handleScroll = useCallback(() => {
+    if (!isOpenRef.current || restoringScrollRef.current) return;
     if (scrollFrameRef.current != null) return;
     scrollFrameRef.current = requestAnimationFrame(() => {
       scrollFrameRef.current = null;
+      if (!isOpenRef.current || restoringScrollRef.current) return;
       const container = scrollContainerRef.current;
       if (!container) return;
       scrollPositions.current[activeTab] = container.scrollTop;
@@ -273,7 +368,22 @@ const AttachmentGalleryBase = function AttachmentGallery({
     });
   }, [activeTab]);
 
-  const handleTabChange = useCallback((tab: AttachmentCategory) => {
+  const saveScrollPosition = useCallback(() => {
+    if (scrollFrameRef.current != null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
+    const container = scrollContainerRef.current;
+    if (container) scrollPositions.current[activeTab] = container.scrollTop;
+  }, [activeTab]);
+
+  const handleClose = useCallback(() => {
+    saveScrollPosition();
+    isOpenRef.current = false;
+    onClose();
+  }, [onClose, saveScrollPosition]);
+
+  const handleTabChange = useCallback((tab: GalleryCategory) => {
     const container = scrollContainerRef.current;
     if (container) scrollPositions.current[activeTab] = container.scrollTop;
     if (scrollFrameRef.current != null) {
@@ -281,22 +391,25 @@ const AttachmentGalleryBase = function AttachmentGallery({
       scrollFrameRef.current = null;
     }
     setActiveTab(tab);
-  }, [activeTab]);
+    onTabChange(tab);
+  }, [activeTab, onTabChange]);
 
   const openViewer = useCallback((attachment: ResolvedAttachment) => {
-    const index = currentItems.indexOf(attachment);
+    const index = currentAttachments.indexOf(attachment);
     setViewerState({ open: true, index: index >= 0 ? index : 0 });
-  }, [currentItems]);
+  }, [currentAttachments]);
 
   const toggleAttachment = useCallback((attachment: ResolvedAttachment) => {
     selection.toggle(attachment);
   }, [selection]);
 
   const handleViewerJump = useCallback((messageIndex: number) => {
+    saveScrollPosition();
+    isOpenRef.current = false;
     setViewerState({ open: false, index: 0 });
     onJumpToMessage(messageIndex);
     onClose();
-  }, [onJumpToMessage, onClose]);
+  }, [onJumpToMessage, onClose, saveScrollPosition]);
 
   const visibleRows = useMemo(() => {
     const start = findFirstRow(layout.rows, Math.max(0, scrollTop - VIRTUAL_OVERSCAN_PX));
@@ -310,33 +423,36 @@ const AttachmentGalleryBase = function AttachmentGallery({
     return getStickyMonth(layout.rows, scrollTop);
   }, [layout.rows, scrollTop]);
 
-  const tabCounts = useMemo<Record<AttachmentCategory, number>>(() => ({
+  const tabCounts = useMemo<Record<GalleryCategory, number>>(() => ({
     all: all.length,
     photos: byCategory.photos.length,
     videos: byCategory.videos.length,
     audio: byCategory.audio.length,
     gifs: byCategory.gifs.length,
     files: byCategory.files.length,
-  }), [all, byCategory]);
+    links: links.length,
+  }), [all, byCategory, links]);
 
   return (
     <>
       <div className="chat-header">
-        <button className="gallery-back-btn" onClick={onClose} aria-label="Back to chat" title="Back to chat">
+        <button className="gallery-back-btn" onClick={handleClose} aria-label="Back to chat" title="Back to chat">
           <ArrowLeft size={18} />
         </button>
         <h3>Attachments</h3>
 
-        <button
-          className={`gallery-select-mode-toggle ${selectionMode ? 'active' : ''}`}
-          onClick={() => {
-            if (selectionMode && selection.selectedCount > 0) selection.deselectAll();
-            setSelectionMode(!selectionMode);
-          }}
-          title="Select attachments"
-        >
-          <CheckSquare size={18} />
-        </button>
+        {activeTab !== 'links' && (
+          <button
+            className={`gallery-select-mode-toggle ${selectionMode ? 'active' : ''}`}
+            onClick={() => {
+              if (selectionMode && selection.selectedCount > 0) selection.deselectAll();
+              setSelectionMode(!selectionMode);
+            }}
+            title="Select attachments"
+          >
+            <CheckSquare size={18} />
+          </button>
+        )}
         <button
           className="chat-info-toggle"
           id="galleryInfoToggle"
@@ -365,12 +481,12 @@ const AttachmentGalleryBase = function AttachmentGallery({
       <div id="line" />
 
       <div
-        className={`gallery-scroll ${selectionMode ? 'selection-mode-active' : ''}`}
+        className={`gallery-scroll ${selectionMode && activeTab !== 'links' ? 'selection-mode-active' : ''}`}
         ref={scrollContainerRef}
         onScroll={handleScroll}
       >
         {groups.length === 0 ? (
-          <div className="gallery-empty">No attachments found</div>
+          <div className="gallery-empty">No {activeTab === 'links' ? 'links' : 'attachments'} found</div>
         ) : (
           <>
             {stickyMonth && <div className="gallery-sticky-month">{stickyMonth}</div>}
@@ -389,19 +505,25 @@ const AttachmentGalleryBase = function AttachmentGallery({
                   className="gallery-grid gallery-virtual-row"
                   style={{
                     transform: `translateY(${row.top}px)`,
-                    height: layout.itemSize,
+                    height: layout.itemHeight,
                     gridTemplateColumns: `repeat(${layout.columns}, minmax(0, 1fr))`,
                   }}
                 >
-                  {row.items.map(attachment => (
+                  {row.items.map(item => item.category === 'links' ? (
+                    <GalleryLinkCard
+                      key={`link:${item.messageIndex}:${item.url}`}
+                      link={item}
+                      onJumpToMessage={handleViewerJump}
+                    />
+                  ) : (
                     <GalleryThumbnail
-                      key={`${attachment.category}:${attachment.mediaPath.toLowerCase()}`}
-                      attachment={attachment}
+                      key={`${item.category}:${item.mediaPath.toLowerCase()}`}
+                      attachment={item}
                       mediaState={mediaState}
                       onOpen={openViewer}
                       onSelect={toggleAttachment}
                       selectionMode={selectionMode}
-                      isSelected={selection.isSelected(attachment)}
+                      isSelected={selection.isSelected(item)}
                     />
                   ))}
                 </div>
@@ -411,9 +533,9 @@ const AttachmentGalleryBase = function AttachmentGallery({
         )}
       </div>
 
-      {viewerState.open && (
+      {viewerState.open && activeTab !== 'links' && (
         <MediaViewer
-          attachments={currentItems}
+          attachments={currentAttachments}
           initialIndex={viewerState.index}
           mediaState={mediaState}
           onClose={() => setViewerState({ open: false, index: viewerState.index })}
@@ -429,7 +551,9 @@ export const AttachmentGallery = memo(AttachmentGalleryBase, (previous, next) =>
   previous.chatData === next.chatData
   && previous.mediaState === next.mediaState
   && previous.settings === next.settings
+  && previous.isOpen === next.isOpen
   && previous.infoPanelOpen === next.infoPanelOpen
   && previous.defaultTab === next.defaultTab
+  && previous.onTabChange === next.onTabChange
   && previous.selection === next.selection
 ));

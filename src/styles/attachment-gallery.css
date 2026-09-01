@@ -302,6 +302,114 @@
     line-height: 1.3;
 }
 
+.gallery-link-card {
+    aspect-ratio: auto;
+    align-items: stretch;
+    justify-content: stretch;
+    border: 1px solid var(--border);
+    background: var(--bg);
+}
+
+.gallery-link-anchor {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 10px 12px;
+    color: inherit;
+    text-decoration: none;
+}
+
+.gallery-link-icon {
+    color: var(--accent);
+}
+
+.gallery-link-host,
+.gallery-link-url {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.gallery-link-host {
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.gallery-link-url {
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+}
+
+.gallery-link-meta {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-size: 10px;
+}
+
+.gallery-link-sender,
+.gallery-link-open {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.gallery-link-sender {
+    max-width: 55%;
+    color: var(--muted);
+}
+
+.gallery-link-sender span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gallery-link-sender svg,
+.gallery-link-open svg {
+    flex: 0 0 auto;
+}
+
+.gallery-link-open {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.gallery-link-message {
+    position: absolute;
+    right: 7px;
+    bottom: 7px;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--panel-bg);
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.gallery-link-message:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
 .gallery-empty {
     display: flex;
     align-items: center;

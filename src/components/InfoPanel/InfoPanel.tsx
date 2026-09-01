@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
-import { Image as ImageIcon, Film, Music, FileText, Smile } from 'lucide-react';
+import { Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon } from 'lucide-react';
 import {
   formatCompactInfoDate,
   formatCompactInfoNumber,
@@ -61,6 +61,7 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
   const memberCounts: Record<string, number> = {};
   const seenAttachments = new Set<string>();
   let photos = 0, videos = 0, audio = 0, gifs = 0, files = 0, totalReported = 0;
+  let links = 0;
   let loadedChatAttachments = 0;
 
   for (const msg of messages) {
@@ -75,6 +76,8 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
 
     const sender = msg.senderName || msg.sender_name || 'Unknown';
     memberCounts[sender] = (memberCounts[sender] || 0) + 1;
+
+    if (msg.share && (msg.share.link?.trim() || msg.share.href?.trim())) links++;
 
     const refs = getMessageAttachmentReferences(msg);
     for (const { path, category } of refs) {
@@ -106,6 +109,7 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
   return {
     visibleCount, minTs, maxTs, memberStats, memberCounts,
     attachments: { photos, videos, audio, gifs, files, foundTotal, reported: totalReported, mediaFound },
+    links,
   };
 }
 
@@ -157,10 +161,10 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
             <div className="info-section">
               <strong
                 className={onOpenGallery ? 'info-section-clickable' : ''}
-                onClick={() => onOpenGallery?.('all')}
+                onClick={() => onOpenGallery?.()}
                 role={onOpenGallery ? 'button' : undefined}
                 tabIndex={onOpenGallery ? 0 : undefined}
-                title="View all attachments"
+                title="Open attachments"
               >Attachments</strong>
               <div className="info-list">
                 {[
@@ -192,6 +196,21 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                   <span className="attachment-count">
                     <ResponsiveNumber value={stats.attachments.mediaFound} />
                     <span className="attachment-found"> / <ResponsiveNumber value={stats.attachments.foundTotal} /></span>
+                  </span>
+                </div>
+                <div
+                  className={`info-row ${onOpenGallery ? 'info-row-clickable' : ''}`}
+                  onClick={() => onOpenGallery?.('links')}
+                  role={onOpenGallery ? 'button' : undefined}
+                  tabIndex={onOpenGallery ? 0 : undefined}
+                  title="View links"
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <LinkIcon size={16} className="info-icon" />
+                    Links
+                  </span>
+                  <span className="attachment-count">
+                    <ResponsiveNumber value={stats.links} />
                   </span>
                 </div>
               </div>

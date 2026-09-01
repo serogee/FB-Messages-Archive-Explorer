@@ -1,4 +1,6 @@
-import type { ResolvedAttachment } from '../../types/messenger';
+import type { ResolvedAttachment, ResolvedLink } from '../../types/messenger';
+
+export type GalleryItem = ResolvedAttachment | ResolvedLink;
 
 const GRID_MIN_WIDTH = 110;
 const GRID_GAP = 4;
@@ -8,16 +10,17 @@ const GROUP_BOTTOM_MARGIN = 8;
 export interface GalleryGroup {
   key: string;
   label: string;
-  items: ResolvedAttachment[];
+  items: GalleryItem[];
 }
 
 export type GalleryLayoutRow =
   | { type: 'header'; key: string; label: string; top: number; height: number }
-  | { type: 'items'; key: string; label: string; items: ResolvedAttachment[]; top: number; height: number };
+  | { type: 'items'; key: string; label: string; items: GalleryItem[]; top: number; height: number };
 
 export interface GalleryLayout {
   columns: number;
   itemSize: number;
+  itemHeight: number;
   totalHeight: number;
   rows: GalleryLayoutRow[];
 }
@@ -43,13 +46,15 @@ export function calculateGalleryLayout(
   width: number,
   minWidth = GRID_MIN_WIDTH,
   gap = GRID_GAP,
+  fixedItemHeight?: number,
 ): GalleryLayout {
   if (width <= 0 || groups.length === 0) {
-    return { columns: 1, itemSize: minWidth, totalHeight: 0, rows: [] };
+    return { columns: 1, itemSize: minWidth, itemHeight: fixedItemHeight || minWidth, totalHeight: 0, rows: [] };
   }
 
   const columns = Math.max(1, Math.floor((width + gap) / (minWidth + gap)));
   const itemSize = Math.max(1, (width - gap * (columns - 1)) / columns);
+  const itemHeight = fixedItemHeight || itemSize;
   const rows: GalleryLayoutRow[] = [];
   let top = 0;
 
@@ -59,7 +64,7 @@ export function calculateGalleryLayout(
 
     for (let index = 0; index < group.items.length; index += columns) {
       const isLastRow = index + columns >= group.items.length;
-      const height = itemSize + (isLastRow ? GROUP_BOTTOM_MARGIN : gap);
+      const height = itemHeight + (isLastRow ? GROUP_BOTTOM_MARGIN : gap);
       rows.push({
         type: 'items',
         key: `items:${group.key}:${index}`,
@@ -72,5 +77,5 @@ export function calculateGalleryLayout(
     }
   }
 
-  return { columns, itemSize, totalHeight: top, rows };
+  return { columns, itemSize, itemHeight, totalHeight: top, rows };
 }
