@@ -9,10 +9,10 @@ afterEach(() => {
 
 describe('video poster cache', () => {
   it('does not remember a failed request that completed after clear', async () => {
-    let finish: ((url: string | null) => void) | undefined;
-    const create = vi.fn<() => Promise<string | null>>()
+    let finish: ((poster: { url: string; duration: number | null } | null) => void) | undefined;
+    const create = vi.fn<() => Promise<{ url: string; duration: number | null } | null>>()
       .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
-      .mockResolvedValueOnce('blob:fresh');
+      .mockResolvedValueOnce({ url: 'blob:fresh', duration: 12 });
     const cache = new VideoPosterCache(2, 1, create);
     const entry: MediaEntry = { type: 'video' };
 
@@ -24,6 +24,17 @@ describe('video poster cache', () => {
     await expect(staleRequest).resolves.toBeNull();
     await expect(cache.getOrCreate(entry)).resolves.toBe('blob:fresh');
     expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns cached poster details with duration', async () => {
+    const create = vi.fn(async () => ({ url: 'blob:poster', duration: 73 }));
+    const cache = new VideoPosterCache(2, 1, create);
+    const entry: MediaEntry = { type: 'video' };
+
+    await expect(cache.getOrCreateDetails(entry)).resolves.toEqual({ url: 'blob:poster', duration: 73 });
+    expect(cache.getDetails(entry)).toEqual({ url: 'blob:poster', duration: 73 });
+    await expect(cache.getOrCreate(entry)).resolves.toBe('blob:poster');
+    expect(create).toHaveBeenCalledOnce();
   });
 });
 

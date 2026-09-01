@@ -2,12 +2,13 @@ import React, { memo, useState, useEffect, useRef } from 'react';
 import type { MessengerMessage, MediaState } from '../../types/messenger';
 import { getMessageTimestamp, fixEncoding } from '../../services/parser';
 import { findMediaFile, getMediaReferencePath, getMediaType } from '../../services/media';
-import { blobCache } from '../../services/blobCache';
+import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
 import { ReactionModal } from './ReactionModal';
-import { ExternalLink, Link as LinkIcon } from 'lucide-react';
+import { MediaFileSize } from '../MediaFileSize';
+import { ExternalLink, FileText, Info, Link as LinkIcon, Pause, Play, Volume2, VolumeX } from 'lucide-react';
 
 const lazyMediaLoadCallbacks = new Map<Element, () => void>();
 const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => void>();
@@ -79,10 +80,6 @@ function getReactionTimeText(ts: number): string {
   return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function getAudioSourceType(mediaPath: string): string {
-  return mediaPath.toLowerCase().endsWith('.mp4') ? 'audio/mp4' : 'audio/mpeg';
-}
-
 const MESSAGE_URL_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
 const TRAILING_URL_PUNCTUATION = /[.,!?;:)\]}]$/;
 
@@ -144,6 +141,91 @@ function SharedLinkPreview({ link, label }: { link: string; label?: string }) {
       </span>
       <ExternalLink size={15} className="message-shared-link-external" />
     </a>
+  );
+}
+
+function formatPlayerTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+    : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+function InlineAudioPlayer({ src }: { src: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    setPlaying(false);
+    setMuted(false);
+    setCurrentTime(0);
+    setDuration(0);
+    return () => audio?.pause();
+  }, [src]);
+
+  const togglePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) void audio.play().catch(() => setPlaying(false));
+    else audio.pause();
+  };
+
+  const toggleMuted = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.muted = !audio.muted;
+    setMuted(audio.muted);
+  };
+
+  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+
+  return (
+    <div className="media-audio-control">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onTimeUpdate={event => setCurrentTime(event.currentTarget.currentTime)}
+        onDurationChange={event => {
+          const nextDuration = event.currentTarget.duration;
+          setDuration(Number.isFinite(nextDuration) ? nextDuration : 0);
+        }}
+      />
+      <button type="button" className="media-audio-button" onClick={togglePlayback} aria-label={playing ? 'Pause' : 'Play'}>
+        {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
+      </button>
+      <input
+        type="range"
+        className="media-audio-seek"
+        min={0}
+        max={duration || 0}
+        step={0.1}
+        value={Math.min(currentTime, duration || 0)}
+        disabled={duration <= 0}
+        aria-label="Seek audio"
+        style={{ '--audio-progress': `${progress}%` } as React.CSSProperties}
+        onChange={event => {
+          const nextTime = Number(event.target.value);
+          if (audioRef.current) audioRef.current.currentTime = nextTime;
+          setCurrentTime(nextTime);
+        }}
+      />
+      <span className="media-audio-time">{formatPlayerTime(currentTime)} / {formatPlayerTime(duration)}</span>
+      <button type="button" className="media-audio-button" onClick={toggleMuted} aria-label={muted ? 'Unmute' : 'Mute'}>
+        {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+      </button>
+    </div>
   );
 }
 
@@ -296,17 +378,37 @@ function LazyMedia({
   } else if (mediaType === 'audio') {
     content = fileURL
       ? <div className="media-audio-wrap">
-          <audio controls className="media-audio-control">
-            <source src={fileURL} type={getAudioSourceType(mediaPath)} />
-          </audio>
+          <InlineAudioPlayer src={fileURL} />
           {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} title="Open in viewer">⛶</button>}
         </div>
       : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
   } else {
     const filename = mediaPath.split('/').pop() || 'File attachment';
-    content = fileURL
-      ? <div className="media-file-link" onClick={onMediaClick} role="button" tabIndex={0} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: 'rgba(0,0,0,0.08)', borderRadius: '8px', textDecoration: 'none', color: 'inherit', fontWeight: '500', margin: '4px 0', fontSize: '14px', border: '1px solid rgba(0,0,0,0.1)', cursor: 'pointer' }}>
-          {filename}
+    content = mediaFile
+      ? <div className="media-file-card">
+          <button
+            type="button"
+            className="media-file-open"
+            onClick={() => openMediaEntryInNewTab(mediaFile)}
+            title={`Open ${filename} in a new tab`}
+          >
+            <FileText size={17} />
+            <span className="media-file-copy">
+              <span className="media-file-name">{filename}</span>
+              <MediaFileSize entry={mediaFile} className="media-file-size" />
+            </span>
+          </button>
+          {onMediaClick && (
+            <button
+              type="button"
+              className="media-file-info"
+              onClick={onMediaClick}
+              aria-label={`View information for ${filename}`}
+              title="Open in viewer"
+            >
+              <Info size={15} />
+            </button>
+          )}
         </div>
       : <span className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
   }

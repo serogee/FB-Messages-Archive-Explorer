@@ -7,12 +7,16 @@ import type { useSelection } from '../../hooks/useSelection';
 import { findMediaFile } from '../../services/media';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
+import { openMediaEntryInNewTab } from '../../services/blobCache';
+import { getAudioMetadata, type AudioMetadata } from '../../services/audioMetadata';
+import { formatFileSize } from '../../services/storage';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
+import { MediaFileSize } from '../MediaFileSize';
 import { calculateGalleryLayout, getStickyMonth, type GalleryGroup, type GalleryItem, type GalleryLayoutRow } from './galleryLayout';
 
 const VIRTUAL_OVERSCAN_PX = 600;
-const LINK_CARD_MIN_WIDTH = 220;
-const LINK_CARD_HEIGHT = 128;
+const COMPACT_CARD_MIN_WIDTH = 220;
+const COMPACT_CARD_HEIGHT = 128;
 
 interface AttachmentGalleryProps {
   chatData: MessengerThread;
@@ -75,43 +79,118 @@ interface GalleryThumbnailProps {
   attachment: ResolvedAttachment;
   mediaState: MediaState;
   onOpen: (attachment: ResolvedAttachment) => void;
+  onOpenFile: (attachment: ResolvedAttachment) => void;
+  onJumpToMessage: (messageIndex: number) => void;
   onSelect: (attachment: ResolvedAttachment) => void;
   selectionMode: boolean;
   isSelected: boolean;
+  compactFileCard: boolean;
+  compactAudioCard: boolean;
+}
+
+function formatAudioDuration(seconds: number | null): string {
+  if (seconds === null) return 'Unknown duration';
+  const totalSeconds = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+    : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+function AudioCardMetadata({ attachment, mediaState }: { attachment: ResolvedAttachment; mediaState: MediaState }) {
+  const [metadata, setMetadata] = useState<AudioMetadata | null>(null);
+
+  useEffect(() => {
+    const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
+    if (!entry) {
+      setMetadata({ duration: null, size: null });
+      return;
+    }
+
+    let mounted = true;
+    setMetadata(null);
+    void getAudioMetadata(entry).then(result => {
+      if (mounted) setMetadata(result);
+    });
+    return () => { mounted = false; };
+  }, [attachment, mediaState]);
+
+  return (
+    <div className="gallery-audio-meta">
+      <span className="gallery-link-sender" title={`Sent by ${attachment.sender}`}>
+        <UserRound size={12} />
+        <span>{attachment.sender}</span>
+      </span>
+      <span className="gallery-audio-details">
+        {metadata
+          ? `${formatAudioDuration(metadata.duration)} · ${metadata.size === null ? 'Unknown size' : formatFileSize(metadata.size)}`
+          : 'Loading…'}
+      </span>
+    </div>
+  );
 }
 
 const GalleryThumbnail = memo(function GalleryThumbnail({
   attachment,
   mediaState,
   onOpen,
+  onOpenFile,
+  onJumpToMessage,
   onSelect,
   selectionMode,
   isSelected,
+  compactFileCard,
+  compactAudioCard,
 }: GalleryThumbnailProps) {
   const [url, setUrl] = useState<string | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
 
   useEffect(() => {
     if (attachment.category !== 'photos' && attachment.category !== 'gifs' && attachment.category !== 'videos') {
       setUrl(null);
+      setVideoDuration(null);
       return;
     }
 
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
     if (!entry) {
       setUrl(null);
+      setVideoDuration(null);
       return;
     }
 
-    const cache = attachment.category === 'videos' ? videoPosterCache : imageThumbnailCache;
-    const cached = cache.get(entry);
-    if (cached) {
-      setUrl(cached);
-      return;
+    if (attachment.category === 'videos') {
+      const cached = videoPosterCache.getDetails(entry);
+      if (cached) {
+        setUrl(cached.url);
+        setVideoDuration(cached.duration);
+        return;
+      }
+
+      let mounted = true;
+      setUrl(null);
+      setVideoDuration(null);
+      void videoPosterCache.getOrCreateDetails(entry).then(details => {
+        if (mounted && details) {
+          setUrl(details.url);
+          setVideoDuration(details.duration);
+        }
+      });
+
+      return () => { mounted = false; };
     }
 
     let mounted = true;
     setUrl(null);
-    void cache.getOrCreate(entry).then(thumbnailUrl => {
+    setVideoDuration(null);
+    const cached = imageThumbnailCache.get(entry);
+    if (cached) {
+      setUrl(cached);
+      return;
+    }
+    void imageThumbnailCache.getOrCreate(entry).then(thumbnailUrl => {
       if (mounted && thumbnailUrl) setUrl(thumbnailUrl);
     });
 
@@ -125,6 +204,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
     event.preventDefault();
     event.stopPropagation();
     if (selectionMode) onSelect(attachment);
+    else if (compactFileCard) onOpenFile(attachment);
     else onOpen(attachment);
   };
 
@@ -134,7 +214,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
 
   return (
     <div
-      className={`gallery-thumb ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${isSelected ? 'selected' : ''}`}
+      className={`gallery-thumb ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${compactFileCard ? 'gallery-thumb-file-compact' : ''} ${compactAudioCard ? 'gallery-thumb-audio-compact' : ''} ${isSelected ? 'selected' : ''}`}
       onClick={activate}
       onKeyDown={handleKeyDown}
       role="button"
@@ -164,17 +244,34 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
           {url
             ? <img src={url} alt={filename} className="gallery-thumb-img" />
             : <div className="gallery-thumb-placeholder"><Film size={24} /></div>}
+          {videoDuration !== null && <div className="gallery-video-duration">{formatAudioDuration(videoDuration)}</div>}
           <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>
         </>
       ) : category === 'audio' ? (
         <>
           <div className="gallery-thumb-icon"><Music size={24} /></div>
           <div className="gallery-thumb-name">{filename}</div>
+          {compactAudioCard && <AudioCardMetadata attachment={attachment} mediaState={mediaState} />}
         </>
       ) : (
         <>
           <div className="gallery-thumb-icon"><FileText size={24} /></div>
           <div className="gallery-thumb-name">{filename}</div>
+          <MediaFileSize
+            entry={attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath)}
+            className="gallery-thumb-file-size"
+          />
+          {compactFileCard && (
+            <div className="gallery-file-meta">
+              <span className="gallery-link-sender" title={`Sent by ${attachment.sender}`}>
+                <UserRound size={12} />
+                <span>{attachment.sender}</span>
+              </span>
+              {!selectionMode && (
+                <span className="gallery-file-open"><FileText size={12} /> Open file</span>
+              )}
+            </div>
+          )}
         </>
       )}
 
@@ -193,15 +290,35 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
           <Info size={15} />
         </button>
       )}
+
+      {!selectionMode && (
+        <button
+          type="button"
+          className="gallery-link-message"
+          onClick={event => {
+            event.preventDefault();
+            event.stopPropagation();
+            onJumpToMessage(attachment.messageIndex);
+          }}
+          title="Jump to message"
+          aria-label={`Jump to message containing ${filename}`}
+        >
+          <MessageSquare size={14} />
+        </button>
+      )}
     </div>
   );
 }, (previous, next) => (
   previous.attachment === next.attachment
   && previous.mediaState === next.mediaState
   && previous.onOpen === next.onOpen
+  && previous.onOpenFile === next.onOpenFile
+  && previous.onJumpToMessage === next.onJumpToMessage
   && previous.onSelect === next.onSelect
   && previous.selectionMode === next.selectionMode
   && previous.isSelected === next.isSelected
+  && previous.compactFileCard === next.compactFileCard
+  && previous.compactAudioCard === next.compactAudioCard
 ));
 
 function getLinkHostname(url: string): string {
@@ -282,16 +399,17 @@ const AttachmentGalleryBase = function AttachmentGallery({
     () => activeTab === 'links' ? links : currentAttachments,
     [activeTab, currentAttachments, links],
   );
+  const compactCardTab = activeTab === 'links' || activeTab === 'files' || activeTab === 'audio';
   const groups = useMemo(() => groupByMonth(currentItems), [currentItems]);
   const layout = useMemo(
     () => calculateGalleryLayout(
       groups,
       viewport.width,
-      activeTab === 'links' ? LINK_CARD_MIN_WIDTH : undefined,
+      compactCardTab ? COMPACT_CARD_MIN_WIDTH : undefined,
       undefined,
-      activeTab === 'links' ? LINK_CARD_HEIGHT : undefined,
+      compactCardTab ? COMPACT_CARD_HEIGHT : undefined,
     ),
-    [activeTab, groups, viewport.width],
+    [compactCardTab, groups, viewport.width],
   );
 
   useEffect(() => setActiveTab(defaultTab), [defaultTab]);
@@ -398,6 +516,11 @@ const AttachmentGalleryBase = function AttachmentGallery({
     const index = currentAttachments.indexOf(attachment);
     setViewerState({ open: true, index: index >= 0 ? index : 0 });
   }, [currentAttachments]);
+
+  const openFileInNewTab = useCallback((attachment: ResolvedAttachment) => {
+    const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
+    openMediaEntryInNewTab(entry);
+  }, [mediaState]);
 
   const toggleAttachment = useCallback((attachment: ResolvedAttachment) => {
     selection.toggle(attachment);
@@ -521,9 +644,13 @@ const AttachmentGalleryBase = function AttachmentGallery({
                       attachment={item}
                       mediaState={mediaState}
                       onOpen={openViewer}
+                      onOpenFile={openFileInNewTab}
+                      onJumpToMessage={handleViewerJump}
                       onSelect={toggleAttachment}
                       selectionMode={selectionMode}
                       isSelected={selection.isSelected(item)}
+                      compactFileCard={activeTab === 'files' && item.category === 'files'}
+                      compactAudioCard={activeTab === 'audio' && item.category === 'audio'}
                     />
                   ))}
                 </div>

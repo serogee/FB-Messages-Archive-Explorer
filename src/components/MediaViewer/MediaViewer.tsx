@@ -243,9 +243,14 @@ export function MediaViewer({
           <div className="media-viewer-placeholder">
             <div className="media-viewer-file-icon"><FileText size={48} /></div>
             <div className="media-viewer-file-name">{filename}</div>
-            <a href={url} download={filename} className="media-viewer-download-btn">
-              Download
-            </a>
+            <div className="media-viewer-file-actions">
+              <a href={url} target="_blank" rel="noreferrer" className="media-viewer-download-btn">
+                <ExternalLink size={16} /> Open file
+              </a>
+              <a href={url} download={filename} className="media-viewer-download-btn media-viewer-download-secondary">
+                <Download size={16} /> Download
+              </a>
+            </div>
           </div>
         )}
       </div>

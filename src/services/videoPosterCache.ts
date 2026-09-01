@@ -3,6 +3,7 @@ import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
 
 interface PosterCacheEntry {
   url: string;
+  duration: number | null;
 }
 
 const DEFAULT_MAX_POSTERS = 200;
@@ -11,14 +12,19 @@ const MAX_CONCURRENT_POSTER_JOBS = 2;
 const VIDEO_EVENT_TIMEOUT_MS = 5_000;
 const SEEK_FALLBACK_SECONDS = 0.5;
 
-type PosterCreator = (entry: MediaEntry) => Promise<string | null>;
+export interface VideoPosterDetails {
+  url: string;
+  duration: number | null;
+}
+
+type PosterCreator = (entry: MediaEntry) => Promise<VideoPosterDetails | null>;
 
 export class VideoPosterCache {
   private maxSize: number;
   private maxConcurrentJobs: number;
   private createPoster: PosterCreator;
   private cache = new Map<MediaEntry, PosterCacheEntry>();
-  private pending = new Map<MediaEntry, Promise<string | null>>();
+  private pending = new Map<MediaEntry, Promise<VideoPosterDetails | null>>();
   private activeJobs = 0;
   private waitingJobs: (() => void)[] = [];
   private generation = 0;
@@ -35,16 +41,24 @@ export class VideoPosterCache {
   }
 
   get(entry: MediaEntry): string | null {
+    return this.getDetails(entry)?.url ?? null;
+  }
+
+  getDetails(entry: MediaEntry): VideoPosterDetails | null {
     const cached = this.cache.get(entry);
     if (!cached) return null;
 
     this.cache.delete(entry);
     this.cache.set(entry, cached);
-    return cached.url;
+    return { url: cached.url, duration: cached.duration };
   }
 
   getOrCreate(entry: MediaEntry): Promise<string | null> {
-    const cached = this.get(entry);
+    return this.getOrCreateDetails(entry).then(details => details?.url ?? null);
+  }
+
+  getOrCreateDetails(entry: MediaEntry): Promise<VideoPosterDetails | null> {
+    const cached = this.getDetails(entry);
     if (cached) return Promise.resolve(cached);
     if (this.failed.has(entry)) return Promise.resolve(null);
 
@@ -55,22 +69,22 @@ export class VideoPosterCache {
     const task = this.enqueue(async () => {
       if (requestGeneration !== this.generation) return null;
 
-      const afterWait = this.get(entry);
+      const afterWait = this.getDetails(entry);
       if (afterWait) return afterWait;
 
-      const posterUrl = await this.createPoster(entry);
-      if (!posterUrl) {
+      const poster = await this.createPoster(entry);
+      if (!poster) {
         if (requestGeneration === this.generation) this.failed.add(entry);
         return null;
       }
 
       if (requestGeneration !== this.generation) {
-        this.revoke(posterUrl);
+        this.revoke(poster.url);
         return null;
       }
 
-      this.put(entry, posterUrl);
-      return posterUrl;
+      this.put(entry, poster);
+      return poster;
     }).finally(() => {
       if (this.pending.get(entry) === task) this.pending.delete(entry);
     });
@@ -106,10 +120,10 @@ export class VideoPosterCache {
     }
   }
 
-  private put(entry: MediaEntry, url: string): void {
+  private put(entry: MediaEntry, poster: VideoPosterDetails): void {
     if (this.cache.has(entry)) {
       const previous = this.cache.get(entry);
-      if (previous?.url !== url) this.revoke(previous!.url);
+      if (previous?.url !== poster.url) this.revoke(previous!.url);
       this.cache.delete(entry);
     }
 
@@ -121,7 +135,7 @@ export class VideoPosterCache {
       this.revoke(oldCached.url);
     }
 
-    this.cache.set(entry, { url });
+    this.cache.set(entry, poster);
   }
 
   private revoke(url: string): void {
@@ -131,14 +145,14 @@ export class VideoPosterCache {
   }
 }
 
-async function createVideoPosterForEntry(entry: MediaEntry): Promise<string | null> {
+async function createVideoPosterForEntry(entry: MediaEntry): Promise<VideoPosterDetails | null> {
   if (entry.handle) {
     let temporaryUrl: string | null = null;
     try {
       const file = await entry.handle.getFile();
       const source = file.type ? file : new Blob([file], { type: getVideoMimeType(entry.handle.name) });
       temporaryUrl = URL.createObjectURL(source);
-      return await createVideoPoster(temporaryUrl);
+      return await createVideoPosterDetails(temporaryUrl);
     } catch {
       return null;
     } finally {
@@ -146,7 +160,7 @@ async function createVideoPosterForEntry(entry: MediaEntry): Promise<string | nu
     }
   }
 
-  return entry.url ? createVideoPoster(entry.url) : null;
+  return entry.url ? createVideoPosterDetails(entry.url) : null;
 }
 
 function getVideoMimeType(filename: string): string {
@@ -217,6 +231,10 @@ function waitForVideoEvent(video: HTMLVideoElement, eventName: string): Promise<
 }
 
 export async function createVideoPoster(videoUrl: string): Promise<string | null> {
+  return createVideoPosterDetails(videoUrl).then(details => details?.url ?? null);
+}
+
+export async function createVideoPosterDetails(videoUrl: string): Promise<VideoPosterDetails | null> {
   const video = document.createElement('video');
   video.preload = 'metadata';
   video.muted = true;
@@ -230,8 +248,8 @@ export async function createVideoPoster(videoUrl: string): Promise<string | null
     video.load();
     await metadataReady;
 
-    const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    const targetTime = duration > 0 ? Math.min(duration * 0.1, SEEK_FALLBACK_SECONDS) : 0;
+    const duration = Number.isFinite(video.duration) ? video.duration : null;
+    const targetTime = duration && duration > 0 ? Math.min(duration * 0.1, SEEK_FALLBACK_SECONDS) : 0;
     if (targetTime > 0) {
       const seeked = waitForVideoEvent(video, 'seeked');
       video.currentTime = targetTime;
@@ -255,7 +273,7 @@ export async function createVideoPoster(videoUrl: string): Promise<string | null
     const blob = await new Promise<Blob | null>(resolve => {
       canvas.toBlob(resolve, 'image/jpeg', 0.72);
     });
-    return blob ? URL.createObjectURL(blob) : null;
+    return blob ? { url: URL.createObjectURL(blob), duration } : null;
   } catch {
     return null;
   } finally {

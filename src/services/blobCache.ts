@@ -87,3 +87,24 @@ export class BlobLRUCache {
 }
 
 export const blobCache = new BlobLRUCache(DEFAULT_MAX_SIZE);
+
+export function openMediaEntryInNewTab(entry: MediaEntry | null | undefined): void {
+  if (!entry) return;
+
+  const existingUrl = blobCache.get(entry) || entry.url;
+  if (existingUrl) {
+    window.open(existingUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
+  const newTab = window.open('about:blank', '_blank');
+  if (newTab) newTab.opener = null;
+  void blobCache.getOrCreate(entry).then(url => {
+    if (!url) {
+      newTab?.close();
+      return;
+    }
+    if (newTab) newTab.location.href = url;
+    else window.open(url, '_blank', 'noopener,noreferrer');
+  });
+}

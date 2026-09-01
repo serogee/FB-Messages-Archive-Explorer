@@ -13,6 +13,7 @@ const CHUNK_ESTIMATED_MESSAGE_HEIGHT = 58;
 const CHUNK_ESTIMATED_MEDIA_HEIGHT = 150;
 const CHUNK_ESTIMATED_SEPARATOR_HEIGHT = 34;
 const TIME_GAP_MS = 10 * 60 * 1000;
+const JUMP_HIGHLIGHT_SCROLL_THRESHOLD = 24;
 
 type Messages = MessengerThread['messages'];
 
@@ -268,6 +269,9 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
 ) {
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightedMessageRef = useRef<HTMLElement | null>(null);
+  const highlightScrollTopRef = useRef<number | null>(null);
   const jumpRequestIdRef = useRef(0);
   const pendingChunkRenderRef = useRef<{
     chunkIndex: number;
@@ -296,10 +300,21 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     pending.resolve(true);
   }, []);
 
+  const clearJumpHighlight = useCallback(() => {
+    if (highlightTimerRef.current) {
+      clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = null;
+    }
+    highlightedMessageRef.current?.classList.remove('highlight-target', 'temporary-highlight');
+    highlightedMessageRef.current = null;
+    highlightScrollTopRef.current = null;
+  }, []);
+
   useImperativeHandle(ref, () => ({
     jumpToMessage: async (index: number) => {
       const container = chatContainerRef.current;
       if (!container) return;
+      clearJumpHighlight();
       const requestId = ++jumpRequestIdRef.current;
       cancelPendingChunkRender();
       const findMessage = () => (
@@ -326,7 +341,12 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
         container.scrollTop += elRect.top - containerRect.top - 120;
 
         msgEl.classList.add('highlight-target', 'temporary-highlight');
-        setTimeout(() => msgEl.classList.remove('temporary-highlight'), 2200);
+        highlightedMessageRef.current = msgEl;
+        highlightScrollTopRef.current = container.scrollTop;
+        highlightTimerRef.current = setTimeout(() => {
+          msgEl.classList.remove('temporary-highlight');
+          highlightTimerRef.current = null;
+        }, 2200);
       }
     },
     getChatContainer: () => chatContainerRef.current,
@@ -336,7 +356,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
         container.scrollTop = container.scrollHeight;
       }
     },
-  }), [cancelPendingChunkRender, renderChunk]);
+  }), [cancelPendingChunkRender, clearJumpHighlight, renderChunk]);
 
   const handleScroll = useCallback(() => {
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
@@ -352,23 +372,35 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
       
       const isAtBottom = Math.abs(container.scrollHeight - st - container.clientHeight) < 20;
       container.dataset.isAtBottom = String(isAtBottom);
+
+      const highlightScrollTop = highlightScrollTopRef.current;
+      if (
+        highlightedMessageRef.current &&
+        highlightScrollTop !== null &&
+        Math.abs(st - highlightScrollTop) >= JUMP_HIGHLIGHT_SCROLL_THRESHOLD
+      ) {
+        clearJumpHighlight();
+      }
     }
-  }, [onScrollSync]);
+  }, [clearJumpHighlight, onScrollSync]);
 
   React.useLayoutEffect(() => {
     jumpRequestIdRef.current++;
     cancelPendingChunkRender();
+    clearJumpHighlight();
     setForcedChunkIndex(null);
     if (chatData && chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
       chatContainerRef.current.dataset.isAtBottom = 'true';
     }
-  }, [chatData, cancelPendingChunkRender]);
+  }, [chatData, cancelPendingChunkRender, clearJumpHighlight]);
 
   React.useEffect(() => () => {
     jumpRequestIdRef.current++;
     cancelPendingChunkRender();
-  }, [cancelPendingChunkRender]);
+    clearJumpHighlight();
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+  }, [cancelPendingChunkRender, clearJumpHighlight]);
 
   const { chunks, chunkHeights } = React.useMemo(
     () => chatData ? getChunksAndHeights(chatData) : { chunks: [], chunkHeights: [] },
