@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
-import { Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon } from 'lucide-react';
+import { Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon, ChevronRight } from 'lucide-react';
 import {
   formatCompactInfoDate,
   formatCompactInfoNumber,
@@ -173,6 +173,7 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                   { label: 'Audio', count: stats.attachments.audio, tab: 'audio', Icon: Music },
                   { label: 'GIFs', count: stats.attachments.gifs, tab: 'gifs', Icon: Smile },
                   { label: 'Files', count: stats.attachments.files, tab: 'files', Icon: FileText },
+                  { label: 'Links', count: stats.links, tab: 'links', Icon: LinkIcon },
                 ].map(({ label, count, tab, Icon }) => (
                   <div
                     key={label}
@@ -186,31 +187,17 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                       <Icon size={16} className="info-icon" />
                       {label}
                     </span>
-                    <span className="attachment-count">
+                    <span className={`${onOpenGallery ? 'info-row-action' : 'attachment-count'}${tab === 'links' ? ' info-row-action-muted' : ''}`}>
                       <ResponsiveNumber value={count} />
+                      {onOpenGallery && <ChevronRight size={14} />}
                     </span>
                   </div>
                 ))}
                 <div className="info-row">
-                  <span>Attachments</span>
+                  <span>Media files</span>
                   <span className="attachment-count">
                     <ResponsiveNumber value={stats.attachments.mediaFound} />
                     <span className="attachment-found"> / <ResponsiveNumber value={stats.attachments.foundTotal} /></span>
-                  </span>
-                </div>
-                <div
-                  className={`info-row ${onOpenGallery ? 'info-row-clickable' : ''}`}
-                  onClick={() => onOpenGallery?.('links')}
-                  role={onOpenGallery ? 'button' : undefined}
-                  tabIndex={onOpenGallery ? 0 : undefined}
-                  title="View links"
-                >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <LinkIcon size={16} className="info-icon" />
-                    Links
-                  </span>
-                  <span className="attachment-count">
-                    <ResponsiveNumber value={stats.links} />
                   </span>
                 </div>
               </div>

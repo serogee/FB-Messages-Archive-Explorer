@@ -642,8 +642,32 @@ img, video { max-width:100%; border-radius:10px; margin:5px; cursor:pointer; obj
 
 .info-section-clickable { cursor: pointer; transition: color 0.15s; }
 .info-section-clickable:hover { color: var(--accent); }
-.info-row-clickable { cursor: pointer; padding: 6px 8px; margin: -6px -8px; border-radius: 6px; transition: background 0.15s; }
+.info-row-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    color: var(--text);
+    white-space: nowrap;
+}
+.info-row-action svg {
+    flex: 0 0 auto;
+    color: var(--muted);
+}
+.info-row > span.info-row-action.info-row-action-muted {
+    color: var(--muted);
+    opacity: 0.68;
+}
+.info-row-clickable { cursor: pointer; padding: 6px 8px; margin: -6px -8px; border-radius: 6px; transition: background 0.15s, color 0.15s; }
 .info-row-clickable:hover { background: var(--hover-overlay); }
+.info-row-clickable:hover .info-icon,
+.info-row-clickable:hover .info-row-action,
+.info-row-clickable:hover .info-row-action svg {
+    color: var(--accent);
+}
+.info-row-clickable:hover .info-row-action-muted {
+    opacity: 1;
+}
 
 .media-audio-wrap {
     display: inline-flex;
