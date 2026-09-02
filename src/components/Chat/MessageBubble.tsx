@@ -6,7 +6,7 @@ import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
-import { MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
+import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
 import { ReactionModal } from './ReactionModal';
 import { MediaFileSize } from '../MediaFileSize';
 import { ExternalLink, FileText, Info, Link as LinkIcon, Pause, Play, Volume2, VolumeX } from 'lucide-react';
@@ -441,8 +441,10 @@ export const MessageBubble = memo(function MessageBubble({
     return true;
   });
 
-  const sharedLink = msg.share?.link?.trim() || msg.share?.href?.trim();
-  const sharedLinkLabel = msg.share?.share_text ? fixEncoding(msg.share.share_text).trim() : undefined;
+  const messageLinks = getMessageLinks(msg).map(link => ({
+    ...link,
+    label: link.label ? fixEncoding(link.label) : undefined,
+  }));
 
   const showName = isMe ? showMyName : showTheirName;
   
@@ -470,7 +472,13 @@ export const MessageBubble = memo(function MessageBubble({
               <MessageText text={rawText} highlightQuery={highlightQuery} />
             )}
 
-            {sharedLink && <SharedLinkPreview link={sharedLink} label={sharedLinkLabel} />}
+            {messageLinks.length > 0 && (
+              <div className="message-link-list">
+                {messageLinks.map(link => (
+                  <SharedLinkPreview key={link.url} link={link.url} label={link.label} />
+                ))}
+              </div>
+            )}
 
             {mediaItems.map(({ media, preferredType }, i) => {
               const mediaPath = getMediaReferencePath(media);

@@ -173,6 +173,13 @@
 .from-me .message-inline-link {
     color: inherit;
 }
+.message-link-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    white-space: normal;
+}
 .message-shared-link {
     width: auto;
     max-width: 100%;
@@ -182,7 +189,7 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    margin-top: 8px;
+    margin-top: 0;
     padding: 9px 10px;
     border: 1px solid rgba(0, 0, 0, 0.12);
     border-radius: 10px;
