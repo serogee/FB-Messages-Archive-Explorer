@@ -441,10 +441,25 @@ export const MessageBubble = memo(function MessageBubble({
     return true;
   });
 
+  const resolvedMediaItems = mediaItems.map(({ media, preferredType }) => {
+    const mediaPath = getMediaReferencePath(media);
+    const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
+    const mediaFile = findMediaFile(mediaState, mediaPath);
+    const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
+    return { media, preferredType, mediaPath, mediaFile, mediaType };
+  });
+
+  const previewMediaItems = resolvedMediaItems.filter(item => item.mediaType === 'image' || item.mediaType === 'video');
+  const otherMediaItems = resolvedMediaItems.filter(item => item.mediaType !== 'image' && item.mediaType !== 'video');
+  const hasMediaPreview = previewMediaItems.length > 0;
+  const hasMediaGrid = previewMediaItems.length > 1;
+  const hasOddMediaGrid = hasMediaGrid && previewMediaItems.length % 2 === 1;
+
   const messageLinks = getMessageLinks(msg).map(link => ({
     ...link,
     label: link.label ? fixEncoding(link.label) : undefined,
   }));
+  const isMediaOnly = hasMediaPreview && !rawText && messageLinks.length === 0 && otherMediaItems.length === 0;
 
   const showName = isMe ? showMyName : showTheirName;
   
@@ -460,7 +475,7 @@ export const MessageBubble = memo(function MessageBubble({
         <div className="sender-name">{sender}</div>
       )}
       <div
-        className={`message ${isMe ? 'from-me' : 'from-them'} ${isFirstInClump ? 'clump-first' : ''} ${isLastInClump ? 'clump-last' : ''} ${hasReactions ? 'has-reactions' : ''}`}
+        className={`message ${isMe ? 'from-me' : 'from-them'} ${isFirstInClump ? 'clump-first' : ''} ${isLastInClump ? 'clump-last' : ''} ${hasReactions ? 'has-reactions' : ''} ${hasMediaPreview ? 'has-media-preview' : ''} ${hasMediaGrid ? 'has-media-grid' : ''} ${hasOddMediaGrid ? 'has-odd-media-grid' : ''} ${isMediaOnly ? 'media-only' : ''}`}
         data-msg-index={msgIndex}
       >
         <div className="message-content">
@@ -480,19 +495,39 @@ export const MessageBubble = memo(function MessageBubble({
               </div>
             )}
 
-            {mediaItems.map(({ media, preferredType }, i) => {
-              const mediaPath = getMediaReferencePath(media);
-              const mediaFile = findMediaFile(mediaState, mediaPath);
-              return (
+            {hasMediaGrid ? (
+              <div className="message-media-grid">
+                {previewMediaItems.map(({ preferredType, mediaPath, mediaFile }, i) => (
+                  <LazyMedia
+                    key={`${mediaPath}:${i}`}
+                    mediaPath={mediaPath}
+                    mediaFile={mediaFile}
+                    preferredType={preferredType}
+                    onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
+                  />
+                ))}
+              </div>
+            ) : (
+              previewMediaItems.map(({ preferredType, mediaPath, mediaFile }, i) => (
                 <LazyMedia
-                  key={i}
+                  key={`${mediaPath}:${i}`}
                   mediaPath={mediaPath}
                   mediaFile={mediaFile}
                   preferredType={preferredType}
                   onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
                 />
-              );
-            })}
+              ))
+            )}
+
+            {otherMediaItems.map(({ preferredType, mediaPath, mediaFile }, i) => (
+              <LazyMedia
+                key={`${mediaPath}:other:${i}`}
+                mediaPath={mediaPath}
+                mediaFile={mediaFile}
+                preferredType={preferredType}
+                onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
+              />
+            ))}
 
             {hasReactions && (
               <div 
