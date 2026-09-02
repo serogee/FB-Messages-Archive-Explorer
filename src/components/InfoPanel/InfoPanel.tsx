@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
-import { Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon, ChevronRight } from 'lucide-react';
+import { Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon, Sticker, ChevronRight } from 'lucide-react';
 import {
   formatCompactInfoDate,
   formatCompactInfoNumber,
@@ -62,7 +62,7 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
 
   const memberCounts: Record<string, number> = {};
   const seenAttachments = new Set<string>();
-  let photos = 0, videos = 0, audio = 0, gifs = 0, files = 0, totalReported = 0;
+  let photos = 0, videos = 0, audio = 0, gifs = 0, files = 0, stickers = 0, stickersFound = 0, totalReported = 0;
   let links = 0;
   let loadedChatAttachments = 0;
 
@@ -82,17 +82,22 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
     links += getMessageLinks(msg).length;
 
     const refs = getMessageAttachmentReferences(msg);
-    for (const { path, category } of refs) {
-      totalReported++;
+    for (const { path, category, shared } of refs) {
+      if (!shared) totalReported++;
       const key = `${category}:${path.toLowerCase()}`;
       if (!seenAttachments.has(key)) {
         seenAttachments.add(key);
-        if (isMediaReferenceFound(mediaState, path)) loadedChatAttachments++;
+        const isFound = isMediaReferenceFound(mediaState, path);
+        if (isFound && !shared) loadedChatAttachments++;
         if (category === 'photos') photos++;
         else if (category === 'videos') videos++;
         else if (category === 'audio') audio++;
         else if (category === 'gifs') gifs++;
         else if (category === 'files') files++;
+        else if (category === 'stickers') {
+          stickers++;
+          if (isFound) stickersFound++;
+        }
       }
     }
   }
@@ -110,7 +115,7 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
 
   return {
     visibleCount, minTs, maxTs, memberStats, memberCounts,
-    attachments: { photos, videos, audio, gifs, files, foundTotal, reported: totalReported, mediaFound },
+    attachments: { photos, videos, audio, gifs, files, stickers, stickersFound, foundTotal, reported: totalReported, mediaFound },
     links,
   };
 }
@@ -178,7 +183,10 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                   { label: 'GIFs', count: stats.attachments.gifs, tab: 'gifs', Icon: Smile },
                   { label: 'Files', count: stats.attachments.files, tab: 'files', Icon: FileText },
                   { label: 'Links', count: stats.links, tab: 'links', Icon: LinkIcon },
-                ].map(({ label, count, tab, Icon }) => (
+                  ...(!activeEntry?._messengerExport
+                    ? [{ label: 'Stickers', count: stats.attachments.stickers, found: stats.attachments.stickersFound, tab: 'stickers', Icon: Sticker }]
+                    : []),
+                ].map(({ label, count, tab, Icon, ...row }) => (
                   <div
                     key={label}
                     className={`info-row ${onOpenGallery ? 'info-row-clickable' : ''}`}
@@ -191,8 +199,10 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
                       <Icon size={16} className="info-icon" />
                       {label}
                     </span>
-                    <span className={`${onOpenGallery ? 'info-row-action' : 'attachment-count'}${tab === 'links' ? ' info-row-action-muted' : ''}`}>
-                      <ResponsiveNumber value={count} />
+                    <span className={`${onOpenGallery ? 'info-row-action' : 'attachment-count'}${tab === 'links' || tab === 'stickers' ? ' info-row-action-muted' : ''}`}>
+                      {'found' in row
+                        ? <><ResponsiveNumber value={row.found as number} /><span> / </span><ResponsiveNumber value={count} /></>
+                        : <ResponsiveNumber value={count} />}
                       {onOpenGallery && <ChevronRight size={14} />}
                     </span>
                   </div>

@@ -5,15 +5,19 @@ import {
   findMediaFile,
   getMediaReferencePath,
   getMediaType,
+  getFacebookStickerFileName,
   getMessageAttachmentReferences,
   getMessageMediaItems,
   isMediaReferenceFound,
+  processFacebookStickerReferences,
 } from '../src/services/media';
 import type { MediaEntry, MessengerMessage } from '../src/types/messenger';
+import { createMockDirectoryHandle } from './helpers/mockFileSystem';
 
 describe('media service', () => {
   it('maps common media extensions', () => {
     expect(getMediaType('photo.JPG')).toBe('image');
+    expect(getMediaType('sticker.WEBP')).toBe('image');
     expect(getMediaType('clip.mp4')).toBe('video');
     expect(getMediaType('voice.m4a')).toBe('audio');
     expect(getMediaType('archive.zip')).toBe('unknown');
@@ -54,6 +58,58 @@ describe('media service', () => {
       { path: 'media/d.gif', category: 'gifs' },
       { path: 'media/e.pdf', category: 'files' },
     ]);
+  });
+
+  it('categorizes Facebook stickers as shared attachments', () => {
+    const sticker = {
+      uri: 'your_facebook_activity/messages/stickers_used/827898137002625.webp',
+      ai_stickers: [],
+    };
+    const message = {
+      sender_name: 'Alice',
+      timestamp_ms: 1,
+      sticker,
+    } satisfies MessengerMessage;
+
+    expect(getMessageAttachmentReferences(message)).toEqual([{
+      path: sticker.uri,
+      category: 'stickers',
+      shared: true,
+    }]);
+    expect(getMessageMediaItems(message)).toEqual([sticker]);
+  });
+
+  it('accepts supported Facebook sticker path variants only', () => {
+    expect(getFacebookStickerFileName('your_facebook_activity/messages/stickers_used/1.webp')).toBe('1.webp');
+    expect(getFacebookStickerFileName('messages/stickers_used/2.PNG')).toBe('2.PNG');
+    expect(getFacebookStickerFileName('./stickers_used/3.jpg')).toBe('3.jpg');
+    expect(getFacebookStickerFileName('media/3.webp')).toBeNull();
+    expect(getFacebookStickerFileName('stickers_used/nested/3.webp')).toBeNull();
+    expect(getFacebookStickerFileName('stickers_used/clip.mp4')).toBeNull();
+  });
+
+  it('indexes referenced Facebook stickers without increasing chat media totals', async () => {
+    const root = createMockDirectoryHandle('messages', {
+      stickers_used: {
+        '1.png': new Uint8Array([1, 2, 3]),
+      },
+    });
+    const state = createMediaState();
+    const messages: MessengerMessage[] = [{
+      sender_name: 'Alice',
+      timestamp_ms: 1,
+      sticker: { uri: 'your_facebook_activity/messages/stickers_used/1.png' },
+    }, {
+      sender_name: 'Bob',
+      timestamp_ms: 2,
+      sticker: { uri: 'your_facebook_activity/messages/stickers_used/missing.webp' },
+    }];
+
+    await processFacebookStickerReferences(root, messages, state);
+
+    expect(findMediaFile(state, messages[0].sticker!.uri!)?.type).toBe('image');
+    expect(findMediaFile(state, messages[1].sticker!.uri!)).toBeNull();
+    expect(state.mediaFileCount).toBe(0);
   });
 
   it('finds indexed media by full path and basename', () => {

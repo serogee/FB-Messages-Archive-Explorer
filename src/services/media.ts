@@ -96,7 +96,8 @@ export function getMessageMediaItems(msg: MessengerMessage): MediaItem[] {
     msg?.audio || [],
     msg?.audio_files || [],
     msg?.gifs || [],
-    msg?.files || []
+    msg?.files || [],
+    msg?.sticker ? [msg.sticker] : []
   );
 
   return items.filter(item => {
@@ -128,15 +129,15 @@ function getMediaTypeFromDirectory(path: string): 'image' | 'video' | 'audio' | 
 
 export function getMessageAttachmentReferences(
   msg: MessengerMessage
-): Array<{ path: string; category: string }> {
-  const refs: Array<{ path: string; category: string }> = [];
+): Array<{ path: string; category: string; shared?: boolean }> {
+  const refs: Array<{ path: string; category: string; shared?: boolean }> = [];
   const seen = new Set<string>();
-  const addRef = (item: MediaItem, category: string) => {
+  const addRef = (item: MediaItem, category: string, shared = false) => {
     const path = getMediaReferencePath(item);
     const key = `${category}:${path.toLowerCase()}`;
     if (!path || seen.has(key)) return;
     seen.add(key);
-    refs.push({ path, category });
+    refs.push(shared ? { path, category, shared: true } : { path, category });
   };
 
   (msg?.photos || []).forEach(item => addRef(item, 'photos'));
@@ -149,7 +150,64 @@ export function getMessageAttachmentReferences(
     const path = getMediaReferencePath(item);
     addRef(item, categorizeAttachment(path));
   });
+  if (msg?.sticker) addRef(msg.sticker, 'stickers', true);
   return refs;
+}
+
+export function getFacebookStickerFileName(path: string): string | null {
+  const cleanPath = String(path || '').replace(/\\/g, '/').split(/[?#]/, 1)[0];
+  const parts = cleanPath.split('/').filter(Boolean);
+  const stickerDirectoryIndex = parts.findIndex(part => part.toLowerCase() === 'stickers_used');
+  if (stickerDirectoryIndex < 0 || stickerDirectoryIndex !== parts.length - 2) return null;
+
+  const fileName = parts[stickerDirectoryIndex + 1];
+  if (!fileName || !/\.(?:jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(fileName) || fileName === '.' || fileName === '..') return null;
+  return fileName;
+}
+
+export async function processFacebookStickerReferences(
+  messagesRootHandle: ReadableDirectoryHandle,
+  messages: MessengerMessage[],
+  state: MediaState,
+  signal?: AbortSignal
+): Promise<void> {
+  const pathsByFileName = new Map<string, Set<string>>();
+  for (const message of messages) {
+    const path = message.sticker ? getMediaReferencePath(message.sticker) : '';
+    const fileName = getFacebookStickerFileName(path);
+    if (!fileName) continue;
+    const normalizedFileName = fileName.toLowerCase();
+    let paths = pathsByFileName.get(normalizedFileName);
+    if (!paths) {
+      paths = new Set();
+      pathsByFileName.set(normalizedFileName, paths);
+    }
+    paths.add(path);
+  }
+  if (pathsByFileName.size === 0 || signal?.aborted) return;
+
+  let stickerDirectory: ReadableDirectoryHandle;
+  try {
+    stickerDirectory = await messagesRootHandle.getDirectoryHandle('stickers_used');
+  } catch {
+    return;
+  }
+
+  await Promise.all(Array.from(pathsByFileName.entries()).map(async ([, paths]) => {
+    if (signal?.aborted) return;
+    const firstPath = paths.values().next().value as string | undefined;
+    const fileName = firstPath ? getFacebookStickerFileName(firstPath) : null;
+    if (!fileName) return;
+    try {
+      const handle = await stickerDirectory.getFileHandle(fileName);
+      const entry: MediaEntry = { handle, type: 'image' };
+      for (const path of paths) {
+        state.types[path] = 'image';
+        addMediaToIndex(state, path, entry);
+      }
+      addMediaToIndex(state, `stickers_used/${fileName}`, entry);
+    } catch { /* A missing shared sticker should remain visible as an unresolved reference. */ }
+  }));
 }
 
 export async function processMediaFromDirectory(

@@ -788,6 +788,14 @@ video {
 .media-preview > video {
     margin: 0;
 }
+.sticker-preview {
+    width: min(180px, 100%);
+    background: transparent;
+}
+.sticker-preview > img {
+    max-height: 180px;
+    object-fit: contain;
+}
 
 .date-nav-controls {
     display: none;

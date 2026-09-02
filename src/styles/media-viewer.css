@@ -226,6 +226,9 @@
     user-select: none;
     animation: media-viewer-media-in 0.15s ease;
 }
+.media-viewer-sticker {
+    object-fit: contain;
+}
 
 .media-viewer-video {
     max-width: 100%;

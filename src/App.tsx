@@ -163,7 +163,7 @@ export default function App() {
     }
     archive.setSizeQueuePaused(true);
     try {
-      await chat.loadChat(entry);
+      await chat.loadChat(entry, archive.rootHandle);
     } finally {
       archive.setSizeQueuePaused(false);
     }

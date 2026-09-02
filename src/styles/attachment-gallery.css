@@ -276,6 +276,12 @@
     display: block;
     transition: none;
 }
+.gallery-thumb-sticker .gallery-thumb-img {
+    object-fit: contain;
+    padding: 10px;
+    box-sizing: border-box;
+    background: transparent;
+}
 
 .gallery-thumb-placeholder {
     font-size: 28px;

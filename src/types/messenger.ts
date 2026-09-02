@@ -7,6 +7,10 @@ export interface MediaItem {
   name?: string;
 }
 
+export interface StickerItem extends MediaItem {
+  ai_stickers?: unknown[];
+}
+
 export interface Reaction {
   actor: string;
   reaction: string;
@@ -36,6 +40,7 @@ export interface MessengerMessage {
   gifs?: MediaItem[];
   files?: MediaItem[];
   media?: MediaItem[];
+  sticker?: StickerItem;
   share?: SharedLink;
   reactions?: Reaction[];
   is_unsent?: boolean;
@@ -83,16 +88,18 @@ export interface AttachmentCounts {
   audio: number;
   gifs: number;
   files: number;
+  stickers: number;
   total: number;
 }
 
 export interface ResolvedAttachment {
   mediaPath: string;
-  category: 'photos' | 'videos' | 'audio' | 'gifs' | 'files';
+  category: 'photos' | 'videos' | 'audio' | 'gifs' | 'files' | 'stickers';
   messageIndex: number;
   timestamp: number;
   sender: string;
   mediaEntry: MediaEntry | null;
+  shared?: boolean;
 }
 
 export interface ResolvedLink {

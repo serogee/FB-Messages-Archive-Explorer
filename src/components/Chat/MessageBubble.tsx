@@ -220,11 +220,13 @@ function LazyMedia({
   mediaPath,
   mediaFile,
   preferredType,
+  isSticker = false,
   onMediaClick,
 }: {
   mediaPath: string;
   mediaFile: ReturnType<typeof findMediaFile>;
   preferredType?: 'image' | 'video' | 'audio';
+  isSticker?: boolean;
   onMediaClick?: () => void;
 }) {
   const [fileURL, setFileURL] = useState<string | null>(() => {
@@ -350,8 +352,8 @@ function LazyMedia({
   let content: React.ReactNode;
   if (mediaType === 'image') {
     content = fileURL
-      ? <div className="media-preview" onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
-          <img src={fileURL} alt="Image" className="preview" />
+      ? <div className={`media-preview${isSticker ? ' sticker-preview' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
+          <img src={fileURL} alt={isSticker ? 'Sticker' : 'Image'} className="preview" />
         </div>
       : <span className="placeholder">[ Image not found ]</span>;
   } else if (mediaType === 'video') {
@@ -427,13 +429,14 @@ export const MessageBubble = memo(function MessageBubble({
   const timestamp = getMessageTimestamp(msg) || 0;
   const seenMediaPaths = new Set<string>();
   const mediaItems = [
-    ...(msg.photos || []).map(media => ({ media, preferredType: 'image' as const })),
-    ...(msg.videos || []).map(media => ({ media, preferredType: 'video' as const })),
-    ...(msg.audio || []).map(media => ({ media, preferredType: 'audio' as const })),
-    ...(msg.audio_files || []).map(media => ({ media, preferredType: 'audio' as const })),
-    ...(msg.gifs || []).map(media => ({ media, preferredType: 'image' as const })),
-    ...(msg.files || []).map(media => ({ media, preferredType: undefined })),
-    ...(msg.media || []).map(media => ({ media, preferredType: undefined })),
+    ...(msg.photos || []).map(media => ({ media, preferredType: 'image' as const, isSticker: false })),
+    ...(msg.videos || []).map(media => ({ media, preferredType: 'video' as const, isSticker: false })),
+    ...(msg.audio || []).map(media => ({ media, preferredType: 'audio' as const, isSticker: false })),
+    ...(msg.audio_files || []).map(media => ({ media, preferredType: 'audio' as const, isSticker: false })),
+    ...(msg.gifs || []).map(media => ({ media, preferredType: 'image' as const, isSticker: false })),
+    ...(msg.files || []).map(media => ({ media, preferredType: undefined, isSticker: false })),
+    ...(msg.media || []).map(media => ({ media, preferredType: undefined, isSticker: false })),
+    ...(msg.sticker ? [{ media: msg.sticker, preferredType: 'image' as const, isSticker: true }] : []),
   ].filter(({ media }) => {
     const mediaPath = getMediaReferencePath(media).toLowerCase();
     if (!mediaPath || seenMediaPaths.has(mediaPath)) return false;
@@ -441,12 +444,12 @@ export const MessageBubble = memo(function MessageBubble({
     return true;
   });
 
-  const resolvedMediaItems = mediaItems.map(({ media, preferredType }) => {
+  const resolvedMediaItems = mediaItems.map(({ media, preferredType, isSticker }) => {
     const mediaPath = getMediaReferencePath(media);
     const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
     const mediaFile = findMediaFile(mediaState, mediaPath);
     const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
-    return { media, preferredType, mediaPath, mediaFile, mediaType };
+    return { media, preferredType, mediaPath, mediaFile, mediaType, isSticker };
   });
 
   const previewMediaItems = resolvedMediaItems.filter(item => item.mediaType === 'image' || item.mediaType === 'video');
@@ -499,34 +502,37 @@ export const MessageBubble = memo(function MessageBubble({
 
             {hasMediaGrid ? (
               <div className="message-media-grid">
-                {previewMediaItems.map(({ preferredType, mediaPath, mediaFile }, i) => (
+                {previewMediaItems.map(({ preferredType, mediaPath, mediaFile, isSticker }, i) => (
                   <LazyMedia
                     key={`${mediaPath}:${i}`}
                     mediaPath={mediaPath}
                     mediaFile={mediaFile}
                     preferredType={preferredType}
+                    isSticker={isSticker}
                     onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
                   />
                 ))}
               </div>
             ) : (
-              previewMediaItems.map(({ preferredType, mediaPath, mediaFile }, i) => (
+              previewMediaItems.map(({ preferredType, mediaPath, mediaFile, isSticker }, i) => (
                 <LazyMedia
                   key={`${mediaPath}:${i}`}
                   mediaPath={mediaPath}
                   mediaFile={mediaFile}
                   preferredType={preferredType}
+                  isSticker={isSticker}
                   onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
                 />
               ))
             )}
 
-            {otherMediaItems.map(({ preferredType, mediaPath, mediaFile }, i) => (
+            {otherMediaItems.map(({ preferredType, mediaPath, mediaFile, isSticker }, i) => (
               <LazyMedia
                 key={`${mediaPath}:other:${i}`}
                 mediaPath={mediaPath}
                 mediaFile={mediaFile}
                 preferredType={preferredType}
+                isSticker={isSticker}
                 onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
               />
             ))}

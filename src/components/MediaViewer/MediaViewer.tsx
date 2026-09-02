@@ -59,7 +59,7 @@ function useResolvedUrl(attachment: ResolvedAttachment | null, mediaState: Media
 
 function getDisplayType(attachment: ResolvedAttachment): 'image' | 'video' | 'audio' | 'file' {
   const cat = attachment.category;
-  if (cat === 'photos' || cat === 'gifs') return 'image';
+  if (cat === 'photos' || cat === 'gifs' || cat === 'stickers') return 'image';
   if (cat === 'videos') return 'video';
   if (cat === 'audio') return 'audio';
   return 'file';
@@ -319,7 +319,7 @@ export function MediaViewer({
             key={currentIndex}
             src={url}
             alt={filename}
-            className="media-viewer-image"
+            className={`media-viewer-image${attachment.category === 'stickers' ? ' media-viewer-sticker' : ''}`}
             draggable={false}
           />
         ) : displayType === 'video' ? (

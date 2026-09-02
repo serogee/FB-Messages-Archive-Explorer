@@ -7,7 +7,7 @@ import type { useSelection } from '../../hooks/useSelection';
 import { findMediaFile } from '../../services/media';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
-import { openMediaEntryInNewTab } from '../../services/blobCache';
+import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { getAudioMetadata, type AudioMetadata } from '../../services/audioMetadata';
 import { formatFileSize } from '../../services/storage';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
@@ -31,6 +31,7 @@ interface AttachmentGalleryProps {
   onTabChange: (tab: GalleryCategory) => void;
   defaultTab?: GalleryCategory;
   selection: ReturnType<typeof useSelection>;
+  showStickers: boolean;
   attachmentJumpTarget?: AttachmentJumpTarget | null;
   onAttachmentJumpHandled?: () => void;
 }
@@ -50,6 +51,7 @@ const TABS: { key: GalleryCategory; label: string }[] = [
   { key: 'gifs', label: 'GIFs' },
   { key: 'files', label: 'Files' },
   { key: 'links', label: 'Links' },
+  { key: 'stickers', label: 'Stickers' },
 ];
 
 function formatMonthYear(ts: number): string {
@@ -164,7 +166,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
 
   useEffect(() => {
-    if (attachment.category !== 'photos' && attachment.category !== 'gifs' && attachment.category !== 'videos') {
+    if (attachment.category !== 'photos' && attachment.category !== 'gifs' && attachment.category !== 'videos' && attachment.category !== 'stickers') {
       setUrl(null);
       setVideoDuration(null);
       return;
@@ -175,6 +177,23 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
       setUrl(null);
       setVideoDuration(null);
       return;
+    }
+
+    if (attachment.category === 'stickers') {
+      const cached = blobCache.get(entry) || entry.url || null;
+      if (cached) {
+        setUrl(cached);
+        setVideoDuration(null);
+        return;
+      }
+
+      let mounted = true;
+      setUrl(null);
+      setVideoDuration(null);
+      void blobCache.getOrCreate(entry).then(stickerUrl => {
+        if (mounted) setUrl(stickerUrl);
+      });
+      return () => { mounted = false; };
     }
 
     if (attachment.category === 'videos') {
@@ -230,7 +249,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
 
   return (
     <div
-      className={`gallery-thumb ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${compactFileCard ? 'gallery-thumb-file-compact' : ''} ${compactAudioCard ? 'gallery-thumb-audio-compact' : ''} ${isSelected ? 'selected' : ''} ${isJumpHighlighted ? 'jump-highlight' : ''}`}
+      className={`gallery-thumb ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${category === 'stickers' ? 'gallery-thumb-sticker' : ''} ${compactFileCard ? 'gallery-thumb-file-compact' : ''} ${compactAudioCard ? 'gallery-thumb-audio-compact' : ''} ${isSelected ? 'selected' : ''} ${isJumpHighlighted ? 'jump-highlight' : ''}`}
       onClick={activate}
       onKeyDown={handleKeyDown}
       role="button"
@@ -251,7 +270,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         {isSelected && <Check size={14} />}
       </div>
 
-      {(category === 'photos' || category === 'gifs') ? (
+      {(category === 'photos' || category === 'gifs' || category === 'stickers') ? (
         url
           ? <img src={url} alt={filename} className="gallery-thumb-img" />
           : <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
@@ -393,6 +412,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
   onTabChange,
   defaultTab = 'all',
   selection,
+  showStickers,
   attachmentJumpTarget,
   onAttachmentJumpHandled,
 }: AttachmentGalleryProps) {
@@ -433,7 +453,11 @@ const AttachmentGalleryBase = function AttachmentGallery({
     [compactCardTab, groups, viewport.width],
   );
 
-  useEffect(() => setActiveTab(defaultTab), [defaultTab]);
+  useEffect(() => {
+    const nextTab = !showStickers && defaultTab === 'stickers' ? 'all' : defaultTab;
+    setActiveTab(nextTab);
+    if (nextTab !== defaultTab) onTabChange(nextTab);
+  }, [defaultTab, onTabChange, showStickers]);
   useEffect(() => {
     if (selection.selectedCount > 0) setSelectionMode(true);
   }, [selection.selectedCount]);
@@ -659,7 +683,10 @@ const AttachmentGalleryBase = function AttachmentGallery({
     gifs: byCategory.gifs.length,
     files: byCategory.files.length,
     links: links.length,
+    stickers: byCategory.stickers.length,
   }), [all, byCategory, links]);
+
+  const visibleTabs = showStickers ? TABS : TABS.filter(tab => tab.key !== 'stickers');
 
   return (
     <>
@@ -694,7 +721,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
       </div>
 
       <div className="gallery-tabs">
-        {TABS.map(tab => (
+        {visibleTabs.map(tab => (
           <button
             key={tab.key}
             className={`gallery-tab ${activeTab === tab.key ? 'active' : ''}`}
@@ -790,6 +817,7 @@ export const AttachmentGallery = memo(AttachmentGalleryBase, (previous, next) =>
   && previous.isOpen === next.isOpen
   && previous.infoPanelOpen === next.infoPanelOpen
   && previous.defaultTab === next.defaultTab
+  && previous.showStickers === next.showStickers
   && previous.attachmentJumpTarget === next.attachmentJumpTarget
   && previous.onTabChange === next.onTabChange
   && previous.selection === next.selection
