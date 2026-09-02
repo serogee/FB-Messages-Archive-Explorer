@@ -484,7 +484,9 @@ export const MessageBubble = memo(function MessageBubble({
         ) : (
           <>
             {rawText && (
-              <MessageText text={rawText} highlightQuery={highlightQuery} />
+              <span className="message-text">
+                <MessageText text={rawText} highlightQuery={highlightQuery} />
+              </span>
             )}
 
             {messageLinks.length > 0 && (
