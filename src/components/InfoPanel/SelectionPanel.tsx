@@ -5,7 +5,8 @@ import { formatInfoNumber } from '../../services/storage';
 import { saveToFolder, downloadAsZip } from '../../services/saveAttachments';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
 import { findMediaFile } from '../../services/media';
-import { blobCache } from '../../services/blobCache';
+import { imageThumbnailCache } from '../../services/imageThumbnailCache';
+import { videoPosterCache } from '../../services/videoPosterCache';
 
 interface SelectionPanelProps {
   chatData: MessengerThread;
@@ -15,22 +16,89 @@ interface SelectionPanelProps {
   onClearSelection: () => void;
 }
 
-export function SelectionPanel({
+interface SelectionHeaderProps {
+  chatData: MessengerThread;
+  mediaState: MediaState;
+  selectedAttachments: ResolvedAttachment[];
+  onClearSelection: () => void;
+  onSaveStateChange?: (state: SelectionSaveState) => void;
+}
+
+interface SelectionSaveState {
+  saving: boolean;
+  progress: { done: number; total: number };
+}
+
+const IDLE_SAVE_STATE: SelectionSaveState = {
+  saving: false,
+  progress: { done: 0, total: 0 },
+};
+
+function SelectionVisualThumbnail({
+  attachment,
+  mediaState,
+  basename,
+}: {
+  attachment: ResolvedAttachment;
+  mediaState: MediaState;
+  basename: string;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const isVideo = attachment.category === 'videos';
+
+  useEffect(() => {
+    const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
+    if (!entry) {
+      setUrl(null);
+      return;
+    }
+
+    const cached = isVideo
+      ? videoPosterCache.get(entry)
+      : imageThumbnailCache.get(entry);
+    setUrl(cached);
+    if (cached) return;
+
+    let mounted = true;
+    const thumbnailRequest = isVideo
+      ? videoPosterCache.getOrCreate(entry)
+      : imageThumbnailCache.getOrCreate(entry);
+    void thumbnailRequest.then(thumbnailUrl => {
+      if (mounted) setUrl(thumbnailUrl);
+    });
+
+    return () => { mounted = false; };
+  }, [attachment, isVideo, mediaState]);
+
+  return (
+    <>
+      {url ? (
+        <img src={url} alt={basename} className="gallery-thumb-img" />
+      ) : (
+        <div className="gallery-thumb-placeholder">
+          {isVideo ? <Film size={24} /> : <ImageIcon size={24} />}
+        </div>
+      )}
+      {isVideo && <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>}
+    </>
+  );
+}
+
+export function SelectionHeader({
   chatData,
   mediaState,
   selectedAttachments,
-  onDeselect,
   onClearSelection,
-}: SelectionPanelProps) {
+  onSaveStateChange,
+}: SelectionHeaderProps) {
   const [saving, setSaving] = useState(false);
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    const handler = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setMenuOpen(false);
       }
     };
@@ -38,75 +106,102 @@ export function SelectionPanel({
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
 
+  const updateSaveState = (nextSaving: boolean, done: number, total: number) => {
+    setSaving(nextSaving);
+    onSaveStateChange?.({ saving: nextSaving, progress: { done, total } });
+  };
+
   const handleSave = async (mode: 'folder' | 'zip') => {
     setMenuOpen(false);
-    setSaving(true);
-    setProgress({ done: 0, total: selectedAttachments.length });
-    
+    updateSaveState(true, 0, selectedAttachments.length);
+
     try {
+      const updateProgress = (done: number, total: number) => updateSaveState(true, done, total);
       if (mode === 'folder') {
-        await saveToFolder(selectedAttachments, mediaState, (done, total) => setProgress({ done, total }));
+        await saveToFolder(selectedAttachments, mediaState, updateProgress);
       } else {
-        await downloadAsZip(selectedAttachments, mediaState, chatData.title, (done, total) => setProgress({ done, total }));
+        await downloadAsZip(selectedAttachments, mediaState, chatData.title, updateProgress);
       }
       onClearSelection();
-    } catch (e) {
-      console.error('Failed to save attachments:', e);
+    } catch (error) {
+      console.error('Failed to save attachments:', error);
     } finally {
-      setSaving(false);
+      updateSaveState(false, 0, 0);
     }
   };
 
   const chromiumSupported = isFileSystemAccessSupported();
 
   return (
-    <div className="chat-info-panel selection-panel">
-      <div className="selection-panel-header">
-        <strong>{formatInfoNumber(selectedAttachments.length)} Selected</strong>
-        <div className="selection-header-actions">
-          {!saving && (
-            <div className="selection-menu-wrap" ref={menuRef}>
-              <button
-                className="selection-menu-btn"
-                onClick={() => setMenuOpen(!menuOpen)}
-                title="Save options"
-              >
-                <MoreHorizontal size={20} />
-              </button>
-              {menuOpen && (
-                <div className="selection-menu-dropdown">
-                  {chromiumSupported && (
-                    <button className="selection-menu-item" onClick={() => handleSave('folder')}>
-                      <FolderOutput size={16} className="selection-menu-icon" />
-                      Save to Folder
-                    </button>
-                  )}
-                  <button className="selection-menu-item" onClick={() => handleSave('zip')}>
-                    <Archive size={16} className="selection-menu-icon" />
-                    Save as ZIP
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          {!saving && (
-            <button className="selection-clear-btn" onClick={onClearSelection} title="Clear selection">
-              <X size={16} />
+    <div className="selection-panel-header">
+      <strong>{formatInfoNumber(selectedAttachments.length)} Selected</strong>
+      <div className="selection-header-actions">
+        {!saving && (
+          <div className="selection-menu-wrap" ref={menuRef}>
+            <button
+              className="selection-menu-btn"
+              onClick={() => setMenuOpen(!menuOpen)}
+              title="Save options"
+              aria-label="Save selected attachments"
+              aria-expanded={menuOpen}
+            >
+              <MoreHorizontal size={20} />
             </button>
-          )}
-        </div>
+            {menuOpen && (
+              <div className="selection-menu-dropdown">
+                {chromiumSupported && (
+                  <button className="selection-menu-item" onClick={() => handleSave('folder')}>
+                    <FolderOutput size={16} className="selection-menu-icon" />
+                    Save to Folder
+                  </button>
+                )}
+                <button className="selection-menu-item" onClick={() => handleSave('zip')}>
+                  <Archive size={16} className="selection-menu-icon" />
+                  Save as ZIP
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {!saving && (
+          <button className="selection-clear-btn" onClick={onClearSelection} title="Clear selection">
+            <X size={16} />
+          </button>
+        )}
       </div>
+    </div>
+  );
+}
 
-      {saving ? (
+export function SelectionPanel({
+  chatData,
+  mediaState,
+  selectedAttachments,
+  onDeselect,
+  onClearSelection,
+}: SelectionPanelProps) {
+  const [saveState, setSaveState] = useState<SelectionSaveState>(IDLE_SAVE_STATE);
+
+  return (
+    <div className="chat-info-panel selection-panel">
+      <SelectionHeader
+        chatData={chatData}
+        mediaState={mediaState}
+        selectedAttachments={selectedAttachments}
+        onClearSelection={onClearSelection}
+        onSaveStateChange={setSaveState}
+      />
+
+      {saveState.saving ? (
         <div className="selection-progress-section">
           <div className="selection-progress-wrap">
             <div className="selection-progress-text">
-              Processing… {progress.done} / {progress.total}
+              Processing… {saveState.progress.done} / {saveState.progress.total}
             </div>
             <div className="selection-progress-track">
-              <div 
-                className="selection-progress-fill" 
-                style={{ width: `${progress.total > 0 ? (progress.done / progress.total) * 100 : 0}%` }}
+              <div
+                className="selection-progress-fill"
+                style={{ width: `${saveState.progress.total > 0 ? (saveState.progress.done / saveState.progress.total) * 100 : 0}%` }}
               />
             </div>
           </div>
@@ -117,18 +212,7 @@ export function SelectionPanel({
             {selectedAttachments.map(att => {
               const key = `${att.category}:${att.mediaPath}`;
               const basename = att.mediaPath.split('/').pop() || 'file';
-              const isVisual = att.category === 'photos' || att.category === 'gifs' || att.category === 'videos';
               const cat = att.category;
-              
-              let url: string | undefined;
-              if (isVisual) {
-                const entry = att.mediaEntry || findMediaFile(mediaState, att.mediaPath);
-                if (entry) {
-                  const cached = blobCache.get(entry);
-                  if (cached) url = cached;
-                  else if (entry.url) url = entry.url;
-                }
-              }
 
               return (
                 <button
@@ -138,22 +222,13 @@ export function SelectionPanel({
                   title={basename}
                 >
                   <div className="select-checkbox"><Check size={14} /></div>
-                  
-                  {(cat === 'photos' || cat === 'gifs') ? (
-                    url ? (
-                      <img src={url} alt={basename} className="gallery-thumb-img" />
-                    ) : (
-                      <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
-                    )
-                  ) : cat === 'videos' ? (
-                    url ? (
-                      <>
-                        <video src={url} className="gallery-thumb-img" preload="metadata" muted />
-                        <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>
-                      </>
-                    ) : (
-                      <div className="gallery-thumb-placeholder"><Film size={24} /></div>
-                    )
+
+                  {(cat === 'photos' || cat === 'gifs' || cat === 'videos') ? (
+                    <SelectionVisualThumbnail
+                      attachment={att}
+                      mediaState={mediaState}
+                      basename={basename}
+                    />
                   ) : cat === 'audio' ? (
                     <>
                       <div className="gallery-thumb-icon"><Music size={24} /></div>

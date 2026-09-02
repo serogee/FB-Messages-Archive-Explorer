@@ -40,11 +40,28 @@
 .switch input:checked + .slider:before { transform: translateX(20px); }
 .switch input:disabled + .slider { opacity: 0.5; cursor: not-allowed; }
 
-.settings-section { margin-bottom: 16px; }
-.settings-section > strong { display: block; margin-bottom: 10px; font-size: 15px; }
+.settings-section { margin-bottom: 16px; color: var(--muted); }
+.settings-section > strong { display: block; margin-bottom: 10px; font-size: 15px; color: var(--text); }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.settings-row > label:first-child { font-size: 14px; color: var(--text); cursor: pointer; flex: 1; }
+.settings-row > label:first-child { font-size: 14px; color: var(--muted); cursor: pointer; flex: 1; }
 .settings-row > .switch { flex: 0 0 auto; }
+.settings-shortcuts-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+.settings-shortcuts-btn span { flex: 1; }
+.settings-shortcuts-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 .folder-display-container {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;

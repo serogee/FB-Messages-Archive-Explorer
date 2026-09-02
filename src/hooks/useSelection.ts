@@ -3,6 +3,7 @@ import type { ResolvedAttachment } from '../types/messenger';
 
 export function useSelection() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [clearVersion, setClearVersion] = useState(0);
   // Stable selection callbacks avoid rerendering every memoized gallery thumbnail.
   const keysRef = useRef(selectedKeys);
   keysRef.current = selectedKeys;
@@ -22,6 +23,7 @@ export function useSelection() {
 
   const deselectAll = useCallback(() => {
     setSelectedKeys(new Set());
+    setClearVersion((version) => version + 1);
   }, []);
 
   const isSelected = useCallback(
@@ -50,6 +52,7 @@ export function useSelection() {
     deselectAll,
     isSelected,
     selectedCount,
+    clearVersion,
     getSelectedAttachments,
   };
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { MoreVertical, ExternalLink, Download, X, ChevronLeft, ChevronRight, CheckSquare, Paperclip, Music, FileText } from 'lucide-react';
+import { MoreVertical, ExternalLink, Download, X, ChevronLeft, ChevronRight, Check, CheckSquare, SquareX, Paperclip, Music, FileText } from 'lucide-react';
 import type { ResolvedAttachment } from '../../types/messenger';
 import { findMediaFile } from '../../services/media';
 import { blobCache } from '../../services/blobCache';
@@ -14,7 +14,10 @@ interface MediaViewerProps {
   mediaState: MediaState;
   onClose: () => void;
   onJumpToMessage: (messageIndex: number) => void;
+  onJumpToAttachment?: (attachment: ResolvedAttachment) => void;
   selection?: ReturnType<typeof useSelection>;
+  selectionMode?: boolean;
+  reverseNavigation?: boolean;
 }
 
 type MediaUrlState = { url: string | null; status: 'loading' | 'ready' | 'missing' };
@@ -68,28 +71,47 @@ export function MediaViewer({
   mediaState,
   onClose,
   onJumpToMessage,
+  onJumpToAttachment,
   selection,
+  selectionMode = false,
+  reverseNavigation = false,
 }: MediaViewerProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const mediaElementRef = useRef<HTMLMediaElement | null>(null);
+  const currentAttachmentRef = useRef<ResolvedAttachment | null>(null);
+  const selectionRef = useRef(selection);
+  const selectionModeRef = useRef(selectionMode);
 
   const attachment = attachments[currentIndex] || null;
   const { url, status: urlStatus } = useResolvedUrl(attachment, mediaState);
   const displayType = attachment ? getDisplayType(attachment) : 'file';
+  const isSelected = !!(attachment && selection?.isSelected(attachment));
+  currentAttachmentRef.current = attachment;
+  selectionRef.current = selection;
+  selectionModeRef.current = selectionMode;
 
-  const hasPrev = currentIndex > 0;
-  const hasNext = currentIndex < attachments.length - 1;
+  const hasLeft = reverseNavigation
+    ? currentIndex < attachments.length - 1
+    : currentIndex > 0;
+  const hasRight = reverseNavigation
+    ? currentIndex > 0
+    : currentIndex < attachments.length - 1;
 
-  const goPrev = useCallback(() => {
-    setCurrentIndex(i => Math.max(0, i - 1));
+  const goLeft = useCallback(() => {
+    setCurrentIndex(index => reverseNavigation
+      ? Math.min(attachments.length - 1, index + 1)
+      : Math.max(0, index - 1));
     setMenuOpen(false);
-  }, []);
+  }, [attachments.length, reverseNavigation]);
 
-  const goNext = useCallback(() => {
-    setCurrentIndex(i => Math.min(attachments.length - 1, i + 1));
+  const goRight = useCallback(() => {
+    setCurrentIndex(index => reverseNavigation
+      ? Math.max(0, index - 1)
+      : Math.min(attachments.length - 1, index + 1));
     setMenuOpen(false);
-  }, [attachments.length]);
+  }, [attachments.length, reverseNavigation]);
 
   const handleJump = useCallback(() => {
     if (attachment) {
@@ -100,17 +122,61 @@ export function MediaViewer({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if ((e.key === ' ' || e.code === 'Space') && selectionModeRef.current) {
+        const currentAttachment = currentAttachmentRef.current;
+        const currentSelection = selectionRef.current;
+        if (currentAttachment && currentSelection) {
+          e.preventDefault();
+          e.stopPropagation();
+          currentSelection.toggle(currentAttachment);
+        }
+        return;
+      }
+      if (e.key === ' ' || e.code === 'Space') {
+        const target = e.target as HTMLElement | null;
+        const isFocusedControl = !!target?.closest('button, a, input, select, textarea');
+        const mediaElement = mediaElementRef.current;
+        if (mediaElement && !isFocusedControl) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (mediaElement.paused) {
+            void mediaElement.play().catch(() => {});
+          } else {
+            mediaElement.pause();
+          }
+        }
+        return;
+      }
+      if (e.key === ',' || e.code === 'Comma' || e.key === '.' || e.code === 'Period') {
+        const mediaElement = mediaElementRef.current;
+        if (mediaElement) {
+          e.preventDefault();
+          e.stopPropagation();
+          const direction = e.key === ',' || e.code === 'Comma' ? -1 : 1;
+          const nextTime = Math.max(0, mediaElement.currentTime + direction * 5);
+          mediaElement.currentTime = Number.isFinite(mediaElement.duration)
+            ? Math.min(mediaElement.duration, nextTime)
+            : nextTime;
+        }
+        return;
+      }
       if (e.key === 'Escape') { onClose(); return; }
-      if (e.key === 'ArrowLeft' && hasPrev) { goPrev(); return; }
-      if (e.key === 'ArrowRight' && hasNext) { goNext(); return; }
-      if (e.key === ' ' && attachment && selection) {
+      if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        selection.toggle(attachment);
+        e.stopPropagation();
+        if (hasLeft) goLeft();
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (hasRight) goRight();
+        return;
       }
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose, hasPrev, hasNext, goPrev, goNext, attachment, selection]);
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [onClose, hasLeft, hasRight, goLeft, goRight]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -144,13 +210,15 @@ export function MediaViewer({
           )}
         </div>
         <div className="media-viewer-actions">
-          {attachment && selection && (
+          {selectionMode && attachment && selection && (
             <button
-              className={`media-viewer-btn media-viewer-select-toggle ${selection.isSelected(attachment) ? 'selected' : ''}`}
+              className={`media-viewer-btn media-viewer-select-toggle ${isSelected ? 'selected' : ''}`}
               onClick={() => selection.toggle(attachment)}
               title="Select (Space)"
+              aria-label={isSelected ? 'Deselect attachment' : 'Select attachment'}
+              aria-pressed={isSelected}
             >
-              {selection.isSelected(attachment) && <CheckSquare size={18} />}
+              {isSelected && <Check size={18} />}
             </button>
           )}
           <div className="media-viewer-menu-wrap" ref={menuRef}>
@@ -164,10 +232,31 @@ export function MediaViewer({
             </button>
             {menuOpen && (
               <div className="media-viewer-menu-dropdown">
+                {attachment && selection && (
+                  <button className="media-viewer-menu-item" onClick={() => {
+                    if (selectionMode) selection.deselectAll();
+                    else selection.toggle(attachment);
+                    setMenuOpen(false);
+                  }}>
+                    {selectionMode
+                      ? <SquareX size={16} className="media-viewer-menu-icon" />
+                      : <CheckSquare size={16} className="media-viewer-menu-icon" />}
+                    {selectionMode ? 'Deselect all' : 'Select'}
+                  </button>
+                )}
                 <button className="media-viewer-menu-item" onClick={handleJump}>
                   <ExternalLink size={16} className="media-viewer-menu-icon" />
                   Jump to message
                 </button>
+                {attachment && onJumpToAttachment && (
+                  <button className="media-viewer-menu-item" onClick={() => {
+                    onJumpToAttachment(attachment);
+                    setMenuOpen(false);
+                  }}>
+                    <Paperclip size={16} className="media-viewer-menu-icon" />
+                    Jump to attachment
+                  </button>
+                )}
                 {attachment && (
                   <button className="media-viewer-menu-item" onClick={() => {
                     downloadSingle(attachment, mediaState);
@@ -191,18 +280,26 @@ export function MediaViewer({
         </div>
       </div>
 
-      {hasPrev && (
-        <button className="media-viewer-nav media-viewer-nav-prev" onClick={goPrev} aria-label="Previous">
+      {hasLeft && (
+        <button
+          className="media-viewer-nav media-viewer-nav-prev"
+          onClick={goLeft}
+          aria-label={reverseNavigation ? 'Newer attachment' : 'Previous attachment'}
+        >
           <ChevronLeft size={36} />
         </button>
       )}
-      {hasNext && (
-        <button className="media-viewer-nav media-viewer-nav-next" onClick={goNext} aria-label="Next">
+      {hasRight && (
+        <button
+          className="media-viewer-nav media-viewer-nav-next"
+          onClick={goRight}
+          aria-label={reverseNavigation ? 'Older attachment' : 'Next attachment'}
+        >
           <ChevronRight size={36} />
         </button>
       )}
 
-      <div className={`media-viewer-content ${attachment && selection?.isSelected(attachment) ? 'viewer-selected' : ''}`}>
+      <div className={`media-viewer-content ${isSelected ? 'viewer-selected' : ''}`}>
         {!attachment ? (
           <div className="media-viewer-empty">No attachment</div>
         ) : urlStatus === 'loading' ? (
@@ -227,17 +324,25 @@ export function MediaViewer({
           />
         ) : displayType === 'video' ? (
           <video
+            ref={mediaElementRef as React.RefObject<HTMLVideoElement>}
             key={currentIndex}
             src={url}
             controls
-            autoPlay
+            autoPlay={!selectionMode}
             className="media-viewer-video"
           />
         ) : displayType === 'audio' ? (
           <div className="media-viewer-audio-wrap">
             <div className="media-viewer-audio-icon"><Music size={48} /></div>
             <div className="media-viewer-file-name">{filename}</div>
-            <audio key={currentIndex} controls autoPlay src={url} className="media-viewer-audio" />
+            <audio
+              ref={mediaElementRef as React.RefObject<HTMLAudioElement>}
+              key={currentIndex}
+              controls
+              autoPlay={!selectionMode}
+              src={url}
+              className="media-viewer-audio"
+            />
           </div>
         ) : (
           <div className="media-viewer-placeholder">

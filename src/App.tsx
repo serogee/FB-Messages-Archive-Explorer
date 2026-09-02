@@ -9,7 +9,7 @@ import { useAttachments } from './hooks/useAttachments';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatView, type ChatViewHandle } from './components/Chat/ChatView';
 import { InfoPanel } from './components/InfoPanel/InfoPanel';
-import { SelectionPanel } from './components/InfoPanel/SelectionPanel';
+import { SelectionHeader, SelectionPanel } from './components/InfoPanel/SelectionPanel';
 import { TrustModal } from './components/Modals/TrustModal';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
 import type { ChatListEntry } from './types/messenger';
@@ -43,6 +43,7 @@ export default function App() {
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryDefaultTab, setGalleryDefaultTab] = useState<GalleryCategory>('all');
+  const [galleryHasOpened, setGalleryHasOpened] = useState(false);
 
   const { handleRef: sidebarHandleRef } = useResizable({
     minWidth: 260,
@@ -184,6 +185,7 @@ export default function App() {
       search.clearWideSearchCache();
       selection.deselectAll();
       setGalleryOpen(false);
+      setGalleryHasOpened(false);
       pendingJumpIndexRef.current = null;
     });
     if (picked) {
@@ -231,8 +233,11 @@ export default function App() {
 
   const handleOpenGallery = useCallback((tab?: string) => {
     if (tab) setGalleryDefaultTab(tab as GalleryCategory);
+    setGalleryHasOpened(true);
     setGalleryOpen(true);
   }, []);
+
+  const selectedAttachments = selection.getSelectedAttachments(attachments.all);
 
   return (
     <div className={`container ${settings.infoPanelOpen ? 'info-open' : ''}`}>
@@ -293,7 +298,9 @@ export default function App() {
         galleryOpen={galleryOpen}
         galleryDefaultTab={galleryDefaultTab}
         onGalleryTabChange={setGalleryDefaultTab}
+        onOpenGallery={handleOpenGallery}
         onCloseGallery={() => setGalleryOpen(false)}
+        galleryHasOpened={galleryHasOpened}
         selection={selection}
       />
 
@@ -312,7 +319,7 @@ export default function App() {
           <SelectionPanel 
             chatData={chat.chatData}
             mediaState={chat.mediaState}
-            selectedAttachments={selection.getSelectedAttachments(attachments.all)}
+            selectedAttachments={selectedAttachments}
             onDeselect={selection.toggle}
             onClearSelection={selection.deselectAll}
           />
@@ -324,6 +331,14 @@ export default function App() {
             selectedPerspective={chat.selectedPerspective}
             onSelectPerspective={chat.setSelectedPerspective}
             onOpenGallery={handleOpenGallery}
+            header={!galleryOpen && selection.selectedCount > 0 && chat.chatData ? (
+              <SelectionHeader
+                chatData={chat.chatData}
+                mediaState={chat.mediaState}
+                selectedAttachments={selectedAttachments}
+                onClearSelection={selection.deselectAll}
+              />
+            ) : undefined}
           />
         )
       )}

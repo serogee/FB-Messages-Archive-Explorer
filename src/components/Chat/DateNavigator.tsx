@@ -191,6 +191,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
   const [manualCollapse, setManualCollapse] = useState(false);
   const syncingRef = useRef(false);
   const sliderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const activeKeyRef = useRef<string | null>(null);
   const currentBucketsRef = useRef<DateBucket[]>([]);
@@ -220,6 +221,16 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
   useEffect(() => {
     currentBucketsRef.current = currentBuckets;
   }, [currentBuckets]);
+
+  const keepBucketVisible = useCallback((bucketKey: string) => {
+    if (scale !== 'month') return;
+    requestAnimationFrame(() => {
+      const activeElement = trackRef.current?.querySelector(
+        `[data-date-key="${CSS.escape(bucketKey)}"]`,
+      );
+      activeElement?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    });
+  }, [scale]);
 
   const updateFromScroll = useCallback(() => {
     if (syncingRef.current) return;
@@ -252,6 +263,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!hasDates) return;
+      if (!controlsRef.current?.matches(':hover')) return;
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
@@ -263,6 +275,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
         if (!bucket) return;
         syncingRef.current = true;
         setActiveKey(bucket.key);
+        keepBucketVisible(bucket.key);
         await onJumpToMessage(bucket.index);
         setTimeout(() => { syncingRef.current = false; }, DATE_NAV_SYNC_LOCK_MS);
       };
@@ -272,7 +285,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [hasDates, currentBuckets, activeKey, onJumpToMessage]);
+  }, [hasDates, currentBuckets, activeKey, keepBucketVisible, onJumpToMessage]);
 
   const step = async (direction: number) => {
     const cur = currentBuckets.findIndex(b => b.key === activeKey);
@@ -282,6 +295,7 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
     if (!bucket) return;
     syncingRef.current = true;
     setActiveKey(bucket.key);
+    keepBucketVisible(bucket.key);
     await onJumpToMessage(bucket.index);
     setTimeout(() => { syncingRef.current = false; }, DATE_NAV_SYNC_LOCK_MS);
   };
@@ -296,12 +310,9 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
   const handleBucketClick = async (bucket: DateBucket) => {
     syncingRef.current = true;
     setActiveKey(bucket.key);
+    keepBucketVisible(bucket.key);
     await onJumpToMessage(bucket.index);
     setTimeout(() => { syncingRef.current = false; }, DATE_NAV_SYNC_LOCK_MS);
-    if (trackRef.current && scale === 'month') {
-      const activeEl = trackRef.current.querySelector(`[data-date-key="${CSS.escape(bucket.key)}"]`);
-      if (activeEl) activeEl.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
-    }
   };
 
   const handleSliderChange = (value: number) => {
@@ -319,7 +330,11 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
   if (!hasDates) return null;
 
   return (
-    <div className={`date-nav-controls${hasDates ? ' active' : ''}${manualCollapse && !_settings.autoCollapseDateNav ? ' manual-collapsed' : ''}`} id="dateNavControls">
+    <div
+      ref={controlsRef}
+      className={`date-nav-controls${hasDates ? ' active' : ''}${manualCollapse && !_settings.autoCollapseDateNav ? ' manual-collapsed' : ''}`}
+      id="dateNavControls"
+    >
       <div className="date-nav-scale">
         {(['month', 'week', 'day'] as DateScale[]).map(s => (
           <button
