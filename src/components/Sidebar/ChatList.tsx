@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import type { CSSProperties } from 'react';
 import type { ChatListEntry } from '../../types/messenger';
 import { formatRelativeTime, formatFileSize } from '../../services/storage';
+import { getOrderedMessageFileNames } from '../../services/parser';
 
 interface ChatListProps {
   chatList: ChatListEntry[];
@@ -41,6 +44,7 @@ function getAvatarColor(title: string): string {
 }
 
 const MENU_DROP_UP_THRESHOLD_PX = 150;
+const MENU_WIDTH_PX = 160;
 
 function formatEntrySize(entry: ChatListEntry): string {
   if (entry._messengerExport && !entry._sizeIncludesMedia) {
@@ -69,15 +73,76 @@ async function copyFolderPath(entry: ChatListEntry) {
   }
 }
 
+async function getChatJsonFileNames(entry: ChatListEntry): Promise<string[]> {
+  const jsonFileName = entry._jsonFileName;
+  if (entry._messengerExport && jsonFileName) {
+    return [jsonFileName];
+  }
+
+  const fileNames: string[] = [];
+  for await (const [name, handle] of entry.dirHandle.entries()) {
+    if (handle.kind === 'file' && /\.json$/i.test(name)) fileNames.push(name);
+  }
+
+  return getOrderedMessageFileNames(fileNames);
+}
+
+async function getChatJsonFile(entry: ChatListEntry, jsonFileName?: string): Promise<File | null> {
+  const selectedJsonFileName = jsonFileName || (await getChatJsonFileNames(entry))[0];
+  if (!selectedJsonFileName) return null;
+  return (await entry.dirHandle.getFileHandle(selectedJsonFileName)).getFile();
+}
+
+async function openChatJson(entry: ChatListEntry, jsonFileName?: string) {
+  const newTab = window.open('about:blank', '_blank');
+  if (newTab) newTab.opener = null;
+
+  try {
+    const file = await getChatJsonFile(entry, jsonFileName);
+    if (!file) {
+      newTab?.close();
+      return;
+    }
+
+    const url = URL.createObjectURL(new Blob([file], { type: 'application/json' }));
+    if (newTab) {
+      newTab.location.href = url;
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  } catch {
+    newTab?.close();
+  }
+}
+
 function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, selectionMode, isSelected, onToggleSelect }: ChatItemProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [dropUp, setDropUp] = useState(false);
+  const [jsonFileNames, setJsonFileNames] = useState<string[] | null>(null);
+  const [menuPosition, setMenuPosition] = useState<CSSProperties | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  const updateMenuPosition = useCallback((button: HTMLElement) => {
+    const rect = button.getBoundingClientRect();
+    const nextDropUp = window.innerHeight - rect.bottom < MENU_DROP_UP_THRESHOLD_PX;
+    const left = Math.max(8, rect.right - MENU_WIDTH_PX);
+    setDropUp(nextDropUp);
+    setMenuPosition(nextDropUp
+      ? { left, bottom: window.innerHeight - rect.top + 4 }
+      : { left, top: rect.bottom + 4 }
+    );
+  }, []);
 
   useEffect(() => {
     if (!dropdownOpen) return;
     const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(target) &&
+        !menuButtonRef.current?.contains(target)
+      ) {
         setDropdownOpen(false);
       }
     };
@@ -85,17 +150,47 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
     return () => document.removeEventListener('mousedown', handler);
   }, [dropdownOpen]);
 
+  useEffect(() => {
+    if (!dropdownOpen || jsonFileNames) return;
+
+    let cancelled = false;
+    void getChatJsonFileNames(entry).then(names => {
+      if (!cancelled) setJsonFileNames(names);
+    }).catch(() => {
+      if (!cancelled) setJsonFileNames([]);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dropdownOpen, entry, jsonFileNames]);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+
+    const handleResize = () => {
+      setDropdownOpen(false);
+    };
+    const handleScroll = (event: Event) => {
+      const target = event.target as Node | null;
+      if (target && dropdownRef.current?.contains(target)) return;
+      setDropdownOpen(false);
+    };
+
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('scroll', handleScroll, true);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [dropdownOpen]);
+
   const showMenu = !selectionMode;
 
   const handleMenuClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!dropdownOpen) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      if (window.innerHeight - rect.bottom < MENU_DROP_UP_THRESHOLD_PX) {
-        setDropUp(true);
-      } else {
-        setDropUp(false);
-      }
+      updateMenuPosition(e.currentTarget as HTMLButtonElement);
     }
     setDropdownOpen(v => !v);
   };
@@ -117,6 +212,64 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
       }
     }
   };
+
+  const closeDropdown = () => {
+    setDropdownOpen(false);
+  };
+
+  const dropdown = dropdownOpen && menuPosition ? createPortal(
+    <div
+      ref={dropdownRef}
+      className={`chat-item-dropdown${dropUp ? ' drop-up' : ''}`}
+      style={menuPosition}
+      onClick={e => e.stopPropagation()}
+    >
+      {jsonFileNames && jsonFileNames.length > 1 ? (
+        <div className="chat-item-submenu-wrap">
+          <button className="chat-item-submenu-trigger" onClick={e => e.stopPropagation()}>
+            <span>Open JSON</span>
+            <span className="chat-item-submenu-arrow">&gt;</span>
+          </button>
+          <div className="chat-item-submenu">
+            {jsonFileNames.map(name => (
+              <button
+                key={name}
+                title={name}
+                onClick={e => {
+                  e.stopPropagation();
+                  closeDropdown();
+                  openChatJson(entry, name);
+                }}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <button
+          disabled={jsonFileNames?.length === 0}
+          onClick={e => { e.stopPropagation(); closeDropdown(); openChatJson(entry); }}
+        >
+          {jsonFileNames === null ? 'Loading JSON...' : 'Open JSON'}
+        </button>
+      )}
+      <button
+        onClick={e => { e.stopPropagation(); copyFolderPath(entry); closeDropdown(); }}
+      >
+        Copy folder path
+      </button>
+      {deletionEnabled && (
+        <button
+          className="danger"
+          onClick={e => { e.stopPropagation(); closeDropdown(); onDelete(); }}
+        >
+          Delete chat
+        </button>
+      )}
+    </div>,
+    document.body
+  ) : null;
 
   return (
     <div
@@ -158,35 +311,20 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
           </span>
         </div>
         {showMenu && (
-          <div className="chat-item-menu-wrap" ref={dropdownRef}>
+          <div className="chat-item-menu-wrap">
             <button
-              className="chat-item-menu-btn visible"
+              ref={menuButtonRef}
+              className={`chat-item-menu-btn visible${dropdownOpen ? ' open' : ''}`}
               title="Chat options"
               onClick={handleMenuClick}
               aria-label="Chat options"
             >
               &#8942;
             </button>
-            {dropdownOpen && (
-              <div className={`chat-item-dropdown${dropUp ? ' drop-up' : ''}`}>
-                <button
-                  onClick={e => { e.stopPropagation(); copyFolderPath(entry); setDropdownOpen(false); }}
-                >
-                  Copy folder path
-                </button>
-                {deletionEnabled && (
-                  <button
-                    className="danger"
-                    onClick={e => { e.stopPropagation(); setDropdownOpen(false); onDelete(); }}
-                  >
-                    Delete chat
-                  </button>
-                )}
-              </div>
-            )}
           </div>
         )}
       </div>
+      {dropdown}
     </div>
   );
 }
