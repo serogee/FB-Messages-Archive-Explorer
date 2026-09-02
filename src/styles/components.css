@@ -45,6 +45,24 @@
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .settings-row > label:first-child { font-size: 14px; color: var(--muted); cursor: pointer; flex: 1; }
 .settings-row > .switch { flex: 0 0 auto; }
+.filename-template-label { display: block !important; margin: 8px 0 5px; color: var(--muted); }
+.filename-template-row { display: flex; align-items: center; gap: 0; margin-bottom: 10px; }
+.filename-template-input {
+  min-width: 0; flex: 1; box-sizing: border-box; padding: 7px 8px;
+  border: 1px solid var(--border); border-radius: 6px 0 0 6px;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 12px;
+}
+.filename-template-input:focus { outline: none; border-color: var(--accent); }
+.filename-template-input:disabled { opacity: 0.55; }
+.filename-template-input::placeholder { color: var(--muted); opacity: 0.72; }
+.filename-template-extension {
+  align-self: stretch; display: flex; align-items: center; flex: 0 0 auto;
+  margin-left: 0; padding: 0 8px; border: 1px solid var(--border); border-left: 0;
+  border-radius: 0 6px 6px 0; background: var(--panel-bg); color: var(--muted);
+  font-family: monospace; font-size: 12px;
+}
+.filename-template-reset { flex: 0 0 auto; margin-left: 6px; font-size: 12px; padding: 7px 8px; }
+.filename-template-reset:disabled { opacity: 0.45; cursor: default; }
 .settings-shortcuts-btn {
   width: 100%;
   display: flex;
@@ -62,6 +80,7 @@
 }
 .settings-shortcuts-btn span { flex: 1; }
 .settings-shortcuts-btn:hover { border-color: var(--accent); color: var(--accent); }
+.filename-placeholders-btn { margin-bottom: 12px; }
 
 .folder-display-container {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;

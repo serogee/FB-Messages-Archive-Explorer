@@ -6,7 +6,7 @@ import { findMediaFile } from '../../services/media';
 import { blobCache } from '../../services/blobCache';
 import type { MediaState } from '../../types/messenger';
 import type { useSelection } from '../../hooks/useSelection';
-import { downloadSingle } from '../../services/saveAttachments';
+import { downloadSingle, getAttachmentDownloadName } from '../../services/saveAttachments';
 
 interface MediaViewerProps {
   attachments: ResolvedAttachment[];
@@ -18,6 +18,10 @@ interface MediaViewerProps {
   selection?: ReturnType<typeof useSelection>;
   selectionMode?: boolean;
   reverseNavigation?: boolean;
+  useDateFilename?: boolean;
+  chatTitle?: string;
+  filenameTemplate?: string;
+  allowLongFilenames?: boolean;
 }
 
 type MediaUrlState = { url: string | null; status: 'loading' | 'ready' | 'missing' };
@@ -75,6 +79,10 @@ export function MediaViewer({
   selection,
   selectionMode = false,
   reverseNavigation = false,
+  useDateFilename = true,
+  chatTitle = 'Chat',
+  filenameTemplate,
+  allowLongFilenames = false,
 }: MediaViewerProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -259,7 +267,14 @@ export function MediaViewer({
                 )}
                 {attachment && (
                   <button className="media-viewer-menu-item" onClick={() => {
-                    downloadSingle(attachment, mediaState);
+                    downloadSingle(
+                      attachment,
+                      mediaState,
+                      useDateFilename,
+                      chatTitle,
+                      filenameTemplate,
+                      allowLongFilenames
+                    );
                     setMenuOpen(false);
                   }}>
                     <Download size={16} className="media-viewer-menu-icon" />
@@ -352,7 +367,11 @@ export function MediaViewer({
               <a href={url} target="_blank" rel="noreferrer" className="media-viewer-download-btn">
                 <ExternalLink size={16} /> Open file
               </a>
-              <a href={url} download={filename} className="media-viewer-download-btn media-viewer-download-secondary">
+              <a
+                href={url}
+                download={getAttachmentDownloadName(attachment, useDateFilename, chatTitle, filenameTemplate, allowLongFilenames)}
+                className="media-viewer-download-btn media-viewer-download-secondary"
+              >
                 <Download size={16} /> Download
               </a>
             </div>

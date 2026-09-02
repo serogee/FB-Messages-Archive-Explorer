@@ -8,6 +8,7 @@ import { findMediaFile } from '../../services/media';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
 import { blobCache } from '../../services/blobCache';
+import type { Settings } from '../../hooks/useSettings';
 
 interface SelectionPanelProps {
   chatData: MessengerThread;
@@ -15,6 +16,9 @@ interface SelectionPanelProps {
   selectedAttachments: ResolvedAttachment[];
   onDeselect: (attachment: ResolvedAttachment) => void;
   onClearSelection: () => void;
+  useDateFilenames: Settings['dateAttachmentFilenames'];
+  filenameTemplate: Settings['attachmentFilenameTemplate'];
+  allowLongFilenames: Settings['longAttachmentFilenames'];
 }
 
 interface SelectionHeaderProps {
@@ -23,6 +27,9 @@ interface SelectionHeaderProps {
   selectedAttachments: ResolvedAttachment[];
   onClearSelection: () => void;
   onSaveStateChange?: (state: SelectionSaveState) => void;
+  useDateFilenames: Settings['dateAttachmentFilenames'];
+  filenameTemplate: Settings['attachmentFilenameTemplate'];
+  allowLongFilenames: Settings['longAttachmentFilenames'];
 }
 
 interface SelectionSaveState {
@@ -96,6 +103,9 @@ export function SelectionHeader({
   selectedAttachments,
   onClearSelection,
   onSaveStateChange,
+  useDateFilenames,
+  filenameTemplate,
+  allowLongFilenames,
 }: SelectionHeaderProps) {
   const [saving, setSaving] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -124,9 +134,25 @@ export function SelectionHeader({
     try {
       const updateProgress = (done: number, total: number) => updateSaveState(true, done, total);
       if (mode === 'folder') {
-        await saveToFolder(selectedAttachments, mediaState, updateProgress);
+        await saveToFolder(
+          selectedAttachments,
+          mediaState,
+          updateProgress,
+          useDateFilenames,
+          chatData.title,
+          filenameTemplate,
+          allowLongFilenames
+        );
       } else {
-        await downloadAsZip(selectedAttachments, mediaState, chatData.title, updateProgress);
+        await downloadAsZip(
+          selectedAttachments,
+          mediaState,
+          chatData.title,
+          updateProgress,
+          useDateFilenames,
+          filenameTemplate,
+          allowLongFilenames
+        );
       }
       onClearSelection();
     } catch (error) {
@@ -185,6 +211,9 @@ export function SelectionPanel({
   selectedAttachments,
   onDeselect,
   onClearSelection,
+  useDateFilenames,
+  filenameTemplate,
+  allowLongFilenames,
 }: SelectionPanelProps) {
   const [saveState, setSaveState] = useState<SelectionSaveState>(IDLE_SAVE_STATE);
 
@@ -196,6 +225,9 @@ export function SelectionPanel({
         selectedAttachments={selectedAttachments}
         onClearSelection={onClearSelection}
         onSaveStateChange={setSaveState}
+        useDateFilenames={useDateFilenames}
+        filenameTemplate={filenameTemplate}
+        allowLongFilenames={allowLongFilenames}
       />
 
       {saveState.saving ? (

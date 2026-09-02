@@ -7,6 +7,9 @@ export interface Settings {
   showTheirName: boolean;
   showReactions: boolean;
   autoCollapseDateNav: boolean;
+  dateAttachmentFilenames: boolean;
+  attachmentFilenameTemplate: string;
+  longAttachmentFilenames: boolean;
   deletionEnabled: boolean;
   sidebarWidth: number;
   infoPanelWidth: number;
@@ -20,6 +23,9 @@ const DEFAULTS: Settings = {
   showTheirName: true,
   showReactions: true,
   autoCollapseDateNav: true,
+  dateAttachmentFilenames: true,
+  attachmentFilenameTemplate: '{-chat}_{date}_{time}_{ms}',
+  longAttachmentFilenames: false,
   deletionEnabled: false,
   sidebarWidth: 360,
   infoPanelWidth: 360,
@@ -40,6 +46,15 @@ function loadSettings(): Settings {
       if (Number.isFinite(n) && n > 0) {
         (settings as Record<keyof Settings, unknown>)[key] = n;
       }
+    } else if (typeof defaultVal === 'string') {
+      let storedValue = stored;
+      if (key === 'attachmentFilenameTemplate') {
+        storedValue = storedValue.replace(/\.?\{ext\}\s*$/g, '');
+        if (storedValue === '{chat} - {date}_{time}_{ms}') {
+          storedValue = '{-chat}_{date}_{time}_{ms}';
+        }
+      }
+      (settings as Record<keyof Settings, unknown>)[key] = storedValue;
     }
   }
   return settings;

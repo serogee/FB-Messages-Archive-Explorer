@@ -234,6 +234,10 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
           onJumpToAttachment={handleViewerAttachmentJump}
           selection={selection}
           selectionMode={selection.selectedCount > 0}
+          useDateFilename={settings.dateAttachmentFilenames}
+          chatTitle={chatData?.title}
+          filenameTemplate={settings.attachmentFilenameTemplate}
+          allowLongFilenames={settings.longAttachmentFilenames}
         />
       )}
     </div>

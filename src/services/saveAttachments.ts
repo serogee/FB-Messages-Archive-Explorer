@@ -2,6 +2,138 @@ import type { ResolvedAttachment, MediaState } from '../types/messenger';
 import { findMediaFile } from './media';
 import { isFileSystemAccessSupported } from './fileSystem';
 
+function pad(value: number, length = 2): string {
+  return String(value).padStart(length, '0');
+}
+
+function getOriginalFilename(attachment: ResolvedAttachment): string {
+  return attachment.mediaPath.split('/').pop() || 'file';
+}
+
+function getExtension(filename: string): string {
+  const dotIndex = filename.lastIndexOf('.');
+  return dotIndex > 0 ? filename.slice(dotIndex) : '';
+}
+
+export const DEFAULT_ATTACHMENT_FILENAME_TEMPLATE = '{-chat}_{date}_{time}_{ms}';
+const MAX_CHAT_TITLE_LENGTH = 60;
+const MAX_SENDER_LENGTH = 40;
+const MAX_ORIGINAL_STEM_LENGTH = 80;
+const DEFAULT_ATTACHMENT_FILENAME_LENGTH = 100;
+const LONG_ATTACHMENT_FILENAME_LENGTH = 180;
+const ALPHANUMERIC_CHARACTER = /^[\p{L}\p{N}]$/u;
+const SAFE_FILENAME_CHARACTER = /^[\p{L}\p{N} _-]$/u;
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+function truncate(value: string, maxLength: number): string {
+  return Array.from(value).slice(0, maxLength).join('');
+}
+
+function getSafeNameValue(
+  value: string,
+  fallback: string,
+  maxLength: number,
+  separator: ' ' | '_' | '-'
+): string {
+  const safeValue = Array.from((value || fallback).normalize('NFKD'))
+    .filter(character => !/^\p{M}$/u.test(character))
+    .map(character => ALPHANUMERIC_CHARACTER.test(character) ? character : separator)
+    .join('')
+    .replace(separator === '_' ? /_+/g : separator === '-' ? /-+/g : / +/g, separator)
+    .replace(/^[\s._-]+|[\s._-]+$/g, '');
+  return truncate(safeValue || fallback, maxLength).replace(/[\s._-]+$/g, '') || fallback;
+}
+
+function getSafeExtension(filename: string): string {
+  return truncate(getExtension(filename).slice(1).replace(/[^a-z0-9]/gi, ''), 12);
+}
+
+function getSafeFilename(value: string, extension: string, maxFilenameLength: number): string {
+  let safeFilename = Array.from(value)
+    .filter(character => SAFE_FILENAME_CHARACTER.test(character))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s.]+|[\s.]+$/g, '');
+  const extensionSuffix = extension ? `.${extension}` : '';
+  if (extensionSuffix && !safeFilename.toLowerCase().endsWith(extensionSuffix.toLowerCase())) {
+    safeFilename = `${safeFilename}${extensionSuffix}`;
+  }
+
+  const stem = extensionSuffix ? safeFilename.slice(0, -extensionSuffix.length) : safeFilename;
+  const maxStemLength = maxFilenameLength - Array.from(extensionSuffix).length;
+  let limitedStem = truncate(stem, maxStemLength).replace(/[\s.]+$/g, '') || 'Attachment';
+  if (WINDOWS_RESERVED_NAME.test(limitedStem)) {
+    limitedStem = `_${truncate(limitedStem, maxStemLength - 1)}`;
+  }
+  return `${limitedStem}${extensionSuffix}`;
+}
+
+/** Builds a filesystem-safe name from the message timestamp in local time. */
+export function getAttachmentDownloadName(
+  attachment: ResolvedAttachment,
+  useDateFilename = true,
+  chatTitle = 'Chat',
+  template = DEFAULT_ATTACHMENT_FILENAME_TEMPLATE,
+  allowLongFilenames = false
+): string {
+  const originalName = getOriginalFilename(attachment);
+  if (!useDateFilename) return originalName;
+
+  const date = new Date(attachment.timestamp);
+  if (!Number.isFinite(date.getTime())) return originalName;
+
+  const extension = getSafeExtension(originalName);
+  const originalStem = extension
+    ? originalName.slice(0, -(extension.length + 1))
+    : originalName;
+  const values: Record<string, string> = {
+    chat: getSafeNameValue(chatTitle, 'Chat', MAX_CHAT_TITLE_LENGTH, ' '),
+    _chat: getSafeNameValue(chatTitle, 'Chat', MAX_CHAT_TITLE_LENGTH, '_'),
+    '-chat': getSafeNameValue(chatTitle, 'Chat', MAX_CHAT_TITLE_LENGTH, '-'),
+    sender: getSafeNameValue(attachment.sender, 'Unknown', MAX_SENDER_LENGTH, ' '),
+    _sender: getSafeNameValue(attachment.sender, 'Unknown', MAX_SENDER_LENGTH, '_'),
+    '-sender': getSafeNameValue(attachment.sender, 'Unknown', MAX_SENDER_LENGTH, '-'),
+    date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    time: `${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`,
+    ms: pad(date.getMilliseconds(), 3),
+    original: getSafeNameValue(originalStem, 'Attachment', MAX_ORIGINAL_STEM_LENGTH, ' '),
+  };
+  const selectedTemplate = (template.trim() || DEFAULT_ATTACHMENT_FILENAME_TEMPLATE)
+    .replace(/\.?\{ext\}/g, '');
+  const rendered = selectedTemplate
+    .replace(/\{(_chat|-chat|chat|_sender|-sender|sender|date|time|ms|original)\}/g, (_, key: string) => values[key])
+    .replace(/\{[^{}]*\}/g, '');
+  return getSafeFilename(
+    rendered,
+    extension,
+    allowLongFilenames ? LONG_ATTACHMENT_FILENAME_LENGTH : DEFAULT_ATTACHMENT_FILENAME_LENGTH
+  );
+}
+
+export function getUniqueAttachmentName(
+  baseName: string,
+  usedNames: Set<string>,
+  maxFilenameLength = DEFAULT_ATTACHMENT_FILENAME_LENGTH
+): string {
+  const dotIndex = baseName.lastIndexOf('.');
+  const hasExtension = dotIndex > 0;
+  const stem = hasExtension ? baseName.slice(0, dotIndex) : baseName;
+  const extension = hasExtension ? baseName.slice(dotIndex) : '';
+  let name = baseName;
+  let counter = 1;
+
+  while (usedNames.has(name.toLowerCase())) {
+    counter++;
+    const suffix = `_${counter}`;
+    const maxStemLength = maxFilenameLength
+      - Array.from(suffix).length
+      - Array.from(extension).length;
+    name = `${truncate(stem, maxStemLength).replace(/[\s.]+$/g, '')}${suffix}${extension}`;
+  }
+  usedNames.add(name.toLowerCase());
+  return name;
+}
+
 async function getFileFromAttachment(
   attachment: ResolvedAttachment,
   mediaState: MediaState
@@ -18,7 +150,11 @@ async function getFileFromAttachment(
 export async function saveToFolder(
   attachments: ResolvedAttachment[],
   mediaState: MediaState,
-  onProgress: (done: number, total: number) => void
+  onProgress: (done: number, total: number) => void,
+  useDateFilenames = true,
+  chatTitle = 'Chat',
+  template = DEFAULT_ATTACHMENT_FILENAME_TEMPLATE,
+  allowLongFilenames = false
 ): Promise<void> {
   if (!isFileSystemAccessSupported()) {
     throw new Error('Save to folder is not supported in this browser.');
@@ -39,18 +175,11 @@ export async function saveToFolder(
       continue;
     }
 
-    let baseName = att.mediaPath.split('/').pop() || 'file';
-    let name = baseName;
-    let counter = 1;
-    const parts = baseName.split('.');
-    const ext = parts.length > 1 ? `.${parts.pop()}` : '';
-    const stem = parts.join('.');
-
-    while (usedNames.has(name.toLowerCase())) {
-      counter++;
-      name = `${stem} (${counter})${ext}`;
-    }
-    usedNames.add(name.toLowerCase());
+    const name = getUniqueAttachmentName(
+      getAttachmentDownloadName(att, useDateFilenames, chatTitle, template, allowLongFilenames),
+      usedNames,
+      allowLongFilenames ? LONG_ATTACHMENT_FILENAME_LENGTH : DEFAULT_ATTACHMENT_FILENAME_LENGTH
+    );
 
     try {
       const fileHandle = await dirHandle.getFileHandle(name, { create: true });
@@ -67,7 +196,11 @@ export async function saveToFolder(
 
 export async function downloadSingle(
   attachment: ResolvedAttachment,
-  mediaState: MediaState
+  mediaState: MediaState,
+  useDateFilename = true,
+  chatTitle = 'Chat',
+  template = DEFAULT_ATTACHMENT_FILENAME_TEMPLATE,
+  allowLongFilenames = false
 ): Promise<void> {
   const file = await getFileFromAttachment(attachment, mediaState);
   if (!file) return;
@@ -75,7 +208,7 @@ export async function downloadSingle(
   const url = URL.createObjectURL(file);
   const a = document.createElement('a');
   a.href = url;
-  a.download = attachment.mediaPath.split('/').pop() || 'download';
+  a.download = getAttachmentDownloadName(attachment, useDateFilename, chatTitle, template, allowLongFilenames);
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -106,7 +239,10 @@ export async function downloadAsZip(
   attachments: ResolvedAttachment[],
   mediaState: MediaState,
   chatTitle: string,
-  onProgress: (done: number, total: number) => void
+  onProgress: (done: number, total: number) => void,
+  useDateFilenames = true,
+  template = DEFAULT_ATTACHMENT_FILENAME_TEMPLATE,
+  allowLongFilenames = false
 ): Promise<void> {
   const total = attachments.length;
   let done = 0;
@@ -137,17 +273,11 @@ export async function downloadAsZip(
     const data = new Uint8Array(arrayBuffer);
     const crc = crc32(data);
 
-    let baseName = att.mediaPath.split('/').pop() || 'file';
-    let name = baseName;
-    let counter = 1;
-    const parts = baseName.split('.');
-    const ext = parts.length > 1 ? `.${parts.pop()}` : '';
-    const stem = parts.join('.');
-    while (usedNames.has(name.toLowerCase())) {
-      counter++;
-      name = `${stem} (${counter})${ext}`;
-    }
-    usedNames.add(name.toLowerCase());
+    const name = getUniqueAttachmentName(
+      getAttachmentDownloadName(att, useDateFilenames, chatTitle, template, allowLongFilenames),
+      usedNames,
+      allowLongFilenames ? LONG_ATTACHMENT_FILENAME_LENGTH : DEFAULT_ATTACHMENT_FILENAME_LENGTH
+    );
 
     const nameBytes = encoder.encode(name);
     
@@ -235,8 +365,8 @@ export async function downloadAsZip(
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  const safeTitle = (chatTitle || 'Chat').replace(/[<>:"/\\|?*]+/g, '-').trim();
-  a.download = `${safeTitle} - Attachments.zip`;
+  const safeTitle = getSafeNameValue(chatTitle, 'Chat', MAX_CHAT_TITLE_LENGTH, '-');
+  a.download = `${safeTitle}-Attachments.zip`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

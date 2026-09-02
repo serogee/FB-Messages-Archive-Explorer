@@ -845,6 +845,10 @@ const AttachmentGalleryBase = function AttachmentGallery({
           selection={selection}
           selectionMode={selectionMode}
           reverseNavigation
+          useDateFilename={_settings.dateAttachmentFilenames}
+          chatTitle={chatData.title}
+          filenameTemplate={_settings.attachmentFilenameTemplate}
+          allowLongFilenames={_settings.longAttachmentFilenames}
         />
       )}
     </>

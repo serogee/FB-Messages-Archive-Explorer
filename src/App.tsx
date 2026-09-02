@@ -322,6 +322,9 @@ export default function App() {
             selectedAttachments={selectedAttachments}
             onDeselect={selection.toggle}
             onClearSelection={selection.deselectAll}
+            useDateFilenames={settings.dateAttachmentFilenames}
+            filenameTemplate={settings.attachmentFilenameTemplate}
+            allowLongFilenames={settings.longAttachmentFilenames}
           />
         ) : (
           <InfoPanel
@@ -337,6 +340,9 @@ export default function App() {
                 mediaState={chat.mediaState}
                 selectedAttachments={selectedAttachments}
                 onClearSelection={selection.deselectAll}
+                useDateFilenames={settings.dateAttachmentFilenames}
+                filenameTemplate={settings.attachmentFilenameTemplate}
+                allowLongFilenames={settings.longAttachmentFilenames}
               />
             ) : undefined}
           />
