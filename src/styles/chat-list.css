@@ -35,7 +35,7 @@
 .chat-item-title { font-size:14px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .chat-item-preview { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .chat-item-meta { display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex-shrink:0; transition:opacity 0.12s ease; }
-.chat-list-item:hover .chat-item-meta,
+.chat-list-item:not(.selection-mode):hover .chat-item-meta,
 .chat-item-body:has(.chat-item-menu-btn.visible.open) .chat-item-meta { opacity:0; }
 .chat-item-time { font-size:11px; color:var(--muted); white-space:nowrap; }
 .chat-item-size { font-size:10px; color:var(--muted); opacity:0.7; white-space:nowrap; }

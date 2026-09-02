@@ -273,7 +273,7 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
 
   return (
     <div
-      className={`chat-list-item ${isActive && !selectionMode ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
+      className={`chat-list-item ${isActive && !selectionMode ? 'active' : ''} ${isSelected ? 'selected' : ''} ${selectionMode ? 'selection-mode' : ''}`}
       onClick={handleClick}
       role="button"
       tabIndex={0}
