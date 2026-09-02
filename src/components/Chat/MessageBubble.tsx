@@ -6,6 +6,7 @@ import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
+import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
 import { ReactionModal } from './ReactionModal';
 import { MediaFileSize } from '../MediaFileSize';
 import { ExternalLink, FileText, Info, Link as LinkIcon, Pause, Play, Volume2, VolumeX } from 'lucide-react';
@@ -80,19 +81,6 @@ function getReactionTimeText(ts: number): string {
   return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-const MESSAGE_URL_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
-const TRAILING_URL_PUNCTUATION = /[.,!?;:)\]}]$/;
-
-function normalizeExternalUrl(value: string): string | null {
-  const candidate = value.startsWith('www.') ? `https://${value}` : value;
-  try {
-    const parsed = new URL(candidate);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
-  } catch {
-    return null;
-  }
-}
-
 function renderHighlightedText(text: string, highlightQuery: string, key: string) {
   const html = highlightQuery ? highlightText(text, highlightQuery) : escapeHtml(text);
   return <React.Fragment key={key}><span dangerouslySetInnerHTML={{ __html: html }} /></React.Fragment>;
@@ -105,8 +93,7 @@ function MessageText({ text, highlightQuery }: { text: string; highlightQuery: s
   MESSAGE_URL_PATTERN.lastIndex = 0;
 
   while ((match = MESSAGE_URL_PATTERN.exec(text)) !== null) {
-    let label = match[0];
-    while (label.length > 0 && TRAILING_URL_PUNCTUATION.test(label)) label = label.slice(0, -1);
+    const label = trimTrailingUrlPunctuation(match[0]);
     if (!label) continue;
 
     const start = match.index;
@@ -454,8 +441,10 @@ export const MessageBubble = memo(function MessageBubble({
     return true;
   });
 
-  const sharedLink = msg.share?.link?.trim() || msg.share?.href?.trim();
-  const sharedLinkLabel = msg.share?.share_text ? fixEncoding(msg.share.share_text).trim() : undefined;
+  const messageLinks = getMessageLinks(msg).map(link => ({
+    ...link,
+    label: link.label ? fixEncoding(link.label) : undefined,
+  }));
 
   const showName = isMe ? showMyName : showTheirName;
   
@@ -483,7 +472,13 @@ export const MessageBubble = memo(function MessageBubble({
               <MessageText text={rawText} highlightQuery={highlightQuery} />
             )}
 
-            {sharedLink && <SharedLinkPreview link={sharedLink} label={sharedLinkLabel} />}
+            {messageLinks.length > 0 && (
+              <div className="message-link-list">
+                {messageLinks.map(link => (
+                  <SharedLinkPreview key={link.url} link={link.url} label={link.label} />
+                ))}
+              </div>
+            )}
 
             {mediaItems.map(({ media, preferredType }, i) => {
               const mediaPath = getMediaReferencePath(media);
