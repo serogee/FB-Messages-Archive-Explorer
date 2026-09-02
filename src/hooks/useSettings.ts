@@ -10,6 +10,7 @@ export interface Settings {
   dateAttachmentFilenames: boolean;
   attachmentFilenameTemplate: string;
   longAttachmentFilenames: boolean;
+  attachmentBookmarkingEnabled: boolean;
   deletionEnabled: boolean;
   sidebarWidth: number;
   infoPanelWidth: number;
@@ -26,6 +27,7 @@ const DEFAULTS: Settings = {
   dateAttachmentFilenames: true,
   attachmentFilenameTemplate: '{-chat}_{date}_{time}_{ms}',
   longAttachmentFilenames: false,
+  attachmentBookmarkingEnabled: false,
   deletionEnabled: false,
   sidebarWidth: 360,
   infoPanelWidth: 360,

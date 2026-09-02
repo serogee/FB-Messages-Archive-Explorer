@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink } from '../../types/messenger';
-import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, Info, ExternalLink, Link as LinkIcon, MessageSquare, UserRound } from 'lucide-react';
+import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink, SelectableItem } from '../../types/messenger';
+import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, Info, ExternalLink, Link as LinkIcon, MessageSquare, UserRound, Bookmark } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import { useAttachments, useSharedLinks, type GalleryCategory } from '../../hooks/useAttachments';
 import type { useSelection } from '../../hooks/useSelection';
@@ -34,14 +34,13 @@ interface AttachmentGalleryProps {
   showStickers: boolean;
   attachmentJumpTarget?: AttachmentJumpTarget | null;
   onAttachmentJumpHandled?: () => void;
+  attachmentBookmarkingEnabled: boolean;
+  isAttachmentBookmarked: (item: SelectableItem) => boolean;
+  onToggleAttachmentBookmark: (item: SelectableItem) => Promise<void>;
+  bookmarkBusy: boolean;
 }
 
-export interface AttachmentJumpTarget {
-  tab: GalleryCategory;
-  mediaPath: string;
-  messageIndex: number;
-  category: ResolvedAttachment['category'];
-}
+export type AttachmentJumpTarget = SelectableItem & { tab: GalleryCategory };
 
 const TABS: { key: GalleryCategory; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -70,8 +69,10 @@ function findFirstRow(rows: GalleryLayoutRow[], target: number): number {
   return low;
 }
 
-function getAttachmentKey(attachment: Pick<ResolvedAttachment, 'category' | 'mediaPath' | 'messageIndex'>): string {
-  return `${attachment.category}:${attachment.messageIndex}:${attachment.mediaPath.toLowerCase()}`;
+function getGalleryItemKey(item: SelectableItem): string {
+  return item.category === 'links'
+    ? `links:${item.messageIndex}:${item.url}`
+    : `${item.category}:${item.messageIndex}:${item.mediaPath.toLowerCase()}`;
 }
 
 function groupByMonth(items: GalleryItem[]): GalleryGroup[] {
@@ -100,9 +101,11 @@ interface GalleryThumbnailProps {
   onSelect: (attachment: ResolvedAttachment) => void;
   selectionMode: boolean;
   isSelected: boolean;
+  isBookmarked: boolean;
   isJumpHighlighted: boolean;
   compactFileCard: boolean;
   compactAudioCard: boolean;
+  showAuthorAndSize: boolean;
 }
 
 function formatAudioDuration(seconds: number | null): string {
@@ -135,15 +138,63 @@ function AudioCardMetadata({ attachment, mediaState }: { attachment: ResolvedAtt
   }, [attachment, mediaState]);
 
   return (
-    <div className="gallery-audio-meta">
-      <span className="gallery-link-sender" title={`Sent by ${attachment.sender}`}>
-        <UserRound size={12} />
-        <span>{attachment.sender}</span>
-      </span>
+    <div className="gallery-audio-meta gallery-author-size-meta">
       <span className="gallery-audio-details">
         {metadata
           ? `${formatAudioDuration(metadata.duration)} · ${metadata.size === null ? 'Unknown size' : formatFileSize(metadata.size)}`
           : 'Loading…'}
+      </span>
+      <span className="gallery-link-sender" title={`Sent by ${attachment.sender}`}>
+        <UserRound size={12} />
+        <span>{attachment.sender}</span>
+      </span>
+    </div>
+  );
+}
+
+function AttachmentAuthorAndSize({ attachment, mediaState }: { attachment: ResolvedAttachment; mediaState: MediaState }) {
+  return (
+    <div className="gallery-file-meta gallery-author-size-meta gallery-even-metadata-spacing">
+      <MediaFileSize
+        entry={attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath)}
+        className="gallery-thumb-file-size"
+      />
+      <span className="gallery-link-sender" title={`Sent by ${attachment.sender}`}>
+        <UserRound size={12} />
+        <span>{attachment.sender}</span>
+      </span>
+    </div>
+  );
+}
+
+function AudioAuthorDurationAndSize({ attachment, mediaState }: { attachment: ResolvedAttachment; mediaState: MediaState }) {
+  const [metadata, setMetadata] = useState<AudioMetadata | null>(null);
+
+  useEffect(() => {
+    const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
+    if (!entry) {
+      setMetadata({ duration: null, size: null });
+      return;
+    }
+
+    let mounted = true;
+    setMetadata(null);
+    void getAudioMetadata(entry).then(result => {
+      if (mounted) setMetadata(result);
+    });
+    return () => { mounted = false; };
+  }, [attachment, mediaState]);
+
+  return (
+    <div className="gallery-file-meta gallery-author-size-meta gallery-even-metadata-spacing">
+      <span className="gallery-audio-details">
+        {metadata
+          ? `${formatAudioDuration(metadata.duration)} · ${metadata.size === null ? 'Unknown size' : formatFileSize(metadata.size)}`
+          : 'Loading…'}
+      </span>
+      <span className="gallery-link-sender" title={`Sent by ${attachment.sender}`}>
+        <UserRound size={12} />
+        <span>{attachment.sender}</span>
       </span>
     </div>
   );
@@ -158,9 +209,11 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   onSelect,
   selectionMode,
   isSelected,
+  isBookmarked,
   isJumpHighlighted,
   compactFileCard,
   compactAudioCard,
+  showAuthorAndSize,
 }: GalleryThumbnailProps) {
   const [url, setUrl] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
@@ -239,7 +292,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
     event.preventDefault();
     event.stopPropagation();
     if (selectionMode) onSelect(attachment);
-    else if (compactFileCard) onOpenFile(attachment);
+    else if (category === 'files') onOpenFile(attachment);
     else onOpen(attachment);
   };
 
@@ -287,15 +340,18 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
           <div className="gallery-thumb-icon"><Music size={24} /></div>
           <div className="gallery-thumb-name">{filename}</div>
           {compactAudioCard && <AudioCardMetadata attachment={attachment} mediaState={mediaState} />}
+          {showAuthorAndSize && <AudioAuthorDurationAndSize attachment={attachment} mediaState={mediaState} />}
         </>
       ) : (
         <>
           <div className="gallery-thumb-icon"><FileText size={24} /></div>
           <div className="gallery-thumb-name">{filename}</div>
-          <MediaFileSize
-            entry={attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath)}
-            className="gallery-thumb-file-size"
-          />
+          {showAuthorAndSize
+            ? <AttachmentAuthorAndSize attachment={attachment} mediaState={mediaState} />
+            : <MediaFileSize
+                entry={attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath)}
+                className="gallery-thumb-file-size"
+              />}
           {compactFileCard && (
             <div className="gallery-file-meta">
               <span className="gallery-link-sender" title={`Sent by ${attachment.sender}`}>
@@ -326,6 +382,22 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         </button>
       )}
 
+      {!selectionMode && category === 'files' && (
+        <button
+          type="button"
+          className="gallery-open-viewer-btn with-jump"
+          onClick={event => {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpen(attachment);
+          }}
+          aria-label={`View information for ${filename}`}
+          title="Open in viewer"
+        >
+          <Info size={15} />
+        </button>
+      )}
+
       {!selectionMode && (
         <button
           type="button"
@@ -341,6 +413,12 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
           <MessageSquare size={14} />
         </button>
       )}
+
+      {isBookmarked && (
+        <span className="gallery-bookmark-indicator" title="Bookmarked" aria-label="Bookmarked attachment">
+          <Bookmark size={15} fill="currentColor" />
+        </span>
+      )}
     </div>
   );
 }, (previous, next) => (
@@ -352,9 +430,11 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   && previous.onSelect === next.onSelect
   && previous.selectionMode === next.selectionMode
   && previous.isSelected === next.isSelected
+  && previous.isBookmarked === next.isBookmarked
   && previous.isJumpHighlighted === next.isJumpHighlighted
   && previous.compactFileCard === next.compactFileCard
   && previous.compactAudioCard === next.compactAudioCard
+  && previous.showAuthorAndSize === next.showAuthorAndSize
 ));
 
 function getLinkHostname(url: string): string {
@@ -368,34 +448,118 @@ function getLinkHostname(url: string): string {
 const GalleryLinkCard = memo(function GalleryLinkCard({
   link,
   onJumpToMessage,
+  onOpen,
+  onSelect,
+  selectionMode,
+  isSelected,
+  isBookmarked,
+  isJumpHighlighted,
+  openViewerOnCard,
 }: {
   link: ResolvedLink;
   onJumpToMessage: (messageIndex: number) => void;
+  onOpen: (link: ResolvedLink) => void;
+  onSelect: (link: ResolvedLink) => void;
+  selectionMode: boolean;
+  isSelected: boolean;
+  isBookmarked: boolean;
+  isJumpHighlighted: boolean;
+  openViewerOnCard: boolean;
 }) {
   const hostname = getLinkHostname(link.url);
-  return (
-    <div className="gallery-thumb gallery-link-card" title={link.url}>
-      <a href={link.url} target="_blank" rel="noreferrer" className="gallery-link-anchor">
-        <LinkIcon size={24} className="gallery-link-icon" />
-        <strong className="gallery-link-host">{hostname}</strong>
-        <span className="gallery-link-url">{link.label || link.url}</span>
-        <span className="gallery-link-meta">
-          <span className="gallery-link-sender" title={`Sent by ${link.sender}`}>
-            <UserRound size={12} />
-            <span>{link.sender}</span>
-          </span>
-          <span className="gallery-link-open"><ExternalLink size={13} /> Open link</span>
+  const activateLink = (event: React.MouseEvent | React.KeyboardEvent) => {
+    if (!selectionMode && !openViewerOnCard) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (selectionMode) onSelect(link);
+    else onOpen(link);
+  };
+  const content = (
+    <>
+      <LinkIcon size={24} className="gallery-link-icon" />
+      <strong className="gallery-link-host">{hostname}</strong>
+      <span className="gallery-link-url">{link.label || link.url}</span>
+      <span className="gallery-link-meta">
+        <span className="gallery-link-sender" title={`Sent by ${link.sender}`}>
+          <UserRound size={12} />
+          <span>{link.sender}</span>
         </span>
-      </a>
-      <button
+        {!openViewerOnCard && !selectionMode && <span className="gallery-link-open"><ExternalLink size={13} /> Open link</span>}
+      </span>
+    </>
+  );
+  return (
+    <div
+      className={`gallery-thumb gallery-link-card ${openViewerOnCard ? 'gallery-link-card-square' : ''} ${isSelected ? 'selected' : ''} ${isJumpHighlighted ? 'jump-highlight' : ''}`}
+      title={link.url}
+      onClick={activateLink}
+      onKeyDown={event => {
+        if ((selectionMode || openViewerOnCard) && (event.key === ' ' || event.key === 'Enter')) activateLink(event);
+      }}
+      role={selectionMode || openViewerOnCard ? 'button' : undefined}
+      tabIndex={selectionMode || openViewerOnCard ? 0 : undefined}
+    >
+      {openViewerOnCard ? (
+        <div className="gallery-link-anchor">{content}</div>
+      ) : (
+        <a
+          href={link.url}
+          target="_blank"
+          rel="noreferrer"
+          className="gallery-link-anchor"
+          tabIndex={selectionMode ? -1 : 0}
+          aria-disabled={selectionMode}
+        >
+          {content}
+        </a>
+      )}
+      {selectionMode && (
+        <div
+          className="select-checkbox"
+          role="checkbox"
+          aria-checked={isSelected}
+          onClick={event => {
+            event.preventDefault();
+            event.stopPropagation();
+            onSelect(link);
+          }}
+        >
+          {isSelected && <Check size={14} />}
+        </div>
+      )}
+      {(selectionMode || !openViewerOnCard) && (
+        <button
+          type="button"
+          className={`gallery-open-viewer-btn ${selectionMode ? '' : 'with-jump'}`}
+          onClick={event => {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpen(link);
+          }}
+          aria-label={`View information for ${hostname}`}
+          title="Open in viewer"
+        >
+          <Info size={15} />
+        </button>
+      )}
+      {!selectionMode && <button
         type="button"
         className="gallery-link-message"
-        onClick={() => onJumpToMessage(link.messageIndex)}
+        onClick={event => {
+          event.preventDefault();
+          event.stopPropagation();
+          onJumpToMessage(link.messageIndex);
+        }}
         title="Jump to message"
         aria-label={`Jump to message containing ${hostname}`}
       >
         <MessageSquare size={14} />
-      </button>
+      </button>}
+      {isBookmarked && (
+        <span className="gallery-bookmark-indicator" title="Bookmarked" aria-label="Bookmarked link">
+          <Bookmark size={15} fill="currentColor" />
+        </span>
+      )}
     </div>
   );
 });
@@ -415,9 +579,17 @@ const AttachmentGalleryBase = function AttachmentGallery({
   showStickers,
   attachmentJumpTarget,
   onAttachmentJumpHandled,
+  attachmentBookmarkingEnabled,
+  isAttachmentBookmarked,
+  onToggleAttachmentBookmark,
+  bookmarkBusy,
 }: AttachmentGalleryProps) {
   const { all, byCategory } = useAttachments(chatData, mediaState);
   const links = useSharedLinks(chatData);
+  const allItems = useMemo<GalleryItem[]>(
+    () => [...all, ...links].sort((left, right) => left.messageIndex - right.messageIndex),
+    [all, links],
+  );
   const [activeTab, setActiveTab] = useState<GalleryCategory>(defaultTab);
   const [selectionMode, setSelectionMode] = useState(false);
   const [viewerState, setViewerState] = useState({ open: false, index: 0 });
@@ -434,13 +606,9 @@ const AttachmentGalleryBase = function AttachmentGallery({
   const restoringScrollRef = useRef(false);
   const isOpenRef = useRef(isOpen);
 
-  const currentAttachments = useMemo<ResolvedAttachment[]>(
-    () => activeTab === 'links' ? [] : activeTab === 'all' ? all : byCategory[activeTab],
-    [activeTab, all, byCategory],
-  );
   const currentItems = useMemo<GalleryItem[]>(
-    () => activeTab === 'links' ? links : currentAttachments,
-    [activeTab, currentAttachments, links],
+    () => activeTab === 'links' ? links : activeTab === 'all' ? allItems : byCategory[activeTab],
+    [activeTab, allItems, byCategory, links],
   );
   const compactCardTab = activeTab === 'links' || activeTab === 'files' || activeTab === 'audio';
   const groups = useMemo(() => groupByMonth(currentItems), [currentItems]);
@@ -466,9 +634,9 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
   useEffect(() => setSelectionMode(false), [selection.clearVersion]);
 
-  const highlightAttachment = useCallback((attachment: Pick<ResolvedAttachment, 'category' | 'mediaPath' | 'messageIndex'>) => {
+  const highlightAttachment = useCallback((item: SelectableItem) => {
     if (jumpHighlightTimerRef.current != null) clearTimeout(jumpHighlightTimerRef.current);
-    setJumpHighlightedKey(getAttachmentKey(attachment));
+    setJumpHighlightedKey(getGalleryItemKey(item));
     jumpHighlightTimerRef.current = setTimeout(() => {
       jumpHighlightTimerRef.current = null;
       setJumpHighlightedKey(null);
@@ -488,12 +656,8 @@ const AttachmentGalleryBase = function AttachmentGallery({
     const container = scrollContainerRef.current;
     if (!container || layout.rows.length === 0) return;
 
-    const targetPath = attachmentJumpTarget.mediaPath.toLowerCase();
     const targetRow = layout.rows.find(row => row.type === 'items' && row.items.some(item => (
-      item.category !== 'links' &&
-      item.category === attachmentJumpTarget.category &&
-      item.messageIndex === attachmentJumpTarget.messageIndex &&
-      item.mediaPath.toLowerCase() === targetPath
+      getGalleryItemKey(item) === getGalleryItemKey(attachmentJumpTarget)
     )));
 
     if (!targetRow) return;
@@ -649,9 +813,14 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, [activeTab, handleTabChange, isOpen, showStickers, viewerState.open]);
 
   const openViewer = useCallback((attachment: ResolvedAttachment) => {
-    const index = currentAttachments.indexOf(attachment);
+    const index = currentItems.indexOf(attachment);
     setViewerState({ open: true, index: index >= 0 ? index : 0 });
-  }, [currentAttachments]);
+  }, [currentItems]);
+
+  const openLinkViewer = useCallback((link: ResolvedLink) => {
+    const index = currentItems.indexOf(link);
+    setViewerState({ open: true, index: index >= 0 ? index : 0 });
+  }, [currentItems]);
 
   const openFileInNewTab = useCallback((attachment: ResolvedAttachment) => {
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
@@ -670,8 +839,8 @@ const AttachmentGalleryBase = function AttachmentGallery({
     onClose();
   }, [onJumpToMessage, onClose, saveScrollPosition]);
 
-  const handleViewerAttachmentJump = useCallback((attachment: ResolvedAttachment) => {
-    const tab = activeTab === attachment.category ? attachment.category : 'all';
+  const handleViewerAttachmentJump = useCallback((targetItem: SelectableItem) => {
+    const tab = activeTab === targetItem.category ? targetItem.category : 'all';
     setViewerState({ open: false, index: 0 });
     if (activeTab !== tab) {
       setActiveTab(tab);
@@ -679,12 +848,8 @@ const AttachmentGalleryBase = function AttachmentGallery({
     }
     onAttachmentJumpHandled?.();
     requestAnimationFrame(() => {
-      const targetPath = attachment.mediaPath.toLowerCase();
-      const targetRow = layout.rows.find(row => row.type === 'items' && row.items.some(item => (
-        item.category !== 'links' &&
-        item.category === attachment.category &&
-        item.messageIndex === attachment.messageIndex &&
-        item.mediaPath.toLowerCase() === targetPath
+      const targetRow = layout.rows.find(row => row.type === 'items' && row.items.some(candidate => (
+        getGalleryItemKey(candidate) === getGalleryItemKey(targetItem)
       )));
       const container = scrollContainerRef.current;
       if (!targetRow || !container) {
@@ -696,7 +861,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
       container.scrollTop = nextScrollTop;
       scrollPositions.current[tab] = nextScrollTop;
       setScrollTop(nextScrollTop);
-      highlightAttachment(attachment);
+      highlightAttachment(targetItem);
       requestAnimationFrame(() => {
         restoringScrollRef.current = false;
       });
@@ -716,7 +881,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, [layout.rows, scrollTop]);
 
   const tabCounts = useMemo<Record<GalleryCategory, number>>(() => ({
-    all: all.length,
+    all: allItems.length,
     photos: byCategory.photos.length,
     videos: byCategory.videos.length,
     audio: byCategory.audio.length,
@@ -724,7 +889,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
     files: byCategory.files.length,
     links: links.length,
     stickers: byCategory.stickers.length,
-  }), [all, byCategory, links]);
+  }), [allItems, byCategory, links]);
 
   const visibleTabs = showStickers ? TABS : TABS.filter(tab => tab.key !== 'stickers');
 
@@ -736,18 +901,16 @@ const AttachmentGalleryBase = function AttachmentGallery({
         </button>
         <h3>Attachments</h3>
 
-        {activeTab !== 'links' && (
-          <button
+        <button
             className={`gallery-select-mode-toggle ${selectionMode ? 'active' : ''}`}
             onClick={() => {
               if (selectionMode && selection.selectedCount > 0) selection.deselectAll();
               setSelectionMode(!selectionMode);
             }}
-            title="Select attachments"
+            title="Select attachments and links"
           >
             <CheckSquare size={18} />
-          </button>
-        )}
+        </button>
         <button
           className="chat-info-toggle"
           id="galleryInfoToggle"
@@ -777,7 +940,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
       <div id="line" />
 
       <div
-        className={`gallery-scroll ${selectionMode && activeTab !== 'links' ? 'selection-mode-active' : ''}`}
+        className={`gallery-scroll ${selectionMode ? 'selection-mode-active' : ''}`}
         ref={scrollContainerRef}
         onScroll={handleScroll}
       >
@@ -810,6 +973,13 @@ const AttachmentGalleryBase = function AttachmentGallery({
                       key={`link:${item.messageIndex}:${item.url}`}
                       link={item}
                       onJumpToMessage={handleViewerJump}
+                      onOpen={openLinkViewer}
+                      onSelect={selection.toggle}
+                      selectionMode={selectionMode}
+                      isSelected={selection.isSelected(item)}
+                      isBookmarked={attachmentBookmarkingEnabled && isAttachmentBookmarked(item)}
+                      isJumpHighlighted={jumpHighlightedKey === getGalleryItemKey(item)}
+                      openViewerOnCard={activeTab === 'all'}
                     />
                   ) : (
                     <GalleryThumbnail
@@ -822,9 +992,11 @@ const AttachmentGalleryBase = function AttachmentGallery({
                       onSelect={toggleAttachment}
                       selectionMode={selectionMode}
                       isSelected={selection.isSelected(item)}
-                      isJumpHighlighted={jumpHighlightedKey === getAttachmentKey(item)}
+                      isBookmarked={attachmentBookmarkingEnabled && isAttachmentBookmarked(item)}
+                      isJumpHighlighted={jumpHighlightedKey === getGalleryItemKey(item)}
                       compactFileCard={activeTab === 'files' && item.category === 'files'}
                       compactAudioCard={activeTab === 'audio' && item.category === 'audio'}
+                      showAuthorAndSize={activeTab === 'all' && (item.category === 'audio' || item.category === 'files')}
                     />
                   ))}
                 </div>
@@ -834,9 +1006,9 @@ const AttachmentGalleryBase = function AttachmentGallery({
         )}
       </div>
 
-      {viewerState.open && activeTab !== 'links' && (
+      {viewerState.open && (
         <MediaViewer
-          attachments={currentAttachments}
+          items={currentItems}
           initialIndex={viewerState.index}
           mediaState={mediaState}
           onClose={() => setViewerState({ open: false, index: viewerState.index })}
@@ -849,6 +1021,10 @@ const AttachmentGalleryBase = function AttachmentGallery({
           chatTitle={chatData.title}
           filenameTemplate={_settings.attachmentFilenameTemplate}
           allowLongFilenames={_settings.longAttachmentFilenames}
+          attachmentBookmarkingEnabled={attachmentBookmarkingEnabled}
+          isBookmarked={isAttachmentBookmarked}
+          onToggleBookmark={onToggleAttachmentBookmark}
+          bookmarkBusy={bookmarkBusy}
         />
       )}
     </>
@@ -863,6 +1039,10 @@ export const AttachmentGallery = memo(AttachmentGalleryBase, (previous, next) =>
   && previous.infoPanelOpen === next.infoPanelOpen
   && previous.defaultTab === next.defaultTab
   && previous.showStickers === next.showStickers
+  && previous.attachmentBookmarkingEnabled === next.attachmentBookmarkingEnabled
+  && previous.isAttachmentBookmarked === next.isAttachmentBookmarked
+  && previous.onToggleAttachmentBookmark === next.onToggleAttachmentBookmark
+  && previous.bookmarkBusy === next.bookmarkBusy
   && previous.attachmentJumpTarget === next.attachmentJumpTarget
   && previous.onTabChange === next.onTabChange
   && previous.selection === next.selection

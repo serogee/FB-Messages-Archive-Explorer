@@ -18,6 +18,7 @@ interface SettingsPanelProps {
   setSelectedPerspective: (name: string) => void;
   onOpenFolder: () => Promise<void>;
   rootHandle: ReadableDirectoryHandle | null;
+  onAttachmentBookmarkingChange: (enabled: boolean) => Promise<boolean>;
 }
 
 function ToggleRow({ id, label, checked, onChange, disabled }: {
@@ -130,12 +131,14 @@ export function SettingsPanel({
   settings, setSetting,
   chatData, selectedPerspective, setSelectedPerspective,
   onOpenFolder, rootHandle,
+  onAttachmentBookmarkingChange,
 }: SettingsPanelProps) {
   const participants = getParticipantNames(chatData);
   const fsSupported = isFileSystemAccessSupported();
   const [showEnableModal, setShowEnableModal] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showFilenamePlaceholdersModal, setShowFilenamePlaceholdersModal] = useState(false);
+  const [bookmarkPermissionError, setBookmarkPermissionError] = useState(false);
 
   const handleDeletionToggle = (val: boolean) => {
     if (val) {
@@ -143,6 +146,16 @@ export function SettingsPanel({
       setShowEnableModal(true);
     } else {
       setSetting('deletionEnabled', false as Settings['deletionEnabled']);
+    }
+  };
+
+  const handleBookmarkingToggle = async (val: boolean) => {
+    setBookmarkPermissionError(false);
+    try {
+      const changed = await onAttachmentBookmarkingChange(val);
+      if (!changed && val) setBookmarkPermissionError(true);
+    } catch {
+      if (val) setBookmarkPermissionError(true);
     }
   };
 
@@ -250,6 +263,33 @@ export function SettingsPanel({
           <span>Keyboard shortcuts</span>
           <ChevronRight size={16} />
         </button>
+      </div>
+
+      <div className="settings-section">
+        <strong>Attachment Bookmarking</strong>
+        {!fsSupported ? (
+          <>
+            <ToggleRow id="attachmentBookmarkingEnabledToggle" label="Enable attachment bookmarking" checked={false} onChange={() => {}} disabled={true} />
+            <p className="browser-notice">Only available in Chromium-based browsers (Chrome, Edge, Brave).</p>
+          </>
+        ) : (
+          <>
+            <ToggleRow
+              id="attachmentBookmarkingEnabledToggle"
+              label="Enable attachment bookmarking"
+              checked={settings.attachmentBookmarkingEnabled}
+              onChange={handleBookmarkingToggle}
+            />
+            <p className="deletion-info">
+              Saves attachment bookmarks to <code>selected_messages/bookmarks.json</code> inside the messages folder.
+              Existing bookmarks are kept when this feature is disabled.
+              {!rootHandle && settings.attachmentBookmarkingEnabled && ' Write access will be requested when you open a folder.'}
+            </p>
+            {bookmarkPermissionError && (
+              <p className="browser-notice">Write access is required to enable attachment bookmarking.</p>
+            )}
+          </>
+        )}
       </div>
 
       <div className="settings-section">

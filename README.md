@@ -52,7 +52,7 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 - Make sure you extracted the `.zip` file first. The app cannot open `.zip` files directly.
 - Make sure you chose **JSON** format when you exported. HTML exports are not supported.
 
-**About write access:** Normal viewing is read-only. The app only asks for write access if you turn on chat deletion in Settings. You do not need write access to browse, search, or save attachments.
+**About write access:** Normal viewing is read-only. The app asks for write access if you turn on attachment bookmarking or chat deletion in Settings. You do not need write access to browse, search, or download attachments.
 
 ---
 
@@ -179,6 +179,7 @@ Conversations are loaded from `inbox`, `archived_threads`, `message_requests`, a
 | Browse and view messages     | ✅                         | ✅ (via folder-upload fallback) |
 | Search messages              | ✅                         | ✅                              |
 | Delete conversations         | ✅ (requires write access) | ❌ Not available                |
+| Bookmark attachments/links   | ✅ (requires write access) | ❌ Not available                |
 | Save attachments to a folder | ✅                         | ❌ Not available                |
 | Download attachments as ZIP  | ✅                         | ✅                              |
 

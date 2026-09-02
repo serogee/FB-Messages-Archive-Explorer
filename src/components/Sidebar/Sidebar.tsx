@@ -42,6 +42,7 @@ interface SidebarProps {
     selectedPerspective: string;
     setSelectedPerspective: (name: string) => void;
     onJumpToMessage?: (index: number, folderName?: string) => void;
+    onAttachmentBookmarkingChange: (enabled: boolean) => Promise<boolean>;
 }
 
 export function Sidebar({
@@ -70,6 +71,7 @@ export function Sidebar({
     selectedPerspective,
     setSelectedPerspective,
     onJumpToMessage,
+    onAttachmentBookmarkingChange,
 }: SidebarProps) {
     const isSubView = sidebarView === 'archived' || sidebarView === 'requests';
     const [selectionMode, setSelectionMode] = useState(false);
@@ -269,6 +271,7 @@ export function Sidebar({
                         setSelectedPerspective={setSelectedPerspective}
                         onOpenFolder={onOpenFolder}
                         rootHandle={originalRootHandle || rootHandle}
+                        onAttachmentBookmarkingChange={onAttachmentBookmarkingChange}
                     />
                 )}
 

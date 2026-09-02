@@ -112,7 +112,7 @@ export function useArchive(): {
   computeAndUpdateFolderSize: (entry: ChatListEntry) => Promise<number>;
   setSizeQueuePaused: (paused: boolean) => void;
   deleteChat: (entry: ChatListEntry) => Promise<void>;
-  deleteChats: (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => Promise<void>;
+  deleteChats: (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => Promise<ChatListEntry[]>;
   updateFolderSize: (entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => void;
 } {
   const [rootHandle, setRootHandle] = useState<ReadableDirectoryHandle | null>(null);
@@ -557,7 +557,7 @@ export function useArchive(): {
     if (!rootHandle) throw new Error('No folder open');
     if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
     
-    const foldersToRemove = new Set(entries.map(e => e.folderName));
+    const deletedEntries: ChatListEntry[] = [];
     
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
@@ -565,6 +565,7 @@ export function useArchive(): {
         try {
           const { index: referenceIndex } = await getMessengerReferenceIndex();
           await deleteMessengerExportChat(rootHandle, entry, referenceIndex);
+          deletedEntries.push(entry);
         } catch (err) {
           console.error(`Failed to delete ${entry.folderName}`, err);
         }
@@ -579,15 +580,19 @@ export function useArchive(): {
         'archived_threads';
       try {
         await deleteChatFs(rootHandle, subfolderName, entry.folderName);
+        deletedEntries.push(entry);
       } catch (err) {
         console.error(`Failed to delete ${entry.folderName}`, err);
       }
       if (onProgress) onProgress(i + 1, entries.length);
     }
 
-    setInboxList(prev => prev.filter(e => !foldersToRemove.has(e.folderName)));
-    setRequestsList(prev => prev.filter(e => !foldersToRemove.has(e.folderName)));
-    setArchivedList(prev => prev.filter(e => !foldersToRemove.has(e.folderName)));
+    const deletedKeys = new Set(deletedEntries.map(entry => `${entry.source}:${entry.folderName}`));
+    const wasDeleted = (entry: ChatListEntry) => deletedKeys.has(`${entry.source}:${entry.folderName}`);
+    setInboxList(prev => prev.filter(e => !wasDeleted(e)));
+    setRequestsList(prev => prev.filter(e => !wasDeleted(e)));
+    setArchivedList(prev => prev.filter(e => !wasDeleted(e)));
+    return deletedEntries;
   }, [getMessengerReferenceIndex, rootHandle]);
 
   const updateFolderSize = useCallback((entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => {

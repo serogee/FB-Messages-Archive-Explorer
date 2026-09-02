@@ -13,6 +13,7 @@ const SHORTCUT_GROUPS = [
       { keys: ['Space'], description: 'Play or pause video and audio' },
       { keys: [','], description: 'Rewind video or audio by 5 seconds' },
       { keys: ['.'], description: 'Advance video or audio by 5 seconds' },
+      { keys: ['\\'], description: 'Bookmark or unbookmark the current attachment when bookmarking is enabled' },
       { keys: ['Esc'], description: 'Close the attachment viewer' },
     ],
   },

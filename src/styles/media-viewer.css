@@ -103,6 +103,15 @@
     filter: brightness(1.12);
 }
 
+.media-viewer-bookmark-toggle.bookmarked {
+    background: var(--accent);
+    color: white;
+}
+.media-viewer-bookmark-toggle:disabled {
+    cursor: wait;
+    opacity: 0.6;
+}
+
 .media-viewer-content.viewer-selected {
     border-radius: 0;
     box-shadow: none;
@@ -110,6 +119,7 @@
 .media-viewer-content.viewer-selected > .media-viewer-image,
 .media-viewer-content.viewer-selected > .media-viewer-video,
 .media-viewer-content.viewer-selected > .media-viewer-audio-wrap,
+.media-viewer-content.viewer-selected > .media-viewer-link-card,
 .media-viewer-content.viewer-selected > .media-viewer-placeholder {
     box-shadow: 0 0 0 3px var(--accent, #3ea6ff), 0 0 24px rgba(62,166,255,0.35);
 }
@@ -297,6 +307,44 @@
     font-size: 13px;
 }
 
+.media-viewer-item-meta {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    max-width: 100%;
+}
+
+.media-viewer-item-size {
+    flex: 0 0 auto;
+    color: rgba(255,255,255,0.62);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.media-viewer-item-sender {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    max-width: 100%;
+    color: rgba(255,255,255,0.62);
+    font-size: 12px;
+}
+
+.media-viewer-item-sender svg {
+    flex: 0 0 auto;
+}
+
+.media-viewer-item-sender span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .media-viewer-download-btn {
     display: inline-flex;
     align-items: center;
@@ -331,4 +379,45 @@
 .media-viewer-empty {
     color: rgba(255,255,255,0.4);
     font-size: 16px;
+}
+
+.media-viewer-link-card {
+    width: min(480px, calc(100vw - 120px));
+    min-width: min(320px, calc(100vw - 120px));
+    max-height: calc(100vh - 180px);
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 40px;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px;
+    background: rgba(255,255,255,0.05);
+    color: rgba(255,255,255,0.8);
+    text-align: center;
+}
+.media-viewer-link-icon {
+    color: var(--accent);
+}
+.media-viewer-link-host {
+    max-width: 100%;
+    overflow: hidden;
+    color: rgba(255,255,255,0.8);
+    font-size: 15px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.media-viewer-link-text {
+    max-width: 100%;
+    max-height: 8em;
+    overflow: auto;
+    color: rgba(255,255,255,0.62);
+    font-size: 13px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+.media-viewer-link-card .media-viewer-item-sender {
+    color: rgba(255,255,255,0.62);
 }

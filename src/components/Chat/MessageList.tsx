@@ -25,6 +25,7 @@ interface MessageListProps {
   highlightQuery: string;
   onScrollSync: () => void;
   onMediaClick?: (mediaPath: string, msgIndex: number) => void;
+  onLinkClick?: (url: string, msgIndex: number) => void;
 }
 
 export interface MessageListHandle {
@@ -94,6 +95,7 @@ interface MessageChunkProps {
   highlightQuery: string;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
   onMediaClick?: (mediaPath: string, msgIndex: number) => void;
+  onLinkClick?: (url: string, msgIndex: number) => void;
   forceRender?: boolean;
   onRendered: (chunkIndex: number) => void;
 }
@@ -109,6 +111,7 @@ const MessageChunk = React.memo(function MessageChunk({
   highlightQuery,
   chatContainerRef,
   onMediaClick,
+  onLinkClick,
   forceRender,
   onRendered,
 }: MessageChunkProps) {
@@ -246,6 +249,7 @@ const MessageChunk = React.memo(function MessageChunk({
         isFirstInClump={isFirstInClump}
         isLastInClump={isLastInClump}
         onMediaClick={onMediaClick}
+        onLinkClick={onLinkClick}
       />
     );
   });
@@ -264,7 +268,7 @@ const MessageChunk = React.memo(function MessageChunk({
 });
 
 const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function MessageList(
-  { chatData, mediaState, selectedPerspective, settings, highlightQuery, onScrollSync, onMediaClick },
+  { chatData, mediaState, selectedPerspective, settings, highlightQuery, onScrollSync, onMediaClick, onLinkClick },
   ref
 ) {
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -426,6 +430,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
           highlightQuery={highlightQuery}
           chatContainerRef={chatContainerRef}
           onMediaClick={onMediaClick}
+          onLinkClick={onLinkClick}
           forceRender={i === chunks.length - 1 || i === forcedChunkIndex}
           onRendered={handleChunkRendered}
         />
@@ -441,5 +446,7 @@ export const MessageList = React.memo(MessageListBase, (prev, next) => {
          prev.selectedPerspective === next.selectedPerspective &&
          prev.settings.showMyName === next.settings.showMyName &&
          prev.settings.showTheirName === next.settings.showTheirName &&
-         prev.settings.showReactions === next.settings.showReactions;
+         prev.settings.showReactions === next.settings.showReactions &&
+         prev.onMediaClick === next.onMediaClick &&
+         prev.onLinkClick === next.onLinkClick;
 });

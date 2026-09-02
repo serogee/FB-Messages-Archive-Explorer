@@ -3,7 +3,7 @@ type MockTree = Record<string, MockTree | string | Uint8Array>;
 class MockFileHandle implements FileSystemFileHandle {
   readonly kind = 'file' as const;
   readonly name: string;
-  private readonly content: string | Uint8Array;
+  private content: string | Uint8Array;
 
   constructor(name: string, content: string | Uint8Array) {
     this.name = name;
@@ -15,7 +15,21 @@ class MockFileHandle implements FileSystemFileHandle {
   }
 
   async createWritable(): Promise<FileSystemWritableFileStream> {
-    throw new DOMException('Not supported in mock filesystem', 'NotSupportedError');
+    let nextContent: string | Uint8Array = this.content;
+    return {
+      write: async (data: FileSystemWriteChunkType) => {
+        if (typeof data === 'string') nextContent = data;
+        else if (data instanceof Uint8Array) nextContent = data;
+        else if (data instanceof Blob) nextContent = new Uint8Array(await data.arrayBuffer());
+        else throw new DOMException('Unsupported mock write', 'NotSupportedError');
+      },
+      close: async () => { this.content = nextContent; },
+      abort: async () => {},
+      seek: async () => {},
+      truncate: async () => {},
+      locked: false,
+      getWriter: () => { throw new DOMException('Not supported in mock filesystem', 'NotSupportedError'); },
+    } as unknown as FileSystemWritableFileStream;
   }
 
   async isSameEntry(other: FileSystemHandle): Promise<boolean> {
@@ -49,16 +63,26 @@ class MockDirectoryHandle implements FileSystemDirectoryHandle {
     }
   }
 
-  async getDirectoryHandle(name: string): Promise<FileSystemDirectoryHandle> {
+  async getDirectoryHandle(name: string, options?: FileSystemGetDirectoryOptions): Promise<FileSystemDirectoryHandle> {
     const child = this.children.get(name);
+    if (!child && options?.create) {
+      const created = new MockDirectoryHandle(name);
+      this.children.set(name, created);
+      return created;
+    }
     if (!child || child.kind !== 'directory') {
       throw new DOMException(`Directory not found: ${name}`, 'NotFoundError');
     }
     return child;
   }
 
-  async getFileHandle(name: string): Promise<FileSystemFileHandle> {
+  async getFileHandle(name: string, options?: FileSystemGetFileOptions): Promise<FileSystemFileHandle> {
     const child = this.children.get(name);
+    if (!child && options?.create) {
+      const created = new MockFileHandle(name, '');
+      this.children.set(name, created);
+      return created;
+    }
     if (!child || child.kind !== 'file') {
       throw new DOMException(`File not found: ${name}`, 'NotFoundError');
     }
