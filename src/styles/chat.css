@@ -255,6 +255,10 @@
 }
 
 .message-content {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: max-content;
     max-width: 100%;
     min-width: 0;
     line-height: 1.4;
@@ -268,6 +272,10 @@
 }
 .from-them .message-content {
     color: var(--text);
+}
+.message-text {
+    min-width: 0;
+    max-width: 100%;
 }
 .message-inline-link {
     color: var(--accent);
@@ -284,7 +292,7 @@
     flex-direction: column;
     align-items: stretch;
     gap: 6px;
-    width: max-content;
+    width: 100%;
     max-width: 100%;
     margin-top: 8px;
     white-space: normal;

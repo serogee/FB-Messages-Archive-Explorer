@@ -5,7 +5,8 @@ import type { ReadableDirectoryHandle } from '../../types/fileSystem';
 import { getParticipantNames } from '../../services/parser';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
 import { EnableDeletionModal } from '../Modals/EnableDeletionModal';
-import { ChevronUp, ChevronDown } from 'lucide-react';
+import { ShortcutsModal } from '../Modals/ShortcutsModal';
+import { ChevronUp, ChevronDown, ChevronRight, Keyboard } from 'lucide-react';
 
 interface SettingsPanelProps {
   settings: Settings;
@@ -131,6 +132,7 @@ export function SettingsPanel({
   const participants = getParticipantNames(chatData);
   const fsSupported = isFileSystemAccessSupported();
   const [showEnableModal, setShowEnableModal] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
   const handleDeletionToggle = (val: boolean) => {
     if (val) {
@@ -175,6 +177,15 @@ export function SettingsPanel({
         <ToggleRow id="autoCollapseDateNavToggle" label="Auto-collapse date navigator" checked={settings.autoCollapseDateNav} onChange={v => setSetting('autoCollapseDateNav', v as Settings['autoCollapseDateNav'])} />
       </div>
 
+      <div className="settings-section">
+        <strong>Help</strong>
+        <button className="settings-shortcuts-btn" onClick={() => setShowShortcutsModal(true)}>
+          <Keyboard size={17} />
+          <span>Keyboard shortcuts</span>
+          <ChevronRight size={16} />
+        </button>
+      </div>
+
       {chatData && participants.length > 0 && (
         <div className="settings-section">
           <strong>View perspective</strong>
@@ -215,6 +226,10 @@ export function SettingsPanel({
           }}
           onCancel={() => setShowEnableModal(false)}
         />
+      )}
+
+      {showShortcutsModal && (
+        <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />
       )}
 
       <div className="settings-section download-info">

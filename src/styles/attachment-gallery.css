@@ -125,12 +125,14 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(var(--attachment-grid-min-width), 1fr));
     gap: var(--attachment-grid-gap);
+    overflow: visible;
 }
 
 .gallery-virtual-canvas {
     position: relative;
     width: 100%;
-    contain: layout paint;
+    contain: layout;
+    overflow: visible;
 }
 
 .gallery-virtual-row {
@@ -138,7 +140,11 @@
     top: 0;
     left: 0;
     width: 100%;
-    contain: layout paint;
+    contain: layout;
+    overflow: visible;
+}
+.gallery-virtual-row:has(.jump-highlight) {
+    z-index: 20;
 }
 
 .gallery-sticky-month {
@@ -177,7 +183,6 @@
     z-index: 1;
 }
 .gallery-thumb:hover {
-    transform: scale(1.03);
     box-shadow: 0 2px 12px rgba(0,0,0,0.15);
     z-index: 2;
 }
@@ -186,6 +191,24 @@
     transform: scale(0.92);
     box-shadow: 0 0 0 3px var(--accent);
     border-radius: 8px;
+}
+.gallery-thumb.jump-highlight {
+    transform: none;
+    box-shadow: 0 0 0 3px var(--accent), 0 0 0 8px rgba(62,166,255,0.18);
+    animation: gallery-jump-highlight 2.2s ease both;
+    z-index: 3;
+}
+.gallery-thumb.jump-highlight:hover {
+    transform: none;
+}
+
+@keyframes gallery-jump-highlight {
+    0% {
+        box-shadow: 0 0 0 3px var(--accent), 0 0 0 12px rgba(62,166,255,0.28);
+    }
+    100% {
+        box-shadow: 0 0 0 3px var(--accent), 0 0 0 8px rgba(62,166,255,0.08);
+    }
 }
 
 .select-checkbox {

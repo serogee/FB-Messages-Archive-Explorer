@@ -44,7 +44,6 @@ export function HeaderMenu({ onViewArchived, hasArchived, onViewRequests, hasReq
         >
           <ArchiveRestore size={16} />
           Archived threads
-          {!hasArchived && <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--muted)' }}>(none found)</span>}
         </button>
         <button
           className="header-menu-item"
@@ -54,7 +53,6 @@ export function HeaderMenu({ onViewArchived, hasArchived, onViewRequests, hasReq
         >
           <MessageCircleQuestion size={16} />
           Message requests
-          {!hasRequests && <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--muted)' }}>(none found)</span>}
         </button>
         <button
           className="header-menu-item"

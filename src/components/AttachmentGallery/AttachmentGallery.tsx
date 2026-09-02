@@ -17,6 +17,7 @@ import { calculateGalleryLayout, getStickyMonth, type GalleryGroup, type Gallery
 const VIRTUAL_OVERSCAN_PX = 600;
 const COMPACT_CARD_MIN_WIDTH = 220;
 const COMPACT_CARD_HEIGHT = 128;
+const JUMP_HIGHLIGHT_DURATION_MS = 2200;
 
 interface AttachmentGalleryProps {
   chatData: MessengerThread;
@@ -30,6 +31,15 @@ interface AttachmentGalleryProps {
   onTabChange: (tab: GalleryCategory) => void;
   defaultTab?: GalleryCategory;
   selection: ReturnType<typeof useSelection>;
+  attachmentJumpTarget?: AttachmentJumpTarget | null;
+  onAttachmentJumpHandled?: () => void;
+}
+
+export interface AttachmentJumpTarget {
+  tab: GalleryCategory;
+  mediaPath: string;
+  messageIndex: number;
+  category: ResolvedAttachment['category'];
 }
 
 const TABS: { key: GalleryCategory; label: string }[] = [
@@ -58,6 +68,10 @@ function findFirstRow(rows: GalleryLayoutRow[], target: number): number {
   return low;
 }
 
+function getAttachmentKey(attachment: Pick<ResolvedAttachment, 'category' | 'mediaPath' | 'messageIndex'>): string {
+  return `${attachment.category}:${attachment.messageIndex}:${attachment.mediaPath.toLowerCase()}`;
+}
+
 function groupByMonth(items: GalleryItem[]): GalleryGroup[] {
   const groups: GalleryGroup[] = [];
   let currentLabel = '';
@@ -84,6 +98,7 @@ interface GalleryThumbnailProps {
   onSelect: (attachment: ResolvedAttachment) => void;
   selectionMode: boolean;
   isSelected: boolean;
+  isJumpHighlighted: boolean;
   compactFileCard: boolean;
   compactAudioCard: boolean;
 }
@@ -141,6 +156,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   onSelect,
   selectionMode,
   isSelected,
+  isJumpHighlighted,
   compactFileCard,
   compactAudioCard,
 }: GalleryThumbnailProps) {
@@ -214,7 +230,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
 
   return (
     <div
-      className={`gallery-thumb ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${compactFileCard ? 'gallery-thumb-file-compact' : ''} ${compactAudioCard ? 'gallery-thumb-audio-compact' : ''} ${isSelected ? 'selected' : ''}`}
+      className={`gallery-thumb ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${compactFileCard ? 'gallery-thumb-file-compact' : ''} ${compactAudioCard ? 'gallery-thumb-audio-compact' : ''} ${isSelected ? 'selected' : ''} ${isJumpHighlighted ? 'jump-highlight' : ''}`}
       onClick={activate}
       onKeyDown={handleKeyDown}
       role="button"
@@ -317,6 +333,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   && previous.onSelect === next.onSelect
   && previous.selectionMode === next.selectionMode
   && previous.isSelected === next.isSelected
+  && previous.isJumpHighlighted === next.isJumpHighlighted
   && previous.compactFileCard === next.compactFileCard
   && previous.compactAudioCard === next.compactAudioCard
 ));
@@ -376,6 +393,8 @@ const AttachmentGalleryBase = function AttachmentGallery({
   onTabChange,
   defaultTab = 'all',
   selection,
+  attachmentJumpTarget,
+  onAttachmentJumpHandled,
 }: AttachmentGalleryProps) {
   const { all, byCategory } = useAttachments(chatData, mediaState);
   const links = useSharedLinks(chatData);
@@ -384,10 +403,12 @@ const AttachmentGalleryBase = function AttachmentGallery({
   const [viewerState, setViewerState] = useState({ open: false, index: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
+  const [jumpHighlightedKey, setJumpHighlightedKey] = useState<string | null>(null);
   const scrollPositions = useRef<Partial<Record<GalleryCategory, number>>>({});
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const restoreFrameRef = useRef<number | null>(null);
+  const jumpHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoringScrollRef = useRef(false);
   const isOpenRef = useRef(isOpen);
 
@@ -413,7 +434,55 @@ const AttachmentGalleryBase = function AttachmentGallery({
   );
 
   useEffect(() => setActiveTab(defaultTab), [defaultTab]);
-  useEffect(() => setSelectionMode(selection.selectedCount > 0), [selection.selectedCount]);
+  useEffect(() => {
+    if (selection.selectedCount > 0) setSelectionMode(true);
+  }, [selection.selectedCount]);
+
+  useEffect(() => setSelectionMode(false), [selection.clearVersion]);
+
+  const highlightAttachment = useCallback((attachment: Pick<ResolvedAttachment, 'category' | 'mediaPath' | 'messageIndex'>) => {
+    if (jumpHighlightTimerRef.current != null) clearTimeout(jumpHighlightTimerRef.current);
+    setJumpHighlightedKey(getAttachmentKey(attachment));
+    jumpHighlightTimerRef.current = setTimeout(() => {
+      jumpHighlightTimerRef.current = null;
+      setJumpHighlightedKey(null);
+    }, JUMP_HIGHLIGHT_DURATION_MS);
+  }, []);
+
+  const clearJumpHighlight = useCallback(() => {
+    if (jumpHighlightTimerRef.current != null) {
+      clearTimeout(jumpHighlightTimerRef.current);
+      jumpHighlightTimerRef.current = null;
+    }
+    setJumpHighlightedKey(null);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!attachmentJumpTarget || activeTab !== attachmentJumpTarget.tab) return;
+    const container = scrollContainerRef.current;
+    if (!container || layout.rows.length === 0) return;
+
+    const targetPath = attachmentJumpTarget.mediaPath.toLowerCase();
+    const targetRow = layout.rows.find(row => row.type === 'items' && row.items.some(item => (
+      item.category !== 'links' &&
+      item.category === attachmentJumpTarget.category &&
+      item.messageIndex === attachmentJumpTarget.messageIndex &&
+      item.mediaPath.toLowerCase() === targetPath
+    )));
+
+    if (!targetRow) return;
+
+    const nextScrollTop = Math.max(0, targetRow.top - 40);
+    restoringScrollRef.current = true;
+    container.scrollTop = nextScrollTop;
+    scrollPositions.current[activeTab] = nextScrollTop;
+    setScrollTop(nextScrollTop);
+    highlightAttachment(attachmentJumpTarget);
+    requestAnimationFrame(() => {
+      restoringScrollRef.current = false;
+      onAttachmentJumpHandled?.();
+    });
+  }, [activeTab, attachmentJumpTarget, highlightAttachment, layout.rows, onAttachmentJumpHandled]);
 
   useLayoutEffect(() => {
     const container = scrollContainerRef.current;
@@ -441,6 +510,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
   useEffect(() => () => {
     if (scrollFrameRef.current != null) cancelAnimationFrame(scrollFrameRef.current);
     if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+    if (jumpHighlightTimerRef.current != null) clearTimeout(jumpHighlightTimerRef.current);
   }, []);
 
   useLayoutEffect(() => {
@@ -475,6 +545,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
   const handleScroll = useCallback(() => {
     if (!isOpenRef.current || restoringScrollRef.current) return;
+    clearJumpHighlight();
     if (scrollFrameRef.current != null) return;
     scrollFrameRef.current = requestAnimationFrame(() => {
       scrollFrameRef.current = null;
@@ -484,7 +555,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
       scrollPositions.current[activeTab] = container.scrollTop;
       setScrollTop(container.scrollTop);
     });
-  }, [activeTab]);
+  }, [activeTab, clearJumpHighlight]);
 
   const saveScrollPosition = useCallback(() => {
     if (scrollFrameRef.current != null) {
@@ -509,8 +580,9 @@ const AttachmentGalleryBase = function AttachmentGallery({
       scrollFrameRef.current = null;
     }
     setActiveTab(tab);
+    clearJumpHighlight();
     onTabChange(tab);
-  }, [activeTab, onTabChange]);
+  }, [activeTab, clearJumpHighlight, onTabChange]);
 
   const openViewer = useCallback((attachment: ResolvedAttachment) => {
     const index = currentAttachments.indexOf(attachment);
@@ -533,6 +605,39 @@ const AttachmentGalleryBase = function AttachmentGallery({
     onJumpToMessage(messageIndex);
     onClose();
   }, [onJumpToMessage, onClose, saveScrollPosition]);
+
+  const handleViewerAttachmentJump = useCallback((attachment: ResolvedAttachment) => {
+    const tab = activeTab === attachment.category ? attachment.category : 'all';
+    setViewerState({ open: false, index: 0 });
+    if (activeTab !== tab) {
+      setActiveTab(tab);
+      onTabChange(tab);
+    }
+    onAttachmentJumpHandled?.();
+    requestAnimationFrame(() => {
+      const targetPath = attachment.mediaPath.toLowerCase();
+      const targetRow = layout.rows.find(row => row.type === 'items' && row.items.some(item => (
+        item.category !== 'links' &&
+        item.category === attachment.category &&
+        item.messageIndex === attachment.messageIndex &&
+        item.mediaPath.toLowerCase() === targetPath
+      )));
+      const container = scrollContainerRef.current;
+      if (!targetRow || !container) {
+        restoringScrollRef.current = false;
+        return;
+      }
+      const nextScrollTop = Math.max(0, targetRow.top - 40);
+      restoringScrollRef.current = true;
+      container.scrollTop = nextScrollTop;
+      scrollPositions.current[tab] = nextScrollTop;
+      setScrollTop(nextScrollTop);
+      highlightAttachment(attachment);
+      requestAnimationFrame(() => {
+        restoringScrollRef.current = false;
+      });
+    });
+  }, [activeTab, highlightAttachment, layout.rows, onAttachmentJumpHandled, onTabChange]);
 
   const visibleRows = useMemo(() => {
     const start = findFirstRow(layout.rows, Math.max(0, scrollTop - VIRTUAL_OVERSCAN_PX));
@@ -649,6 +754,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
                       onSelect={toggleAttachment}
                       selectionMode={selectionMode}
                       isSelected={selection.isSelected(item)}
+                      isJumpHighlighted={jumpHighlightedKey === getAttachmentKey(item)}
                       compactFileCard={activeTab === 'files' && item.category === 'files'}
                       compactAudioCard={activeTab === 'audio' && item.category === 'audio'}
                     />
@@ -667,7 +773,10 @@ const AttachmentGalleryBase = function AttachmentGallery({
           mediaState={mediaState}
           onClose={() => setViewerState({ open: false, index: viewerState.index })}
           onJumpToMessage={handleViewerJump}
+          onJumpToAttachment={handleViewerAttachmentJump}
           selection={selection}
+          selectionMode={selectionMode}
+          reverseNavigation
         />
       )}
     </>
@@ -681,6 +790,7 @@ export const AttachmentGallery = memo(AttachmentGalleryBase, (previous, next) =>
   && previous.isOpen === next.isOpen
   && previous.infoPanelOpen === next.infoPanelOpen
   && previous.defaultTab === next.defaultTab
+  && previous.attachmentJumpTarget === next.attachmentJumpTarget
   && previous.onTabChange === next.onTabChange
   && previous.selection === next.selection
 ));

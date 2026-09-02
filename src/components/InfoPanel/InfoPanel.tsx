@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
 import { Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon, ChevronRight } from 'lucide-react';
 import {
@@ -19,6 +19,7 @@ interface InfoPanelProps {
   selectedPerspective: string;
   onSelectPerspective: (name: string) => void;
   onOpenGallery?: (tab?: string) => void;
+  header?: ReactNode;
 }
 
 interface MemberStat {
@@ -114,7 +115,7 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
   };
 }
 
-export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery }: InfoPanelProps) {
+export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery, header }: InfoPanelProps) {
   const stats = useMemo(() => {
     if (!chatData) return null;
     return computeStats(chatData.messages, mediaState, activeEntry?._messengerExport === true);
@@ -122,9 +123,11 @@ export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspecti
 
   return (
     <div className="chat-info-panel" id="chatInfoPanel" aria-hidden={!chatData ? 'true' : 'false'}>
-      <div className="info-panel-header">
-        <strong>{chatData?.title || activeEntry?.title || 'Chat Info'}</strong>
-      </div>
+      {header || (
+        <div className="info-panel-header">
+          <strong>{chatData?.title || activeEntry?.title || 'Chat Info'}</strong>
+        </div>
+      )}
       <div className="info-panel-content">
         {!chatData || !stats ? (
           activeEntry ? (

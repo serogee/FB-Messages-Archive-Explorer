@@ -1,5 +1,5 @@
 import { useRef, useImperativeHandle, forwardRef, useState, useCallback } from 'react';
-import type { MessengerThread, MediaState, ChatListEntry } from '../../types/messenger';
+import type { MessengerThread, MediaState, ChatListEntry, ResolvedAttachment } from '../../types/messenger';
 import { Info } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import type { useSearch } from '../../hooks/useSearch';
@@ -9,6 +9,7 @@ import { useSelection } from '../../hooks/useSelection';
 import { DateNavigator } from './DateNavigator';
 import { MessageList, type MessageListHandle } from './MessageList';
 import { AttachmentGallery } from '../AttachmentGallery/AttachmentGallery';
+import type { AttachmentJumpTarget } from '../AttachmentGallery/AttachmentGallery';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
 
 interface ChatViewProps {
@@ -29,7 +30,9 @@ interface ChatViewProps {
   galleryOpen: boolean;
   galleryDefaultTab?: GalleryCategory;
   onGalleryTabChange: (tab: GalleryCategory) => void;
+  onOpenGallery: (tab?: GalleryCategory) => void;
   onCloseGallery: () => void;
+  galleryHasOpened: boolean;
   selection: ReturnType<typeof useSelection>;
 }
 
@@ -72,7 +75,9 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     galleryOpen,
     galleryDefaultTab,
     onGalleryTabChange,
+    onOpenGallery,
     onCloseGallery,
+    galleryHasOpened,
     selection,
   },
   ref
@@ -80,6 +85,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   const messageListRef = useRef<MessageListHandle>(null);
 
   const [viewerState, setViewerState] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
+  const [attachmentJumpTarget, setAttachmentJumpTarget] = useState<AttachmentJumpTarget | null>(null);
   const attachments = useAttachments(chatData, mediaState);
 
   useImperativeHandle(ref, () => ({
@@ -114,6 +120,15 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     setTimeout(() => handleJumpToMessage(messageIndex), 50);
   }, [galleryOpen, onCloseGallery]);
 
+  const handleViewerAttachmentJump = useCallback((attachment: ResolvedAttachment) => {
+    const targetTab = galleryHasOpened && galleryDefaultTab === attachment.category
+      ? attachment.category
+      : 'all';
+    setAttachmentJumpTarget({ ...attachment, tab: targetTab });
+    setViewerState({ open: false, index: 0 });
+    onOpenGallery(targetTab);
+  }, [galleryDefaultTab, galleryHasOpened, onOpenGallery]);
+
   return (
     <div className="chat-container">
       {/* Keep both views laid out so their native scroll positions survive view switches. */}
@@ -134,6 +149,8 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
             onTabChange={onGalleryTabChange}
             defaultTab={galleryDefaultTab}
             selection={selection}
+            attachmentJumpTarget={attachmentJumpTarget}
+            onAttachmentJumpHandled={() => setAttachmentJumpTarget(null)}
           />
         )}
       </div>
@@ -213,6 +230,9 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
           mediaState={mediaState}
           onClose={() => setViewerState({ open: false, index: viewerState.index })}
           onJumpToMessage={handleViewerJump}
+          onJumpToAttachment={handleViewerAttachmentJump}
+          selection={selection}
+          selectionMode={selection.selectedCount > 0}
         />
       )}
     </div>
