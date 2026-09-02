@@ -89,7 +89,8 @@ export async function computeMessengerExportChatSize(
   const referencedMedia = new Set<string>();
 
   for (const msg of thread.messages || []) {
-    for (const { path } of getMessageAttachmentReferences(msg)) {
+    for (const { path, shared } of getMessageAttachmentReferences(msg)) {
+      if (shared) continue;
       if (!isMessengerMediaRef(path)) continue;
       const normalized = normalizeMediaPath(path);
       referencedMedia.add(normalized);

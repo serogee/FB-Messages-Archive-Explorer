@@ -149,6 +149,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
             onTabChange={onGalleryTabChange}
             defaultTab={galleryDefaultTab}
             selection={selection}
+            showStickers={!activeEntry?._messengerExport}
             attachmentJumpTarget={attachmentJumpTarget}
             onAttachmentJumpHandled={() => setAttachmentJumpTarget(null)}
           />

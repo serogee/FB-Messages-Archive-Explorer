@@ -5,7 +5,7 @@ import { getMessageTimestamp } from '../services/parser';
 import { isReactionNoticeMessage } from '../services/reactions';
 import { getMessageLinks } from '../services/messageLinks';
 
-export type AttachmentCategory = 'all' | 'photos' | 'videos' | 'audio' | 'gifs' | 'files';
+export type AttachmentCategory = 'all' | 'photos' | 'videos' | 'audio' | 'gifs' | 'files' | 'stickers';
 export type GalleryCategory = AttachmentCategory | 'links';
 
 export function useSharedLinks(chatData: MessengerThread | null): ResolvedLink[] {
@@ -54,7 +54,7 @@ export function useAttachments(
       const ts = getMessageTimestamp(msg) || 0;
       const refs = getMessageAttachmentReferences(msg);
 
-      for (const { path, category } of refs) {
+      for (const { path, category, shared } of refs) {
         const key = `${category}:${path.toLowerCase()}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -66,6 +66,7 @@ export function useAttachments(
           timestamp: ts,
           sender: msg.senderName || msg.sender_name || 'Unknown',
           mediaEntry: findMediaFile(mediaState, path),
+          shared,
         });
       }
     }
@@ -80,6 +81,7 @@ export function useAttachments(
       audio: [],
       gifs: [],
       files: [],
+      stickers: [],
     };
     for (const att of all) {
       groups[att.category].push(att);

@@ -136,7 +136,7 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
 
   useEffect(() => {
     if (!dropdownOpen) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: PointerEvent) => {
       const target = e.target as Node;
       if (
         dropdownRef.current &&
@@ -146,8 +146,8 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
         setDropdownOpen(false);
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
   }, [dropdownOpen]);
 
   useEffect(() => {
@@ -171,9 +171,7 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
     const handleResize = () => {
       setDropdownOpen(false);
     };
-    const handleScroll = (event: Event) => {
-      const target = event.target as Node | null;
-      if (target && dropdownRef.current?.contains(target)) return;
+    const handleScroll = () => {
       setDropdownOpen(false);
     };
 

@@ -7,6 +7,7 @@ import { isFileSystemAccessSupported } from '../../services/fileSystem';
 import { findMediaFile } from '../../services/media';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
+import { blobCache } from '../../services/blobCache';
 
 interface SelectionPanelProps {
   chatData: MessengerThread;
@@ -45,6 +46,7 @@ function SelectionVisualThumbnail({
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const isVideo = attachment.category === 'videos';
+  const isSticker = attachment.category === 'stickers';
 
   useEffect(() => {
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
@@ -55,20 +57,24 @@ function SelectionVisualThumbnail({
 
     const cached = isVideo
       ? videoPosterCache.get(entry)
-      : imageThumbnailCache.get(entry);
+      : isSticker
+        ? blobCache.get(entry) || entry.url || null
+        : imageThumbnailCache.get(entry);
     setUrl(cached);
     if (cached) return;
 
     let mounted = true;
     const thumbnailRequest = isVideo
       ? videoPosterCache.getOrCreate(entry)
-      : imageThumbnailCache.getOrCreate(entry);
+      : isSticker
+        ? blobCache.getOrCreate(entry)
+        : imageThumbnailCache.getOrCreate(entry);
     void thumbnailRequest.then(thumbnailUrl => {
       if (mounted) setUrl(thumbnailUrl);
     });
 
     return () => { mounted = false; };
-  }, [attachment, isVideo, mediaState]);
+  }, [attachment, isSticker, isVideo, mediaState]);
 
   return (
     <>
@@ -217,13 +223,13 @@ export function SelectionPanel({
               return (
                 <button
                   key={key}
-                  className={`gallery-thumb ${cat === 'audio' || cat === 'files' ? 'gallery-thumb-file' : ''} selected`}
+                  className={`gallery-thumb ${cat === 'audio' || cat === 'files' ? 'gallery-thumb-file' : ''} ${cat === 'stickers' ? 'gallery-thumb-sticker' : ''} selected`}
                   onClick={() => onDeselect(att)}
                   title={basename}
                 >
                   <div className="select-checkbox"><Check size={14} /></div>
 
-                  {(cat === 'photos' || cat === 'gifs' || cat === 'videos') ? (
+                  {(cat === 'photos' || cat === 'gifs' || cat === 'videos' || cat === 'stickers') ? (
                     <SelectionVisualThumbnail
                       attachment={att}
                       mediaState={mediaState}

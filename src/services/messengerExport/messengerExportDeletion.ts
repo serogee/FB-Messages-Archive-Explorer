@@ -50,7 +50,8 @@ async function getConversationMediaBasenames(file: File, signal?: AbortSignal): 
   if (!thread) return media;
   for (const msg of thread.messages || []) {
     throwIfAborted(signal);
-    for (const { path } of getMessageAttachmentReferences(msg)) {
+    for (const { path, shared } of getMessageAttachmentReferences(msg)) {
+      if (shared) continue;
       if (!isMessengerMediaRef(path)) continue;
       const basename = getBasename(path);
       if (basename) media.add(basename);

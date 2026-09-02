@@ -135,6 +135,7 @@ export async function listChatFolders(
             (lastMsg.audio?.length || lastMsg.audio_files?.length) ? 'an audio message' :
             (lastMsg.gifs?.length) ? 'a GIF' :
             (lastMsg.files?.length) ? 'a file' :
+            lastMsg.sticker ? 'a sticker' :
             (lastMsg.media?.length) ? 'an attachment' : null;
           if (attachType) {
             lastMessage = isGroup ? `${firstName} sent ${attachType}` : `Sent ${attachType}`;

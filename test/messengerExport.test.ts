@@ -15,7 +15,8 @@ function conversationJson() {
         senderName: 'Bob',
         text: 'later',
         timestamp: 20,
-        media: [{ uri: 'media/photo.jpg' }, { uri: 'media/clip.mp4' }],
+        media: [{ uri: 'media/photo.jpg' }, { uri: 'media/sticker.webp' }, { uri: 'media/clip.mp4' }],
+        sticker: { uri: 'messages/stickers_used/ignored.webp' },
       },
       {
         senderName: 'Alice',
@@ -48,8 +49,9 @@ describe('Messenger export parser and detector', () => {
     expect(thread.messages.map(message => message.text)).toEqual(['earlier', 'later']);
     expect(thread.messages[0].audio).toHaveLength(1);
     expect(thread.messages[0].files).toHaveLength(1);
-    expect(thread.messages[1].photos).toHaveLength(1);
+    expect(thread.messages[1].photos).toHaveLength(2);
     expect(thread.messages[1].videos).toHaveLength(1);
+    expect(thread.messages[1].sticker).toBeUndefined();
   });
 
   it('finds the last timestamped Messenger export message', () => {

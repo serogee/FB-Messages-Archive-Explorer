@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import type { ChatListEntry, MessengerThread, MediaState } from '../types/messenger';
+import type { ReadableDirectoryHandle } from '../types/fileSystem';
 import { loadChatMessages } from '../services/fileSystem';
-import { processMediaFromDirectory, createMediaState, revokeAllMedia } from '../services/media';
+import { processMediaFromDirectory, processFacebookStickerReferences, createMediaState, revokeAllMedia } from '../services/media';
 import { loadMessengerExportChat, processMessengerExportMedia } from '../services/messengerExport';
 import { enrichReactionTimestamps } from '../services/reactions';
 import { storageGet, storageSet } from '../services/storage';
@@ -17,7 +18,7 @@ export function useChat(): {
   loading: boolean;
   selectedPerspective: string;
   setSelectedPerspective: (name: string) => void;
-  loadChat: (entry: ChatListEntry) => Promise<void>;
+  loadChat: (entry: ChatListEntry, messagesRootHandle?: ReadableDirectoryHandle | null) => Promise<void>;
   clearChat: () => void;
   activeEntry: ChatListEntry | null;
 } {
@@ -40,7 +41,7 @@ export function useChat(): {
 
   const mediaAbortControllerRef = useRef<AbortController | null>(null);
 
-  const loadChat = useCallback(async (entry: ChatListEntry) => {
+  const loadChat = useCallback(async (entry: ChatListEntry, messagesRootHandle?: ReadableDirectoryHandle | null) => {
     setActiveEntry(entry);
     setChatData(null);
     setLoading(true);
@@ -105,6 +106,16 @@ export function useChat(): {
             setMsgProgress(progress);
             setMsgStatusText(statusText);
           }, abortCtrl.signal);
+
+      if (!entry._messengerExport && messagesRootHandle && !abortCtrl.signal.aborted) {
+        await processFacebookStickerReferences(
+          messagesRootHandle,
+          data.messages || [],
+          newMediaState,
+          abortCtrl.signal
+        );
+        if (!abortCtrl.signal.aborted) setMediaState({ ...newMediaState });
+      }
       
       if (abortCtrl.signal.aborted) return;
 
