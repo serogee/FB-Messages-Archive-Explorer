@@ -23,6 +23,13 @@ const SHORTCUT_GROUPS = [
     ],
   },
   {
+    title: 'Attachment gallery',
+    shortcuts: [
+      { keys: ['Page Up'], description: 'Go to the previous attachment tab' },
+      { keys: ['Page Down'], description: 'Go to the next attachment tab' },
+    ],
+  },
+  {
     title: 'Date navigator',
     shortcuts: [
       { keys: ['←', 'Page Up'], description: 'Go to the previous date period while hovering over the date header' },
