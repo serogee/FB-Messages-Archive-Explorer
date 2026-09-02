@@ -178,6 +178,8 @@ export default function App() {
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await archive.openFolder(settings.deletionEnabled, () => {
+      setActiveTab('chats');
+      setSidebarView('chats');
       deleteInfoAbortRef.current?.abort();
       deleteInfoAbortRef.current = null;
       chat.clearChat();
