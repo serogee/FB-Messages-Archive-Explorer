@@ -7,6 +7,19 @@ function getSelectionKey(item: SelectableItem): string {
     : `${item.category}:${item.mediaPath.toLowerCase()}`;
 }
 
+export function addItemsToSelection(
+  selectedKeys: Set<string>,
+  items: SelectableItem[],
+): Set<string> {
+  const next = new Set(selectedKeys);
+  for (const item of items) next.add(getSelectionKey(item));
+  return next;
+}
+
+export function shouldConfirmBulkSelection(itemCount: number): boolean {
+  return itemCount > 500;
+}
+
 export function useSelection() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [clearVersion, setClearVersion] = useState(0);
@@ -30,6 +43,14 @@ export function useSelection() {
   const deselectAll = useCallback(() => {
     setSelectedKeys(new Set());
     setClearVersion((version) => version + 1);
+  }, []);
+
+  const selectMany = useCallback((items: SelectableItem[]) => {
+    if (items.length === 0) return;
+    setSelectedKeys(previous => {
+      const next = addItemsToSelection(previous, items);
+      return next.size === previous.size ? previous : next;
+    });
   }, []);
 
   const isSelected = useCallback(
@@ -60,6 +81,7 @@ export function useSelection() {
   return {
     selectedKeys,
     toggle,
+    selectMany,
     deselectAll,
     isSelected,
     selectedCount,

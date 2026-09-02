@@ -9,7 +9,7 @@ const SHORTCUT_GROUPS = [
   {
     title: 'Attachment viewer',
     shortcuts: [
-      { keys: ['←', '→'], description: 'Move between attachments' },
+      { keys: ['\u2190', '\u2192'], description: 'Move between attachments' },
       { keys: ['Space'], description: 'Play or pause video and audio' },
       { keys: [','], description: 'Rewind video or audio by 5 seconds' },
       { keys: ['.'], description: 'Advance video or audio by 5 seconds' },
@@ -31,10 +31,23 @@ const SHORTCUT_GROUPS = [
     ],
   },
   {
+    title: 'Gallery filters',
+    shortcuts: [
+      { keys: ['Enter'], description: 'Focus the sender search, apply the highlighted result, or remove a focused sender filter' },
+      { keys: ['Backspace'], description: 'Remove a focused sender filter' },
+      { keys: ['+'], description: 'Include the sender entered in the search' },
+      { keys: ['-'], description: 'Exclude the sender entered in the search' },
+      { keys: ['.'], description: 'Show only senders with items in the current gallery tab; plus or minus can follow the dot' },
+      { keys: ['\u2191', '\u2193'], description: 'Move between sender search results' },
+      { keys: ['\u2190', '\u2192'], description: 'Switch sender actions or move between active sender filters' },
+      { keys: ['Esc'], description: 'Close and unfocus the sender search' },
+    ],
+  },
+  {
     title: 'Date navigator',
     shortcuts: [
-      { keys: ['←', 'Page Up'], description: 'Go to the previous date period while hovering over the date header' },
-      { keys: ['→', 'Page Down'], description: 'Go to the next date period while hovering over the date header' },
+      { keys: ['\u2190', 'Page Up'], description: 'Go to the previous date period while hovering over the date header' },
+      { keys: ['\u2192', 'Page Down'], description: 'Go to the next date period while hovering over the date header' },
     ],
   },
 ];

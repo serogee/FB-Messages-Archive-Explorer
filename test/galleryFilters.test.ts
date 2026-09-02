@@ -1,0 +1,182 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  applyGalleryFilters,
+  getGallerySenderOptions,
+  getGallerySenderSearchResults,
+  normalizeGallerySender,
+  parseGallerySenderSearch,
+  removeGallerySenderFilter,
+  setGallerySenderFilter,
+  shouldClearFiltersForGalleryJump,
+  toggleGallerySenderFilter,
+  type GalleryFilterState,
+} from '../src/hooks/useGalleryFilters';
+import { addItemsToSelection, shouldConfirmBulkSelection } from '../src/hooks/useSelection';
+import type { ResolvedAttachment, ResolvedLink, SelectableItem } from '../src/types/messenger';
+
+function attachment(sender: string, index: number): ResolvedAttachment {
+  return {
+    mediaPath: `photos/${sender}-${index}.jpg`,
+    category: 'photos',
+    messageIndex: index,
+    timestamp: index,
+    sender,
+    mediaEntry: null,
+  };
+}
+
+function link(sender: string, index: number): ResolvedLink {
+  return {
+    category: 'links',
+    url: `https://example.com/${index}`,
+    messageIndex: index,
+    timestamp: index,
+    sender,
+  };
+}
+
+function filters(overrides: Partial<GalleryFilterState> = {}): GalleryFilterState {
+  return {
+    includeSenders: new Set(),
+    excludeSenders: new Set(),
+    bookmarkFilter: 'all',
+    ...overrides,
+  };
+}
+
+describe('attachment gallery filters', () => {
+  const items: SelectableItem[] = [
+    attachment('Alice', 1),
+    attachment('ALICE', 2),
+    attachment('Bob', 3),
+    link('Carol', 4),
+  ];
+
+  it('normalizes sender identity without changing display data', () => {
+    expect(normalizeGallerySender('  ALIce ')).toBe('alice');
+  });
+
+  it('unions chat participants with attachment senders and marks current-tab availability', () => {
+    const options = getGallerySenderOptions(['Alice', 'Dave'], items, [items[0]]);
+
+    expect(options.map(option => option.key)).toEqual(['alice', 'bob', 'carol', 'dave']);
+    expect(options.find(option => option.key === 'alice')?.hasCurrentTabItems).toBe(true);
+    expect(options.find(option => option.key === 'bob')?.hasCurrentTabItems).toBe(false);
+    expect(options.find(option => option.key === 'dave')?.hasCurrentTabItems).toBe(false);
+  });
+
+  it('uses plus/minus prefixes and limits sender search results to five', () => {
+    const senders = Array.from({ length: 8 }, (_, index) => ({ label: `Person ${index}` }));
+
+    expect(parseGallerySenderSearch(' - person')).toEqual({ mode: 'exclude', term: 'person', currentTabOnly: false });
+    expect(parseGallerySenderSearch('+ Person 2')).toEqual({ mode: 'include', term: 'person 2', currentTabOnly: false });
+    expect(parseGallerySenderSearch('.- Person 3')).toEqual({ mode: 'exclude', term: 'person 3', currentTabOnly: true });
+    expect(getGallerySenderSearchResults(senders, '+person')).toHaveLength(5);
+    expect(getGallerySenderSearchResults(senders, '-Person 6')).toEqual([{ label: 'Person 6' }]);
+    expect(getGallerySenderSearchResults(senders, 'son 4')).toEqual([{ label: 'Person 4' }]);
+  });
+
+  it('supports the gallery dropdown maximum of 20 matching senders', () => {
+    const senders = Array.from({ length: 25 }, (_, index) => ({ label: `Person ${index}` }));
+    expect(getGallerySenderSearchResults(senders, 'person', 20)).toHaveLength(20);
+  });
+
+  it('returns the original array when no filters are active', () => {
+    expect(applyGalleryFilters(items, filters(), () => false)).toBe(items);
+  });
+
+  it('applies case-insensitive inclusive OR filtering', () => {
+    const result = applyGalleryFilters(
+      items,
+      filters({ includeSenders: new Set(['alice', 'carol']) }),
+      () => false,
+    );
+
+    expect(result.map(item => item.sender)).toEqual(['Alice', 'ALICE', 'Carol']);
+  });
+
+  it('applies exclusions after inclusive matching', () => {
+    const result = applyGalleryFilters(
+      items,
+      filters({ includeSenders: new Set(['alice', 'bob']), excludeSenders: new Set(['bob']) }),
+      () => false,
+    );
+
+    expect(result.map(item => item.sender)).toEqual(['Alice', 'ALICE']);
+  });
+
+  it('checks bookmark membership only when a bookmark filter is active', () => {
+    const isBookmarked = vi.fn((item: SelectableItem) => item.messageIndex === 3);
+    expect(applyGalleryFilters(items, filters(), isBookmarked)).toBe(items);
+    expect(isBookmarked).not.toHaveBeenCalled();
+
+    expect(applyGalleryFilters(
+      items,
+      filters({ bookmarkFilter: 'bookmarked' }),
+      isBookmarked,
+    )).toEqual([items[2]]);
+  });
+
+  it('atomically prevents a sender from being both included and excluded', () => {
+    const included = toggleGallerySenderFilter(filters(), 'Alice', 'include');
+    const excluded = toggleGallerySenderFilter(included, 'ALICE', 'exclude');
+
+    expect(excluded.includeSenders.has('alice')).toBe(false);
+    expect(excluded.excludeSenders.has('alice')).toBe(true);
+    expect(toggleGallerySenderFilter(excluded, 'alice', 'exclude').excludeSenders.has('alice')).toBe(false);
+  });
+
+  it('sets, switches, and removes an explicit sender filter', () => {
+    const included = setGallerySenderFilter(filters(), 'Alice', 'include');
+    expect(setGallerySenderFilter(included, 'alice', 'include')).toBe(included);
+
+    const excluded = setGallerySenderFilter(included, 'ALICE', 'exclude');
+    expect(excluded.includeSenders.has('alice')).toBe(false);
+    expect(excluded.excludeSenders.has('alice')).toBe(true);
+    expect(removeGallerySenderFilter(excluded, 'Alice')).toEqual(filters());
+  });
+
+  it('clears filters of the opposite polarity when adding a sender', () => {
+    const included = setGallerySenderFilter(
+      setGallerySenderFilter(filters(), 'Alice', 'include'),
+      'Bob',
+      'include',
+    );
+    const excluded = setGallerySenderFilter(included, 'Carol', 'exclude');
+
+    expect(included.includeSenders).toEqual(new Set(['alice', 'bob']));
+    expect(excluded.includeSenders.size).toBe(0);
+    expect(excluded.excludeSenders).toEqual(new Set(['carol']));
+  });
+
+  it('clears active filters only when they hide a requested jump target', () => {
+    expect(shouldClearFiltersForGalleryJump(items, [items[2]], items[0], true)).toBe(true);
+    expect(shouldClearFiltersForGalleryJump(items, items, items[0], true)).toBe(false);
+    expect(shouldClearFiltersForGalleryJump(items, [items[2]], items[0], false)).toBe(false);
+    expect(shouldClearFiltersForGalleryJump(items, [], attachment('Missing', 99), true)).toBe(false);
+  });
+});
+
+describe('bulk gallery selection', () => {
+  it('adds attachments and links without toggling or duplicating existing keys', () => {
+    const photo = attachment('Alice', 1);
+    const samePhotoPath = { ...photo, messageIndex: 99 };
+    const sharedLink = link('Alice', 2);
+    const selected = addItemsToSelection(new Set(['photos:already-selected.jpg']), [
+      photo,
+      samePhotoPath,
+      sharedLink,
+    ]);
+
+    expect(selected).toEqual(new Set([
+      'photos:already-selected.jpg',
+      `photos:${photo.mediaPath.toLowerCase()}`,
+      `links:${sharedLink.messageIndex}:${sharedLink.url}`,
+    ]));
+  });
+
+  it('requires confirmation only above the 500-item safety threshold', () => {
+    expect(shouldConfirmBulkSelection(500)).toBe(false);
+    expect(shouldConfirmBulkSelection(501)).toBe(true);
+  });
+});

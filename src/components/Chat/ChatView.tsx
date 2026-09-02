@@ -93,15 +93,22 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   const [attachmentJumpTarget, setAttachmentJumpTarget] = useState<AttachmentJumpTarget | null>(null);
   const attachments = useAttachments(chatData, mediaState);
   const links = useSharedLinks(chatData);
+  const bookmarkRecords = bookmarks.bookmarks;
+  const bookmarkLookup = bookmarks.isBookmarked;
+  const toggleBookmark = bookmarks.toggle;
   const isAttachmentBookmarked = useCallback(
-    (item: SelectableItem) => !!activeEntry && bookmarks.isBookmarked(activeEntry, item),
-    [activeEntry, bookmarks]
+    (item: SelectableItem) => {
+      // Capture the records snapshot so memoized consumers refresh when bookmark membership changes.
+      void bookmarkRecords;
+      return !!activeEntry && bookmarkLookup(activeEntry, item);
+    },
+    [activeEntry, bookmarkLookup, bookmarkRecords]
   );
   const handleToggleBookmark = useCallback(
     (item: SelectableItem) => activeEntry
-      ? bookmarks.toggle(activeEntry, item)
+      ? toggleBookmark(activeEntry, item)
       : Promise.resolve(),
-    [activeEntry, bookmarks]
+    [activeEntry, toggleBookmark]
   );
 
   useImperativeHandle(ref, () => ({

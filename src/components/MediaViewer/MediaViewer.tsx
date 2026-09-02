@@ -102,6 +102,7 @@ export function MediaViewer({
   const selectionModeRef = useRef(selectionMode);
   const bookmarkToggleRef = useRef(onToggleBookmark);
   const bookmarkingEnabledRef = useRef(attachmentBookmarkingEnabled);
+  const closeRef = useRef(onClose);
 
   const item = items[currentIndex] || null;
   const attachment = item && item.category !== 'links' ? item : null;
@@ -118,6 +119,15 @@ export function MediaViewer({
   selectionModeRef.current = selectionMode;
   bookmarkToggleRef.current = onToggleBookmark;
   bookmarkingEnabledRef.current = attachmentBookmarkingEnabled;
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    if (items.length === 0) {
+      closeRef.current();
+      return;
+    }
+    setCurrentIndex(index => Math.min(index, items.length - 1));
+  }, [items.length]);
 
   const hasLeft = reverseNavigation
     ? currentIndex < items.length - 1
