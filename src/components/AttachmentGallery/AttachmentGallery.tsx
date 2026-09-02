@@ -425,6 +425,8 @@ const AttachmentGalleryBase = function AttachmentGallery({
   const [scrollTop, setScrollTop] = useState(0);
   const [jumpHighlightedKey, setJumpHighlightedKey] = useState<string | null>(null);
   const scrollPositions = useRef<Partial<Record<GalleryCategory, number>>>({});
+  const tabRefs = useRef<Partial<Record<GalleryCategory, HTMLButtonElement | null>>>({});
+  const tabsContainerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const restoreFrameRef = useRef<number | null>(null);
@@ -542,6 +544,21 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, [isOpen]);
 
   useLayoutEffect(() => {
+    if (!isOpen) return;
+    const container = tabsContainerRef.current;
+    const tab = tabRefs.current[activeTab];
+    if (!container || !tab) return;
+
+    const tabStart = tab.offsetLeft;
+    const tabEnd = tabStart + tab.offsetWidth;
+    const visibleStart = container.scrollLeft;
+    const visibleEnd = visibleStart + container.clientWidth;
+
+    if (tabStart < visibleStart) container.scrollLeft = tabStart;
+    else if (tabEnd > visibleEnd) container.scrollLeft = tabEnd - container.clientWidth;
+  }, [activeTab, isOpen]);
+
+  useLayoutEffect(() => {
     if (!isOpen || viewport.width <= 0) return;
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -607,6 +624,29 @@ const AttachmentGalleryBase = function AttachmentGallery({
     clearJumpHighlight();
     onTabChange(tab);
   }, [activeTab, clearJumpHighlight, onTabChange]);
+
+  useEffect(() => {
+    if (!isOpen || viewerState.open) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'PageUp' && event.key !== 'PageDown') return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+
+      const tabs = showStickers ? TABS : TABS.filter(tab => tab.key !== 'stickers');
+      const currentIndex = tabs.findIndex(tab => tab.key === activeTab);
+      const direction = event.key === 'PageUp' ? -1 : 1;
+      const nextIndex = Math.min(tabs.length - 1, Math.max(0, currentIndex + direction));
+      const nextTab = tabs[nextIndex];
+      if (!nextTab || nextTab.key === activeTab) return;
+
+      event.preventDefault();
+      handleTabChange(nextTab.key);
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [activeTab, handleTabChange, isOpen, showStickers, viewerState.open]);
 
   const openViewer = useCallback((attachment: ResolvedAttachment) => {
     const index = currentAttachments.indexOf(attachment);
@@ -720,10 +760,11 @@ const AttachmentGalleryBase = function AttachmentGallery({
         </button>
       </div>
 
-      <div className="gallery-tabs">
+      <div className="gallery-tabs" ref={tabsContainerRef}>
         {visibleTabs.map(tab => (
           <button
             key={tab.key}
+            ref={element => { tabRefs.current[tab.key] = element; }}
             className={`gallery-tab ${activeTab === tab.key ? 'active' : ''}`}
             onClick={() => handleTabChange(tab.key)}
           >
