@@ -160,7 +160,7 @@ export function SettingsPanel({
   };
 
   return (
-    <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+    <div className="sidebar-scroll-region settings-scroll-region">
       <div className="settings-section">
         <strong>Messages Folder</strong>
         {rootHandle ? (

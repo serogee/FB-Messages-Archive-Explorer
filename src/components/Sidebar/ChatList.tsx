@@ -461,7 +461,7 @@ export function ChatList({ chatList, activeEntry, onSelectChat, onDeleteChat, de
           <option value="smallest_size" disabled={sizeDisabled} title={sizeDisabled ? sizeTitle : ''}>Smallest Size</option>
         </select>
       </div>
-      <div className="chat-list" role="list">
+      <div className="chat-list sidebar-scroll-region" role="list">
         {mainFiltered.length === 0 && extras.length === 0 && (
           <div className="chat-list-empty">
             {filter ? 'No chats match your filter.' : 'No chats found.'}
