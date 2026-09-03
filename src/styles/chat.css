@@ -14,11 +14,18 @@
 }
 .chat-view-layer {
     position: absolute;
-    inset: 0 10px;
+    inset: 0 0 0 10px;
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+}
+.chat-view-layer > .chat-header,
+.chat-view-layer > .gallery-tabs,
+.chat-view-layer > .gallery-filter-panel,
+.chat-view-layer > #line,
+.chat-view-layer > #loading {
+    margin-right: 10px;
 }
 .chat-view-layer.active {
     visibility: visible;
@@ -147,7 +154,7 @@
 .media-loading-overlay {
     position: absolute;
     bottom: 16px;
-    left: 50%;
+    left: calc(50% - 5px);
     transform: translateX(-50%);
     z-index: 50;
     pointer-events: none;
