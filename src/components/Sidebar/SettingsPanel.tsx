@@ -335,7 +335,7 @@ export function SettingsPanel({
         <a href="https://www.facebook.com/dyi" target="_blank" rel="noreferrer">
           Facebook Download Your Information
         </a>
-        <a href="https://www.messenger.com/dyi" target="_blank" rel="noreferrer">
+        <a href="https://www.messenger.com/secure_storage/dyi" target="_blank" rel="noreferrer">
           Messenger Download Your Information
         </a>
         <p className="footer">
