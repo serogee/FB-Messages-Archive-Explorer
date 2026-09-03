@@ -25,6 +25,10 @@ export function removeItemsFromSelection(
   return next;
 }
 
+export function sortSelectableItemsNewestFirst(items: SelectableItem[]): SelectableItem[] {
+  return [...items].sort((left, right) => right.timestamp - left.timestamp);
+}
+
 export function shouldConfirmBulkSelection(itemCount: number): boolean {
   return itemCount > 500;
 }

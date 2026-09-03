@@ -16,6 +16,7 @@ import { calculateGalleryLayout, getStickyMonth, type GalleryGroup, type Gallery
 import { applyGalleryFilters, getGallerySenderOptions, getGallerySenderSearchResults, parseGallerySenderSearch, shouldClearFiltersForGalleryJump, useGalleryFilters, type GalleryBookmarkFilter } from '../../hooks/useGalleryFilters';
 import { BulkSelectionConfirmModal } from '../Modals/BulkSelectionConfirmModal';
 import { ShortcutsModal } from '../Modals/ShortcutsModal';
+import { getAttachmentJumpTab } from './attachmentJump';
 
 const VIRTUAL_OVERSCAN_PX = 600;
 const COMPACT_CARD_MIN_WIDTH = 220;
@@ -1066,7 +1067,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, [onJumpToMessage, onClose, saveScrollPosition]);
 
   const handleViewerAttachmentJump = useCallback((targetItem: SelectableItem) => {
-    const tab = activeTab === targetItem.category ? targetItem.category : 'all';
+    const tab = getAttachmentJumpTab(activeTab, targetItem.category);
     setViewerState({ open: false, index: 0 });
     if (activeTab !== tab) {
       setActiveTab(tab);

@@ -10,6 +10,7 @@ import { DateNavigator } from './DateNavigator';
 import { MessageList, type MessageListHandle } from './MessageList';
 import { AttachmentGallery } from '../AttachmentGallery/AttachmentGallery';
 import type { AttachmentJumpTarget } from '../AttachmentGallery/AttachmentGallery';
+import { getAttachmentJumpTab } from '../AttachmentGallery/attachmentJump';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
 import type { AttachmentBookmarksController } from '../../hooks/useAttachmentBookmarks';
 
@@ -33,7 +34,6 @@ interface ChatViewProps {
   onGalleryTabChange: (tab: GalleryCategory) => void;
   onOpenGallery: (tab?: GalleryCategory) => void;
   onCloseGallery: () => void;
-  galleryHasOpened: boolean;
   selection: ReturnType<typeof useSelection>;
   attachmentBookmarkingEnabled: boolean;
   bookmarks: AttachmentBookmarksController;
@@ -42,6 +42,7 @@ interface ChatViewProps {
 export interface ChatViewHandle {
   scrollToBottom: () => void;
   jumpToMessage: (index: number) => Promise<void>;
+  jumpToAttachment: (item: SelectableItem) => void;
 }
 
 function ProgressBar({ value, label }: { value: number; label: string }) {
@@ -80,7 +81,6 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     onGalleryTabChange,
     onOpenGallery,
     onCloseGallery,
-    galleryHasOpened,
     selection,
     attachmentBookmarkingEnabled,
     bookmarks,
@@ -111,15 +111,6 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     [activeEntry, toggleBookmark]
   );
 
-  useImperativeHandle(ref, () => ({
-    scrollToBottom: () => {
-      messageListRef.current?.scrollToBottom();
-    },
-    jumpToMessage: async (index: number) => {
-      await messageListRef.current?.jumpToMessage(index);
-    },
-  }));
-
   const handleJumpToMessage = async (index: number) => {
     await messageListRef.current?.jumpToMessage(index);
   };
@@ -149,13 +140,21 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   }, [galleryOpen, onCloseGallery]);
 
   const handleViewerAttachmentJump = useCallback((item: SelectableItem) => {
-    const targetTab = galleryHasOpened && galleryDefaultTab === item.category
-      ? item.category
-      : 'all';
+    const targetTab = getAttachmentJumpTab(galleryDefaultTab, item.category);
     setAttachmentJumpTarget({ ...item, tab: targetTab });
     setViewerState(previous => ({ ...previous, open: false, index: 0 }));
     onOpenGallery(targetTab);
-  }, [galleryDefaultTab, galleryHasOpened, onOpenGallery]);
+  }, [galleryDefaultTab, onOpenGallery]);
+
+  useImperativeHandle(ref, () => ({
+    scrollToBottom: () => {
+      messageListRef.current?.scrollToBottom();
+    },
+    jumpToMessage: async (index: number) => {
+      await messageListRef.current?.jumpToMessage(index);
+    },
+    jumpToAttachment: handleViewerAttachmentJump,
+  }), [handleViewerAttachmentJump]);
 
   return (
     <div className="chat-container">

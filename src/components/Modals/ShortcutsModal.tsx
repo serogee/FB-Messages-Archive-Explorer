@@ -20,7 +20,7 @@ const SHORTCUT_GROUPS = [
   {
     title: 'Attachment selection',
     shortcuts: [
-      { keys: ['Space'], description: 'Select or deselect the current attachment while selection is active' },
+      { keys: ['Enter'], description: 'Select or deselect the current attachment while selection is active' },
     ],
   },
   {
