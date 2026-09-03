@@ -11,6 +11,7 @@ import './styles/modals.css';
 import './styles/media-viewer.css';
 import './styles/attachment-gallery.css';
 import './styles/selection-panel.css';
+import './styles/pwa.css';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
 

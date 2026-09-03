@@ -7,8 +7,10 @@ import { isFileSystemAccessSupported } from '../../services/fileSystem';
 import { EnableDeletionModal } from '../Modals/EnableDeletionModal';
 import { ShortcutsModal } from '../Modals/ShortcutsModal';
 import { FilenamePlaceholdersModal } from '../Modals/FilenamePlaceholdersModal';
+import { DisableOfflineModal } from '../Modals/DisableOfflineModal';
 import { Braces, ChevronUp, ChevronDown, ChevronRight, Keyboard } from 'lucide-react';
 import { DEFAULT_ATTACHMENT_FILENAME_TEMPLATE } from '../../services/saveAttachments';
+import { disableOfflineSupport } from '../../services/pwa';
 
 interface SettingsPanelProps {
   settings: Settings;
@@ -139,6 +141,9 @@ export function SettingsPanel({
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showFilenamePlaceholdersModal, setShowFilenamePlaceholdersModal] = useState(false);
   const [bookmarkPermissionError, setBookmarkPermissionError] = useState(false);
+  const [showDisableOfflineModal, setShowDisableOfflineModal] = useState(false);
+  const [offlineSupportBusy, setOfflineSupportBusy] = useState(false);
+  const [offlineSupportError, setOfflineSupportError] = useState<string | null>(null);
 
   const handleDeletionToggle = (val: boolean) => {
     if (val) {
@@ -156,6 +161,35 @@ export function SettingsPanel({
       if (!changed && val) setBookmarkPermissionError(true);
     } catch {
       if (val) setBookmarkPermissionError(true);
+    }
+  };
+
+  const handleOfflineSupportToggle = (enabled: boolean) => {
+    setOfflineSupportError(null);
+    if (!enabled) {
+      setShowDisableOfflineModal(true);
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setOfflineSupportError('Reconnect to enable offline support.');
+      return;
+    }
+    setSetting('offlineSupportEnabled', true);
+  };
+
+  const handleDisableOfflineSupport = async () => {
+    setOfflineSupportBusy(true);
+    setOfflineSupportError(null);
+    setSetting('offlineSupportEnabled', false);
+    try {
+      await disableOfflineSupport();
+      setShowDisableOfflineModal(false);
+    } catch (error) {
+      console.error('Failed to disable offline support:', error);
+      setSetting('offlineSupportEnabled', true);
+      setOfflineSupportError('Offline support could not be disabled. Try again.');
+    } finally {
+      setOfflineSupportBusy(false);
     }
   };
 
@@ -199,6 +233,21 @@ export function SettingsPanel({
         <ToggleRow id="showTheirNameToggle" label="Show their names" checked={settings.showTheirName} onChange={v => setSetting('showTheirName', v as Settings['showTheirName'])} />
         <ToggleRow id="showReactionsToggle" label="Show reactions" checked={settings.showReactions} onChange={v => setSetting('showReactions', v as Settings['showReactions'])} />
         <ToggleRow id="autoCollapseDateNavToggle" label="Auto-collapse date navigator" checked={settings.autoCollapseDateNav} onChange={v => setSetting('autoCollapseDateNav', v as Settings['autoCollapseDateNav'])} />
+      </div>
+
+      <div className="settings-section">
+        <strong>Offline Use</strong>
+        <ToggleRow
+          id="offlineSupportEnabledToggle"
+          label="Keep app available offline"
+          checked={settings.offlineSupportEnabled}
+          onChange={handleOfflineSupportToggle}
+          disabled={offlineSupportBusy}
+        />
+        <p className="deletion-info">
+          Stores only the app files and chat parsers. Messages and attachments are not stored in the app cache.
+        </p>
+        {offlineSupportError && <p className="browser-notice">{offlineSupportError}</p>}
       </div>
 
       <div className="settings-section">
@@ -319,6 +368,14 @@ export function SettingsPanel({
             setShowEnableModal(false);
           }}
           onCancel={() => setShowEnableModal(false)}
+        />
+      )}
+
+      {showDisableOfflineModal && (
+        <DisableOfflineModal
+          busy={offlineSupportBusy}
+          onCancel={() => setShowDisableOfflineModal(false)}
+          onDisable={() => void handleDisableOfflineSupport()}
         />
       )}
 

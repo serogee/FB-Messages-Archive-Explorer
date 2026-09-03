@@ -17,6 +17,7 @@ Browse, search, and manage your exported Facebook or Messenger message archive p
 - [🚀 1. Quick Start](#1-quick-start)
 - [🖥️ 2. Demo](#2-demo)
 - [🔍 3. Features](#3-features)
+    - [3.1. Offline Use](#31-offline-use)
 - [❓ 4. How to Export Your Messages](#4-how-to-export-your-facebook-or-messenger-messages)
     - [4.1. Option A: Facebook](#41-option-a-facebook-all-facebook-messages)
     - [4.2. Option B: Messenger](#42-option-b-messenger-standalone-messenger-export)
@@ -110,6 +111,16 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 
 > [!WARNING]
 > Deleting a conversation permanently removes its files from your computer. There is no undo, no recycle bin, and no way to recover the files. Keep your original `.zip` download as a backup before you delete anything.
+
+<a name="31-offline-use"></a>
+
+### 3.1. Offline Use
+
+The app works offline after an online visit, indicated by the **Ready for offline use** alert.
+
+The app's code, including the logic that reads and processes your archive, is cached in your browser (~500 kb) so the app remains available without an internet connection. Your messages and attachments are not cached or uploaded; they stay solely in your device.
+
+Offline access may stop if the browser clears site data. Reconnect once and wait for the confirmation again. Updates are automatic unless an archive is open; then you choose when to reload. To remove offline support, disable **Keep app available offline** in Settings. This never deletes your archive.
 
 ---
 

@@ -22,6 +22,7 @@ interface ChatViewProps {
   mediaProgress: number;
   msgProgress: number;
   msgStatusText: string;
+  chatError: string | null;
   selectedPerspective: string;
   settings: Settings;
   loading: boolean;
@@ -69,6 +70,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     mediaProgress,
     msgProgress,
     msgStatusText,
+    chatError,
     selectedPerspective,
     settings,
     loading,
@@ -227,8 +229,15 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
           )}
 
           {!loading && !chatData && (
-            <div id="loading" style={{ flexDirection: 'column', gap: 12 }}>
-              <span>Open a chat from the sidebar</span>
+            <div id="loading" className={chatError ? 'chat-load-error' : undefined} style={{ flexDirection: 'column', gap: 12 }}>
+              {chatError ? (
+                <>
+                  <strong>Chat could not be loaded</strong>
+                  <span role="alert">{chatError}</span>
+                </>
+              ) : (
+                <span>Open a chat from the sidebar</span>
+              )}
             </div>
           )}
 
