@@ -121,6 +121,10 @@
     opacity: 1;
     transition-delay: 0s;
 }
+.chat-view-layer.inactive > .gallery-filter-panel.expanded {
+    visibility: hidden;
+    opacity: 0;
+}
 .gallery-filter-row {
     height: 48px;
     box-sizing: border-box;
@@ -222,7 +226,7 @@
     background: rgba(62,166,255,0.08);
     outline: none;
 }
-.gallery-sender-search:focus-within {
+.gallery-sender-search:focus-within:not(.result-active) {
     color: var(--accent);
     border-color: var(--accent);
 }

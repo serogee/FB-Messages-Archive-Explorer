@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { MoreVertical, ExternalLink, Download, X, ChevronLeft, ChevronRight, Check, CheckSquare, SquareX, Paperclip, Music, FileText, Bookmark, Link as LinkIcon, UserRound } from 'lucide-react';
+import { MoreVertical, ExternalLink, Download, Copy, X, ChevronLeft, ChevronRight, Check, CheckSquare, SquareX, Paperclip, Music, FileText, Bookmark, Link as LinkIcon, UserRound } from 'lucide-react';
 import type { ResolvedAttachment, SelectableItem } from '../../types/messenger';
 import { findMediaFile } from '../../services/media';
 import { blobCache } from '../../services/blobCache';
@@ -98,6 +98,7 @@ export function MediaViewer({
 }: MediaViewerProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const mediaElementRef = useRef<HTMLMediaElement | null>(null);
@@ -107,6 +108,7 @@ export function MediaViewer({
   const bookmarkToggleRef = useRef(onToggleBookmark);
   const bookmarkingEnabledRef = useRef(attachmentBookmarkingEnabled);
   const closeRef = useRef(onClose);
+  const linkCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const item = items[currentIndex] || null;
   const attachment = item && item.category !== 'links' ? item : null;
@@ -136,6 +138,17 @@ export function MediaViewer({
     }
     setCurrentIndex(index => Math.min(index, items.length - 1));
   }, [items.length]);
+
+  useEffect(() => {
+    setLinkCopied(false);
+    if (linkCopyTimerRef.current != null) {
+      clearTimeout(linkCopyTimerRef.current);
+      linkCopyTimerRef.current = null;
+    }
+    return () => {
+      if (linkCopyTimerRef.current != null) clearTimeout(linkCopyTimerRef.current);
+    };
+  }, [currentIndex]);
 
   const findNavigableIndex = useCallback((startIndex: number, step: number) => {
     return findNextNavigableIndex(
@@ -172,6 +185,21 @@ export function MediaViewer({
       onClose();
     }
   }, [item, onJumpToMessage, onClose]);
+
+  const handleCopyLink = useCallback(async () => {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link.url);
+      setLinkCopied(true);
+      if (linkCopyTimerRef.current != null) clearTimeout(linkCopyTimerRef.current);
+      linkCopyTimerRef.current = setTimeout(() => {
+        linkCopyTimerRef.current = null;
+        setLinkCopied(false);
+      }, 1800);
+    } catch {
+      window.prompt('Copy link:', link.url);
+    }
+  }, [link]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -414,9 +442,23 @@ export function MediaViewer({
               <UserRound size={12} />
               <span>{link.sender}</span>
             </span>
-            <a href={link.url} target="_blank" rel="noreferrer" className="media-viewer-download-btn">
-              <ExternalLink size={16} /> Open link
-            </a>
+            <div className="media-viewer-file-actions">
+              <a href={link.url} target="_blank" rel="noreferrer" className="media-viewer-download-btn">
+                <ExternalLink size={16} /> Open link
+              </a>
+              <button
+                type="button"
+                className="media-viewer-download-btn media-viewer-download-secondary media-viewer-copy-link-btn"
+                onClick={() => void handleCopyLink()}
+                aria-label={linkCopied ? 'Link copied' : 'Copy link'}
+              >
+                {linkCopied ? <Check size={16} /> : <Copy size={16} />}
+                <span className="media-viewer-copy-link-label" aria-hidden="true">
+                  <span className={linkCopied ? 'hidden' : ''}>Copy link</span>
+                  <span className={linkCopied ? '' : 'hidden'}>Copied</span>
+                </span>
+              </button>
+            </div>
           </div>
         ) : urlStatus === 'loading' ? (
           <div className="media-viewer-placeholder">

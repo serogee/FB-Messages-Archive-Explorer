@@ -40,6 +40,7 @@ function filters(overrides: Partial<GalleryFilterState> = {}): GalleryFilterStat
     includeSenders: new Set(),
     excludeSenders: new Set(),
     bookmarkFilter: 'all',
+    searchQuery: '',
     ...overrides,
   };
 }
@@ -65,12 +66,15 @@ describe('attachment gallery filters', () => {
     expect(options.find(option => option.key === 'dave')?.hasCurrentTabItems).toBe(false);
   });
 
-  it('uses plus/minus prefixes and limits sender search results to five', () => {
+  it('uses sender operators anywhere in the query and limits results to five', () => {
     const senders = Array.from({ length: 8 }, (_, index) => ({ label: `Person ${index}` }));
 
     expect(parseGallerySenderSearch(' - person')).toEqual({ mode: 'exclude', term: 'person', currentTabOnly: false });
     expect(parseGallerySenderSearch('+ Person 2')).toEqual({ mode: 'include', term: 'person 2', currentTabOnly: false });
     expect(parseGallerySenderSearch('.- Person 3')).toEqual({ mode: 'exclude', term: 'person 3', currentTabOnly: true });
+    expect(parseGallerySenderSearch('Person.+ 4')).toEqual({ mode: 'include', term: '4', currentTabOnly: true });
+    expect(parseGallerySenderSearch('Existing search + Person 5')).toEqual({ mode: 'include', term: 'person 5', currentTabOnly: false });
+    expect(parseGallerySenderSearch('Person 6')).toEqual({ mode: 'include', term: 'person 6', currentTabOnly: false });
     expect(getGallerySenderSearchResults(senders, '+person')).toHaveLength(5);
     expect(getGallerySenderSearchResults(senders, '-Person 6')).toEqual([{ label: 'Person 6' }]);
     expect(getGallerySenderSearchResults(senders, 'son 4')).toEqual([{ label: 'Person 4' }]);
@@ -103,6 +107,18 @@ describe('attachment gallery filters', () => {
     );
 
     expect(result.map(item => item.sender)).toEqual(['Alice', 'ALICE']);
+  });
+
+  it('searches link URLs, link labels, and attachment filenames', () => {
+    const searchableItems: SelectableItem[] = [
+      { ...link('Alice', 1), url: 'https://drive.google.com/example' },
+      { ...link('Bob', 2), label: 'Project notes' },
+      { ...attachment('Carol', 3), mediaPath: 'files/Quarterly Report.pdf' },
+    ];
+
+    expect(applyGalleryFilters(searchableItems, filters({ searchQuery: 'drive' }), () => false)).toEqual([searchableItems[0]]);
+    expect(applyGalleryFilters(searchableItems, filters({ searchQuery: 'notes' }), () => false)).toEqual([searchableItems[1]]);
+    expect(applyGalleryFilters(searchableItems, filters({ searchQuery: 'report' }), () => false)).toEqual([searchableItems[2]]);
   });
 
   it('checks bookmark membership only when a bookmark filter is active', () => {

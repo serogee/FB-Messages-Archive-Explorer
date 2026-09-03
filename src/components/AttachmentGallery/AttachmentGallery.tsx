@@ -595,7 +595,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
   const [filterExpanded, setFilterExpanded] = useState(false);
   const [senderSearch, setSenderSearch] = useState('');
   const [senderSearchOpen, setSenderSearchOpen] = useState(false);
-  const [senderResultRow, setSenderResultRow] = useState(0);
+  const [senderResultRow, setSenderResultRow] = useState(-1);
   const [senderResultAction, setSenderResultAction] = useState<'default' | 'opposite'>('default');
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [bulkSelectionConfirmationAction, setBulkSelectionConfirmationAction] = useState<'select' | 'deselect' | null>(null);
@@ -631,17 +631,20 @@ const AttachmentGalleryBase = function AttachmentGallery({
     : isAttachmentBookmarked;
   const hasActiveFilters = filters.includeSenders.size > 0
     || filters.excludeSenders.size > 0
-    || effectiveBookmarkFilter !== 'all';
+    || effectiveBookmarkFilter !== 'all'
+    || !!filters.searchQuery;
   const filterSnapshotRef = useRef({
     includeSenders: filters.includeSenders,
     excludeSenders: filters.excludeSenders,
     bookmarkFilter: effectiveBookmarkFilter,
+    searchQuery: filters.searchQuery,
   });
   const filteredItems = useMemo(
     () => applyGalleryFilters(currentItems, {
       includeSenders: filters.includeSenders,
       excludeSenders: filters.excludeSenders,
       bookmarkFilter: effectiveBookmarkFilter,
+      searchQuery: filters.searchQuery,
     }, bookmarkFilterLookup),
     [
       bookmarkFilterLookup,
@@ -649,6 +652,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
       effectiveBookmarkFilter,
       filters.excludeSenders,
       filters.includeSenders,
+      filters.searchQuery,
     ],
   );
   const availableSenders = useMemo(() => {
@@ -659,6 +663,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
     );
   }, [allItems, chatData.participants, currentItems]);
   const { mode: senderSearchMode, currentTabOnly: searchCurrentTabSendersOnly } = parseGallerySenderSearch(senderSearch);
+  const hasSenderSearchOperator = /[.+-]/.test(senderSearch);
   const senderSearchResults = useMemo(
     () => getGallerySenderSearchResults(
       searchCurrentTabSendersOnly
@@ -694,11 +699,11 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, []);
 
   useEffect(() => {
-    setSenderResultRow(row => Math.min(row, Math.max(0, senderSearchResults.length - 1)));
+    setSenderResultRow(row => row < 0 ? -1 : Math.min(row, senderSearchResults.length - 1));
   }, [senderSearchResults.length]);
 
   useEffect(() => {
-    if (!senderSearchOpen) return;
+    if (!senderSearchOpen || senderResultRow < 0) return;
     const activeResult = senderResultsRef.current?.querySelector<HTMLElement>(
       `#gallerySenderResult-${senderResultRow}-${senderResultAction}`,
     );
@@ -744,7 +749,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
     setFilterExpanded(false);
     setSenderSearch('');
     setSenderSearchOpen(false);
-    setSenderResultRow(0);
+    setSenderResultRow(-1);
     setSenderResultAction('default');
     setBulkSelectionConfirmationAction(null);
     setViewerState({ open: false, index: 0 });
@@ -781,11 +786,13 @@ const AttachmentGalleryBase = function AttachmentGallery({
     const previous = filterSnapshotRef.current;
     if (previous.includeSenders === filters.includeSenders
       && previous.excludeSenders === filters.excludeSenders
-      && previous.bookmarkFilter === effectiveBookmarkFilter) return;
+      && previous.bookmarkFilter === effectiveBookmarkFilter
+      && previous.searchQuery === filters.searchQuery) return;
     filterSnapshotRef.current = {
       includeSenders: filters.includeSenders,
       excludeSenders: filters.excludeSenders,
       bookmarkFilter: effectiveBookmarkFilter,
+      searchQuery: filters.searchQuery,
     };
     scrollPositions.current = {};
     const container = scrollContainerRef.current;
@@ -797,6 +804,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
     effectiveBookmarkFilter,
     filters.excludeSenders,
     filters.includeSenders,
+    filters.searchQuery,
   ]);
 
   useLayoutEffect(() => {
@@ -806,7 +814,10 @@ const AttachmentGalleryBase = function AttachmentGallery({
       filteredItems,
       attachmentJumpTarget,
       hasActiveFilters,
-    )) filters.clearAllFilters();
+    )) {
+      filters.clearAllFilters();
+      setSenderSearch('');
+    }
   }, [
     activeTab,
     attachmentJumpTarget,
@@ -1013,15 +1024,24 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
   const applySenderFilter = useCallback((sender: string, mode: 'include' | 'exclude') => {
     filters.setSenderFilter(sender, mode);
-    setSenderSearch('');
-    setSenderSearchOpen(true);
-    setSenderResultRow(0);
+    const operatorIndex = senderSearch.search(/[.+-]/);
+    setSenderSearch(operatorIndex >= 0 ? senderSearch.slice(0, operatorIndex).trimEnd() : '');
+    setSenderSearchOpen(false);
+    setSenderResultRow(-1);
     setSenderResultAction('default');
-  }, [filters]);
+  }, [filters, senderSearch]);
+
+  const applySenderFilterFromMouse = useCallback((sender: string, mode: 'include' | 'exclude') => {
+    applySenderFilter(sender, mode);
+    setSenderSearchOpen(false);
+    senderSearchInputRef.current?.blur();
+  }, [applySenderFilter]);
 
   const handleClearFilters = useCallback(() => {
     filters.clearAllFilters();
     setSenderSearch('');
+    setSenderSearchOpen(false);
+    setSenderResultRow(-1);
   }, [filters]);
 
   const closeBulkSelectionConfirmation = useCallback(() => {
@@ -1197,21 +1217,25 @@ const AttachmentGalleryBase = function AttachmentGallery({
         inert={!filterExpanded}
       >
         <div className="gallery-filter-row">
-          <div className="gallery-sender-search">
+          <div className={`gallery-sender-search ${senderResultRow >= 0 ? 'result-active' : ''}`}>
             <Search size={13} aria-hidden="true" />
             <input
               ref={senderSearchInputRef}
               type="search"
               value={senderSearch}
               onChange={event => {
-                setSenderSearch(event.target.value);
-                setSenderSearchOpen(true);
-                setSenderResultRow(0);
-                setSenderResultAction('default');
+                const nextSearch = event.target.value;
+                const keepDropdownOpen = senderSearchOpen;
+                setSenderSearch(nextSearch);
+                setSenderSearchOpen(/[.+-]/.test(nextSearch) || keepDropdownOpen);
+                if (!keepDropdownOpen) {
+                  setSenderResultRow(-1);
+                  setSenderResultAction('default');
+                }
               }}
               onFocus={() => {
-                setSenderSearchOpen(true);
-                setSenderResultRow(0);
+                setSenderSearchOpen(hasSenderSearchOperator);
+                setSenderResultRow(-1);
                 setSenderResultAction('default');
               }}
               onBlur={() => setSenderSearchOpen(false)}
@@ -1219,36 +1243,73 @@ const AttachmentGalleryBase = function AttachmentGallery({
                 if (event.key === 'Escape') {
                   setSenderSearchOpen(false);
                   event.currentTarget.blur();
-                } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && senderSearchResults.length > 0) {
+                } else if (event.key === 'ArrowDown') {
                   event.preventDefault();
                   setSenderSearchOpen(true);
-                  setSenderResultRow(row => event.key === 'ArrowDown'
-                    ? Math.min(senderSearchResults.length - 1, row + 1)
-                    : Math.max(0, row - 1));
+                  if (senderSearchResults.length > 0) {
+                    setSenderResultRow(row => Math.min(senderSearchResults.length - 1, row + 1));
+                  }
+                } else if (event.key === 'ArrowUp'
+                  && senderSearchOpen
+                  && senderResultRow >= 0) {
+                  event.preventDefault();
+                  if (senderResultRow === 0) {
+                    setSenderResultRow(-1);
+                    setSenderResultAction('default');
+                    if (!hasSenderSearchOperator) setSenderSearchOpen(false);
+                  } else {
+                    setSenderResultRow(row => row - 1);
+                  }
+                } else if (event.key === 'ArrowUp'
+                  && senderSearchOpen
+                  && senderResultRow < 0
+                  && !hasSenderSearchOperator) {
+                  event.preventDefault();
+                  setSenderSearchOpen(false);
+                  setSenderResultAction('default');
+                } else if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+                  && senderSearchOpen
+                  && senderResultRow >= 0) {
+                  event.preventDefault();
+                  if (event.key === 'ArrowRight'
+                    && senderResultAction === 'opposite'
+                    && selectedSenderFilters[0]) {
+                    setSenderSearchOpen(false);
+                    setSenderResultRow(-1);
+                    senderTagRefs.current.get(selectedSenderFilters[0].key)?.focus();
+                  } else {
+                    setSenderResultAction(event.key === 'ArrowRight' ? 'opposite' : 'default');
+                  }
                 } else if (event.key === 'ArrowRight'
-                  && senderResultAction === 'opposite'
+                  && event.currentTarget.selectionStart === event.currentTarget.value.length
+                  && event.currentTarget.selectionEnd === event.currentTarget.value.length
                   && selectedSenderFilters[0]) {
                   event.preventDefault();
                   setSenderSearchOpen(false);
                   senderTagRefs.current.get(selectedSenderFilters[0].key)?.focus();
-                } else if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && senderSearchResults.length > 0) {
+                } else if (event.key === 'Enter') {
                   event.preventDefault();
-                  setSenderSearchOpen(true);
-                  setSenderResultAction(event.key === 'ArrowRight' ? 'opposite' : 'default');
-                } else if (event.key === 'Enter' && senderSearchResults[senderResultRow]) {
-                  event.preventDefault();
-                  const mode = senderResultAction === 'default'
-                    ? senderSearchMode
-                    : senderSearchMode === 'include' ? 'exclude' : 'include';
-                  applySenderFilter(senderSearchResults[senderResultRow].key, mode);
+                  const selectedSender = senderSearchOpen && senderResultRow >= 0
+                    ? senderSearchResults[senderResultRow]
+                    : undefined;
+                  if (selectedSender) {
+                    const mode = senderResultAction === 'default'
+                      ? senderSearchMode
+                      : senderSearchMode === 'include' ? 'exclude' : 'include';
+                    applySenderFilter(selectedSender.key, mode);
+                  } else {
+                    filters.setSearchQuery(senderSearch);
+                    setSenderSearchOpen(false);
+                    setSenderResultRow(-1);
+                  }
                   event.currentTarget.blur();
                 }
               }}
-              placeholder="Sender (. current tab, + / - action)"
-              aria-label="Search senders. Prefix with dot for senders with items in the current tab, then plus to include or minus to exclude."
+              placeholder="Search links or filenames"
+              aria-label="Search links or filenames. Type plus, minus, or dot to open sender suggestions."
               aria-expanded={senderSearchOpen}
               aria-controls="gallerySenderResults"
-              aria-activedescendant={senderSearchOpen && senderSearchResults.length > 0
+              aria-activedescendant={senderSearchOpen && senderResultRow >= 0
                 ? `gallerySenderResult-${senderResultRow}-${senderResultAction}`
                 : undefined}
               aria-autocomplete="list"
@@ -1271,7 +1332,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
                       role="option"
                       aria-selected={senderResultRow === index && senderResultAction === 'default'}
                       className={`gallery-sender-result-name ${senderSearchMode} ${sender.hasCurrentTabItems ? '' : 'unavailable'} ${senderResultRow === index && senderResultAction === 'default' ? 'keyboard-active' : ''}`}
-                      onClick={() => applySenderFilter(sender.key, senderSearchMode)}
+                      onClick={() => applySenderFilterFromMouse(sender.key, senderSearchMode)}
                       onMouseEnter={() => {
                         setSenderResultRow(index);
                         setSenderResultAction('default');
@@ -1287,7 +1348,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
                       role="option"
                       aria-selected={senderResultRow === index && senderResultAction === 'opposite'}
                       className={`gallery-sender-result-action ${senderSearchMode === 'include' ? 'exclude' : 'include'} ${sender.hasCurrentTabItems ? '' : 'unavailable'} ${senderResultRow === index && senderResultAction === 'opposite' ? 'keyboard-active' : ''}`}
-                      onClick={() => applySenderFilter(
+                      onClick={() => applySenderFilterFromMouse(
                         sender.key,
                         senderSearchMode === 'include' ? 'exclude' : 'include',
                       )}

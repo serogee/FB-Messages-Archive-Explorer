@@ -33,14 +33,14 @@ const SHORTCUT_GROUPS = [
   {
     title: 'Gallery filters',
     shortcuts: [
-      { keys: ['Enter'], description: 'Focus the sender search, apply the highlighted result, or remove a focused sender filter' },
+      { keys: ['Enter'], description: 'Focus the search bar, apply a text search or highlighted sender, or remove a focused sender filter' },
       { keys: ['Backspace'], description: 'Remove a focused sender filter' },
-      { keys: ['+'], description: 'Include the sender entered in the search' },
-      { keys: ['-'], description: 'Exclude the sender entered in the search' },
-      { keys: ['.'], description: 'Show only senders with items in the current gallery tab; plus or minus can follow the dot' },
-      { keys: ['\u2191', '\u2193'], description: 'Move between sender search results' },
-      { keys: ['\u2190', '\u2192'], description: 'Switch sender actions or move between active sender filters' },
-      { keys: ['Esc'], description: 'Close and unfocus the sender search' },
+      { keys: ['+'], description: 'Open sender suggestions with the include action' },
+      { keys: ['-'], description: 'Open sender suggestions with the exclude action' },
+      { keys: ['.'], description: 'Open suggestions for senders with items in the current gallery tab' },
+      { keys: ['\u2191', '\u2193'], description: 'Open sender suggestions, move through them, or return to the search bar' },
+      { keys: ['\u2190', '\u2192'], description: 'Move through search text, switch sender result actions, or move between active sender filters' },
+      { keys: ['Esc'], description: 'Close and unfocus the search bar' },
     ],
   },
   {
