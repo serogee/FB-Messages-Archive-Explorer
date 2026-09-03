@@ -11,7 +11,7 @@ import {
   toggleGallerySenderFilter,
   type GalleryFilterState,
 } from '../src/hooks/useGalleryFilters';
-import { addItemsToSelection, shouldConfirmBulkSelection } from '../src/hooks/useSelection';
+import { addItemsToSelection, removeItemsFromSelection, shouldConfirmBulkSelection } from '../src/hooks/useSelection';
 import type { ResolvedAttachment, ResolvedLink, SelectableItem } from '../src/types/messenger';
 
 function attachment(sender: string, index: number): ResolvedAttachment {
@@ -172,6 +172,17 @@ describe('bulk gallery selection', () => {
       'photos:already-selected.jpg',
       `photos:${photo.mediaPath.toLowerCase()}`,
       `links:${sharedLink.messageIndex}:${sharedLink.url}`,
+    ]));
+  });
+
+  it('removes only the items in the current filtered result', () => {
+    const photo = attachment('Alice', 1);
+    const sharedLink = link('Alice', 2);
+    const outsideCurrentFilter = 'photos:outside-filter.jpg';
+    const selected = addItemsToSelection(new Set([outsideCurrentFilter]), [photo, sharedLink]);
+
+    expect(removeItemsFromSelection(selected, [photo, sharedLink])).toEqual(new Set([
+      outsideCurrentFilter,
     ]));
   });
 

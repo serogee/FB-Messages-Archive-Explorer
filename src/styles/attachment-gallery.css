@@ -82,7 +82,9 @@
 
 .gallery-add-all {
     flex: 0 0 auto;
-    min-height: 34px;
+    box-sizing: border-box;
+    width: 112px;
+    height: 34px;
     display: inline-flex;
     align-items: center;
     justify-content: center;

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink, SelectableItem } from '../../types/messenger';
-import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, CircleHelp, Info, ExternalLink, Link as LinkIcon, MessageSquare, UserRound, Bookmark, Filter, ListPlus, Minus, Plus, Search, X } from 'lucide-react';
+import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, CircleHelp, Info, ExternalLink, Link as LinkIcon, MessageSquare, UserRound, Bookmark, Filter, ListMinus, ListPlus, Minus, Plus, Search, X } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import { useAttachments, useSharedLinks, type GalleryCategory } from '../../hooks/useAttachments';
 import { shouldConfirmBulkSelection, type useSelection } from '../../hooks/useSelection';
@@ -597,7 +597,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
   const [senderResultRow, setSenderResultRow] = useState(0);
   const [senderResultAction, setSenderResultAction] = useState<'default' | 'opposite'>('default');
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [bulkSelectionConfirmationOpen, setBulkSelectionConfirmationOpen] = useState(false);
+  const [bulkSelectionConfirmationAction, setBulkSelectionConfirmationAction] = useState<'select' | 'deselect' | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
   const [jumpHighlightedKey, setJumpHighlightedKey] = useState<string | null>(null);
@@ -745,7 +745,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
     setSenderSearchOpen(false);
     setSenderResultRow(0);
     setSenderResultAction('default');
-    setBulkSelectionConfirmationOpen(false);
+    setBulkSelectionConfirmationAction(null);
     setViewerState({ open: false, index: 0 });
     scrollPositions.current = {};
     const container = scrollContainerRef.current;
@@ -977,7 +977,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, [activeTab, handleTabChange, isOpen, showStickers, viewerState.open]);
 
   useEffect(() => {
-    if (!isOpen || !filterExpanded || viewerState.open || bulkSelectionConfirmationOpen || shortcutsOpen) return;
+    if (!isOpen || !filterExpanded || viewerState.open || bulkSelectionConfirmationAction || shortcutsOpen) return;
 
     const focusSenderSearch = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' || event.defaultPrevented) return;
@@ -989,7 +989,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
     document.addEventListener('keydown', focusSenderSearch);
     return () => document.removeEventListener('keydown', focusSenderSearch);
-  }, [bulkSelectionConfirmationOpen, filterExpanded, isOpen, shortcutsOpen, viewerState.open]);
+  }, [bulkSelectionConfirmationAction, filterExpanded, isOpen, shortcutsOpen, viewerState.open]);
 
   const openViewer = useCallback((attachment: ResolvedAttachment) => {
     const index = filteredItems.indexOf(attachment);
@@ -1024,22 +1024,38 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, [filters]);
 
   const closeBulkSelectionConfirmation = useCallback(() => {
-    setBulkSelectionConfirmationOpen(false);
+    setBulkSelectionConfirmationAction(null);
   }, []);
 
   const confirmBulkSelection = useCallback(() => {
-    selection.selectMany(filteredItems);
-    setBulkSelectionConfirmationOpen(false);
-  }, [filteredItems, selection]);
+    if (bulkSelectionConfirmationAction === 'deselect') selection.deselectMany(filteredItems);
+    else selection.selectMany(filteredItems);
+    setBulkSelectionConfirmationAction(null);
+  }, [bulkSelectionConfirmationAction, filteredItems, selection]);
 
   const handleAddAllToSelection = useCallback(() => {
     if (filteredItems.length === 0) return;
     if (shouldConfirmBulkSelection(filteredItems.length)) {
-      setBulkSelectionConfirmationOpen(true);
+      setBulkSelectionConfirmationAction('select');
       return;
     }
     selection.selectMany(filteredItems);
   }, [filteredItems, selection]);
+
+  const allFilteredItemsSelected = filteredItems.length > 0
+    && filteredItems.every(item => selection.isSelected(item));
+
+  const handleToggleAllSelection = useCallback(() => {
+    if (allFilteredItemsSelected) {
+      if (shouldConfirmBulkSelection(filteredItems.length)) {
+        setBulkSelectionConfirmationAction('deselect');
+        return;
+      }
+      selection.deselectMany(filteredItems);
+      return;
+    }
+    handleAddAllToSelection();
+  }, [allFilteredItemsSelected, filteredItems, handleAddAllToSelection, selection]);
 
   const handleViewerJump = useCallback((messageIndex: number) => {
     saveScrollPosition();
@@ -1115,12 +1131,14 @@ const AttachmentGalleryBase = function AttachmentGallery({
           <button
             type="button"
             className="gallery-add-all"
-            onClick={handleAddAllToSelection}
+            onClick={handleToggleAllSelection}
             disabled={filteredItems.length === 0}
-            title={`Add all ${filteredItems.length.toLocaleString()} matching items to the selection`}
+            title={allFilteredItemsSelected
+              ? `Unselect all ${filteredItems.length.toLocaleString()} matching items`
+              : `Select all ${filteredItems.length.toLocaleString()} matching items`}
           >
-            <ListPlus size={17} />
-            <span>Add all</span>
+            {allFilteredItemsSelected ? <ListMinus size={17} /> : <ListPlus size={17} />}
+            <span>{allFilteredItemsSelected ? 'Unselect all' : 'Select all'}</span>
           </button>
         )}
         <button
@@ -1497,9 +1515,10 @@ const AttachmentGalleryBase = function AttachmentGallery({
         />
       )}
 
-      {bulkSelectionConfirmationOpen && (
+      {bulkSelectionConfirmationAction && (
         <BulkSelectionConfirmModal
           count={filteredItems.length}
+          action={bulkSelectionConfirmationAction}
           onConfirm={confirmBulkSelection}
           onCancel={closeBulkSelectionConfirmation}
         />

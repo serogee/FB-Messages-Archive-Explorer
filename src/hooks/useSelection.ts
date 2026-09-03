@@ -16,6 +16,15 @@ export function addItemsToSelection(
   return next;
 }
 
+export function removeItemsFromSelection(
+  selectedKeys: Set<string>,
+  items: SelectableItem[],
+): Set<string> {
+  const next = new Set(selectedKeys);
+  for (const item of items) next.delete(getSelectionKey(item));
+  return next;
+}
+
 export function shouldConfirmBulkSelection(itemCount: number): boolean {
   return itemCount > 500;
 }
@@ -53,6 +62,14 @@ export function useSelection() {
     });
   }, []);
 
+  const deselectMany = useCallback((items: SelectableItem[]) => {
+    if (items.length === 0) return;
+    setSelectedKeys(previous => {
+      const next = removeItemsFromSelection(previous, items);
+      return next.size === previous.size ? previous : next;
+    });
+  }, []);
+
   const isSelected = useCallback(
     (item: SelectableItem) => {
       const key = getSelectionKey(item);
@@ -82,6 +99,7 @@ export function useSelection() {
     selectedKeys,
     toggle,
     selectMany,
+    deselectMany,
     deselectAll,
     isSelected,
     selectedCount,
