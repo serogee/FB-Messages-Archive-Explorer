@@ -261,20 +261,16 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         return;
       }
 
-      let mounted = true;
       setUrl(null);
       setVideoDuration(null);
-      void videoPosterCache.getOrCreateDetails(entry).then(details => {
-        if (mounted && details) {
+      return videoPosterCache.subscribe(entry, details => {
+        if (details) {
           setUrl(details.url);
           setVideoDuration(details.duration);
         }
       });
-
-      return () => { mounted = false; };
     }
 
-    let mounted = true;
     setUrl(null);
     setVideoDuration(null);
     const cached = imageThumbnailCache.get(entry);
@@ -282,11 +278,9 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
       setUrl(cached);
       return;
     }
-    void imageThumbnailCache.getOrCreate(entry).then(thumbnailUrl => {
-      if (mounted && thumbnailUrl) setUrl(thumbnailUrl);
+    return imageThumbnailCache.subscribe(entry, thumbnailUrl => {
+      if (thumbnailUrl) setUrl(thumbnailUrl);
     });
-
-    return () => { mounted = false; };
   }, [attachment, mediaState]);
 
   const category = attachment.category;

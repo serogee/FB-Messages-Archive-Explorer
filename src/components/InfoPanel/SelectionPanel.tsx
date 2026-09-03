@@ -135,16 +135,18 @@ function SelectionVisualThumbnail({
     setUrl(cached);
     if (cached) return;
 
+    if (isVideo) {
+      return videoPosterCache.subscribe(entry, details => setUrl(details?.url ?? null));
+    }
+
+    if (!isSticker) {
+      return imageThumbnailCache.subscribe(entry, setUrl);
+    }
+
     let mounted = true;
-    const thumbnailRequest = isVideo
-      ? videoPosterCache.getOrCreate(entry)
-      : isSticker
-        ? blobCache.getOrCreate(entry)
-        : imageThumbnailCache.getOrCreate(entry);
-    void thumbnailRequest.then(thumbnailUrl => {
+    void blobCache.getOrCreate(entry).then(thumbnailUrl => {
       if (mounted) setUrl(thumbnailUrl);
     });
-
     return () => { mounted = false; };
   }, [attachment, isSticker, isVideo, mediaState]);
 
