@@ -372,6 +372,24 @@
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.18);
 }
+.media-viewer-copy-link-btn {
+    flex: 0 0 auto;
+    justify-content: center;
+    white-space: nowrap;
+}
+.media-viewer-copy-link-btn svg {
+    flex: 0 0 16px;
+}
+.media-viewer-copy-link-label {
+    display: grid;
+    text-align: left;
+}
+.media-viewer-copy-link-label > span {
+    grid-area: 1 / 1;
+}
+.media-viewer-copy-link-label > .hidden {
+    visibility: hidden;
+}
 .media-viewer-download-btn:hover {
     filter: brightness(1.1);
 }
