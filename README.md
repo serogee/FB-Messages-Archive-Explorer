@@ -138,8 +138,8 @@ Meta offers two ways to download your messages.
 
 7. Choose a **Date range** if you want to limit the export to a specific period.
 8. Choose a media quality. Lower quality means a smaller download.
-9. Click **Create export**. Meta will prepare your file: this can take minutes to hours.
-10. When the export is ready, download the `.zip` file.
+9. Click **Create export**. Meta will prepare your file: this can take minutes to hours. You don't have to keep the tab open, just go back and select your export request later.
+10. When the export is ready, download the `.zip` file/s.
 11. **Extract** (unzip) the `.zip` file to a folder on your computer.
 
 > [!NOTE]
@@ -151,11 +151,12 @@ Meta offers two ways to download your messages.
 
 ### 4.2. Option B: Messenger (standalone Messenger export)
 
-1. Go to [https://www.messenger.com/dyi](https://www.messenger.com/dyi).
-2. Follow the steps to download your Messenger data.
-3. Set **Format** to **JSON**.
-4. Download and extract the `.zip` file.
-5. In the app, select the folder that contains your conversation `.json` files.
+1. Go to [https://www.messenger.com/secure_storage/dyi](https://www.messenger.com/secure_storage/dyi).
+2. Choose whether to include media. If you include media, select the media quality.
+3. Select the **Date range** for the export.
+4. Click **Download file**. Keep the tab open and wait for the download to finish.
+5. Extract the downloaded `.zip` file.
+6. In the app, select the folder that contains your conversation `.json` files.
 
 <a name="4x-which-folder-structure-does-the-app-recognize"></a>
 
