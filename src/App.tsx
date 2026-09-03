@@ -13,6 +13,7 @@ import { InfoPanel } from './components/InfoPanel/InfoPanel';
 import { SelectionHeader, SelectionPanel } from './components/InfoPanel/SelectionPanel';
 import { MediaViewer } from './components/MediaViewer/MediaViewer';
 import { TrustModal } from './components/Modals/TrustModal';
+import { ReloadPrompt } from './components/ReloadPrompt';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
 import type { ChatListEntry, SelectableItem } from './types/messenger';
 import type { GalleryCategory } from './hooks/useAttachments';
@@ -331,6 +332,7 @@ export default function App() {
         mediaProgress={chat.mediaProgress}
         msgProgress={chat.msgProgress}
         msgStatusText={chat.msgStatusText}
+        chatError={chat.error}
         selectedPerspective={chat.selectedPerspective}
         settings={settings}
         loading={chat.loading}
@@ -459,22 +461,27 @@ export default function App() {
           bookmarkBusy={bookmarks.busy}
         />
       )}
-      {deleteToast && (
-        <div className="delete-toast" role="status" aria-live="polite">
-          {deleteToast}
-        </div>
-      )}
-      {!deleteToast && bookmarks.error && (
-        <button
-          type="button"
-          className="delete-toast"
-          role="status"
-          onClick={bookmarks.clearError}
-          title="Dismiss"
-        >
-          {bookmarks.error}
-        </button>
-      )}
+      <div className="app-toast-stack">
+        {settings.offlineSupportEnabled && (
+          <ReloadPrompt canAutoReload={!archive.rootHandle && !archive.loading} />
+        )}
+        {deleteToast && (
+          <div className="delete-toast" role="status" aria-live="polite">
+            {deleteToast}
+          </div>
+        )}
+        {!deleteToast && bookmarks.error && (
+          <button
+            type="button"
+            className="delete-toast"
+            role="status"
+            onClick={bookmarks.clearError}
+            title="Dismiss"
+          >
+            {bookmarks.error}
+          </button>
+        )}
+      </div>
       <TrustModal settings={settings} setSetting={setSetting} />
     </div>
   );

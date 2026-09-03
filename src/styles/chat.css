@@ -110,6 +110,20 @@
     color: var(--muted);
     margin-bottom: 20px;
 }
+
+#loading.chat-load-error {
+  max-width: 520px;
+  margin: auto;
+  padding: 24px;
+  color: var(--muted);
+  line-height: 1.5;
+  text-align: center;
+}
+
+#loading.chat-load-error strong {
+  color: var(--text);
+  font-size: 16px;
+}
 .message-chunk {
     min-height: 100px;
 }

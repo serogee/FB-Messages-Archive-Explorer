@@ -16,6 +16,7 @@ export interface Settings {
   infoPanelWidth: number;
   infoPanelOpen: boolean;
   dontShowTrustModal: boolean;
+  offlineSupportEnabled: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -33,6 +34,7 @@ const DEFAULTS: Settings = {
   infoPanelWidth: 360,
   infoPanelOpen: false,
   dontShowTrustModal: false,
+  offlineSupportEnabled: true,
 };
 
 function loadSettings(): Settings {

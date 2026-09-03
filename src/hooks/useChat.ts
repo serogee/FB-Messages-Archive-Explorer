@@ -15,6 +15,7 @@ export function useChat(): {
   mediaProgress: number;  // 0–1
   msgProgress: number;    // 0–1
   msgStatusText: string;
+  error: string | null;
   loading: boolean;
   selectedPerspective: string;
   setSelectedPerspective: (name: string) => void;
@@ -28,6 +29,7 @@ export function useChat(): {
   const [mediaProgress, setMediaProgress] = useState(0);
   const [msgProgress, setMsgProgress] = useState(0);
   const [msgStatusText, setMsgStatusText] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeEntry, setActiveEntry] = useState<ChatListEntry | null>(null);
   const [selectedPerspective, setSelectedPerspectiveState] = useState<string>(() => {
@@ -44,6 +46,7 @@ export function useChat(): {
   const loadChat = useCallback(async (entry: ChatListEntry, messagesRootHandle?: ReadableDirectoryHandle | null) => {
     setActiveEntry(entry);
     setChatData(null);
+    setError(null);
     setLoading(true);
     setMsgProgress(0);
     setMsgStatusText("");
@@ -151,6 +154,11 @@ export function useChat(): {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       if (mediaAbortControllerRef.current === abortCtrl) {
         setLoading(false);
+        const detail = err instanceof Error ? err.message : String(err);
+        const workerFailure = /worker error|failed to fetch|networkerror|loading module/i.test(detail);
+        setError(workerFailure && typeof navigator !== 'undefined' && navigator.onLine === false
+          ? 'The chat parser could not be loaded while offline. Reconnect once and wait until the app confirms it is ready for offline use.'
+          : 'This chat could not be loaded. The parser may be unavailable, or the selected files may no longer be accessible.');
       }
       console.error('Failed to load chat:', err);
     }
@@ -164,6 +172,7 @@ export function useChat(): {
     setMediaState(prev => { revokeAllMedia(prev); return createMediaState(); });
     setChatData(null);
     setActiveEntry(null);
+    setError(null);
     setLoading(false);
     setMediaLoading(false);
     setMediaProgress(0);
@@ -172,7 +181,7 @@ export function useChat(): {
   }, []);
 
   return {
-    chatData, mediaState, mediaLoading, mediaProgress, msgProgress, msgStatusText,
+    chatData, mediaState, mediaLoading, mediaProgress, msgProgress, msgStatusText, error,
     loading, selectedPerspective, setSelectedPerspective, loadChat, clearChat, activeEntry,
   };
 }
