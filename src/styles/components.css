@@ -26,7 +26,19 @@
 
 .settings strong { font-size: 16px; color: var(--text); }
 .title-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.title-text { color:var(--text); }
+.title-text { color:var(--text); min-width:0; }
+.title-full { white-space:nowrap; }
+.title-short { display:none; white-space:nowrap; }
+
+#sidebar {
+  container-name: sidebar;
+  container-type: inline-size;
+}
+
+@container sidebar (max-width: 300px) {
+  .title-full { display:none; }
+  .title-short { display:inline; }
+}
 
 .global-settings-btn { width:40px; height:36px; border-radius:8px; padding:6px; background:var(--panel-bg); border:none; cursor:pointer; color:var(--text); display:flex; align-items:center; justify-content:center; }
 .global-settings-btn svg { display:block; width:18px; height:18px; }

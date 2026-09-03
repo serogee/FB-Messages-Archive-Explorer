@@ -139,7 +139,10 @@ export function Sidebar({
         <div className="sub-container" id="sidebar">
             <div className="title-row">
                 <div className="title-text">
-                    <strong>FB Messages Archive Explorer</strong>
+                    <strong>
+                        <span className="title-full">FB Messages Archive Explorer</span>
+                        <span className="title-short">FB-MAE</span>
+                    </strong>
                     <small className="footer">
                         By serogee |{' '}
                         <a href="https://github.com/serogee/FB-Messages-Archive-Explorer">
