@@ -5,7 +5,8 @@ import { useChat } from './hooks/useChat';
 import { useSearch } from './hooks/useSearch';
 import { useResizable } from './hooks/useResizable';
 import { useSelection } from './hooks/useSelection';
-import { useAttachments } from './hooks/useAttachments';
+import { useAttachments, useSharedLinks } from './hooks/useAttachments';
+import { useAttachmentBookmarks } from './hooks/useAttachmentBookmarks';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatView, type ChatViewHandle } from './components/Chat/ChatView';
 import { InfoPanel } from './components/InfoPanel/InfoPanel';
@@ -15,6 +16,8 @@ import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
 import type { ChatListEntry } from './types/messenger';
 import type { GalleryCategory } from './hooks/useAttachments';
 import type { MessengerExportDeletionInfo } from './services/messengerExport';
+import { isFileSystemAccessSupported } from './services/fileSystem';
+import { requestDirectoryWritePermission } from './types/fileSystem';
 
 export default function App() {
   const { settings, setSetting } = useSettings();
@@ -27,6 +30,8 @@ export default function App() {
   const search = useSearch(chat.chatData, archiveList);
   const selection = useSelection();
   const attachments = useAttachments(chat.chatData, chat.mediaState);
+  const sharedLinks = useSharedLinks(chat.chatData);
+  const bookmarks = useAttachmentBookmarks(archive.rootHandle);
 
   const [sidebarView, setSidebarView] = useState<'chats' | 'settings' | 'archived' | 'requests'>('chats');
   const [activeTab, setActiveTab] = useState<'chats' | 'settings'>('chats');
@@ -79,12 +84,19 @@ export default function App() {
     const deletedName = Array.isArray(deleteTarget)
       ? `${deleteTarget.length} Chats`
       : deleteTarget.title;
+    let bookmarkCleanupFailed = false;
     try {
       if (Array.isArray(deleteTarget)) {
         setDeleteProgress({ done: 0, total: deleteTarget.length });
-        await archive.deleteChats(deleteTarget, (done, total) => {
+        const deletedEntries = await archive.deleteChats(deleteTarget, (done, total) => {
           setDeleteProgress({ done, total });
         });
+        try {
+          await bookmarks.removeForChats(deletedEntries);
+        } catch (error) {
+          bookmarkCleanupFailed = true;
+          console.error('Chats were deleted, but their attachment bookmarks could not be removed:', error);
+        }
         
         if (chat.activeEntry && deleteTarget.some(e => e.folderName === chat.activeEntry!.folderName)) {
           chat.clearChat();
@@ -92,12 +104,20 @@ export default function App() {
         }
       } else {
         await archive.deleteChat(deleteTarget);
+        try {
+          await bookmarks.removeForChats([deleteTarget]);
+        } catch (error) {
+          bookmarkCleanupFailed = true;
+          console.error('Chat was deleted, but its attachment bookmarks could not be removed:', error);
+        }
         if (chat.activeEntry?.folderName === deleteTarget.folderName) {
           chat.clearChat();
           selection.deselectAll();
         }
       }
-      setDeleteToast(`${deletedName} Deleted`);
+      setDeleteToast(bookmarkCleanupFailed
+        ? `${deletedName} deleted; bookmark cleanup failed`
+        : `${deletedName} Deleted`);
       if (deleteToastTimerRef.current) clearTimeout(deleteToastTimerRef.current);
       deleteToastTimerRef.current = setTimeout(() => setDeleteToast(null), 3200);
     } catch (e) {
@@ -110,7 +130,7 @@ export default function App() {
     setDeleteInfoLoading(false);
     setDeleteInfoSkipped(false);
     deleteInfoRequestRef.current++;
-  }, [deleteTarget, archive, chat, selection]);
+  }, [deleteTarget, archive, bookmarks, chat, selection]);
 
   const handleDeleteRequest = useCallback((target: ChatListEntry | ChatListEntry[]) => {
     deleteInfoAbortRef.current?.abort();
@@ -177,17 +197,22 @@ export default function App() {
   }, []);
 
   const handleOpenFolder = useCallback(async () => {
-    const picked = await archive.openFolder(settings.deletionEnabled, () => {
-      deleteInfoAbortRef.current?.abort();
-      deleteInfoAbortRef.current = null;
-      chat.clearChat();
-      search.clearSearch();
-      search.clearWideSearchCache();
-      selection.deselectAll();
-      setGalleryOpen(false);
-      setGalleryHasOpened(false);
-      pendingJumpIndexRef.current = null;
-    });
+    const picked = await archive.openFolder(
+      settings.deletionEnabled || settings.attachmentBookmarkingEnabled,
+      () => {
+        setActiveTab('chats');
+        setSidebarView('chats');
+        deleteInfoAbortRef.current?.abort();
+        deleteInfoAbortRef.current = null;
+        chat.clearChat();
+        search.clearSearch();
+        search.clearWideSearchCache();
+        selection.deselectAll();
+        setGalleryOpen(false);
+        setGalleryHasOpened(false);
+        pendingJumpIndexRef.current = null;
+      }
+    );
     if (picked) {
       deleteInfoRequestRef.current++;
       setDeleteTarget(null);
@@ -197,7 +222,19 @@ export default function App() {
       setDeleteBusy(false);
       setDeleteProgress(null);
     }
-  }, [settings.deletionEnabled, archive, chat, search, selection]);
+  }, [settings.deletionEnabled, settings.attachmentBookmarkingEnabled, archive, chat, search, selection]);
+
+  const handleAttachmentBookmarkingChange = useCallback(async (enabled: boolean): Promise<boolean> => {
+    if (!enabled) {
+      setSetting('attachmentBookmarkingEnabled', false);
+      return true;
+    }
+    if (!isFileSystemAccessSupported()) return false;
+    const handle = archive.originalRootHandle || archive.rootHandle;
+    if (handle && !await requestDirectoryWritePermission(handle)) return false;
+    setSetting('attachmentBookmarkingEnabled', true);
+    return true;
+  }, [archive.originalRootHandle, archive.rootHandle, setSetting]);
 
   const chatViewRef = useRef<ChatViewHandle>(null);
 
@@ -237,7 +274,7 @@ export default function App() {
     setGalleryOpen(true);
   }, []);
 
-  const selectedAttachments = selection.getSelectedAttachments(attachments.all);
+  const selectedItems = selection.getSelectedItems([...attachments.all, ...sharedLinks]);
 
   return (
     <div className={`container ${settings.infoPanelOpen ? 'info-open' : ''}`}>
@@ -267,6 +304,7 @@ export default function App() {
         selectedPerspective={chat.selectedPerspective}
         setSelectedPerspective={chat.setSelectedPerspective}
         onJumpToMessage={handleJumpToMessage}
+        onAttachmentBookmarkingChange={handleAttachmentBookmarkingChange}
       />
 
       <div
@@ -302,6 +340,8 @@ export default function App() {
         onCloseGallery={() => setGalleryOpen(false)}
         galleryHasOpened={galleryHasOpened}
         selection={selection}
+        attachmentBookmarkingEnabled={settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()}
+        bookmarks={bookmarks}
       />
 
       <div
@@ -316,12 +356,18 @@ export default function App() {
 
       {settings.infoPanelOpen && (
         galleryOpen && selection.selectedCount > 0 && chat.chatData ? (
-          <SelectionPanel 
+          <SelectionPanel
+            activeEntry={chat.activeEntry}
             chatData={chat.chatData}
             mediaState={chat.mediaState}
-            selectedAttachments={selectedAttachments}
+            selectedItems={selectedItems}
             onDeselect={selection.toggle}
             onClearSelection={selection.deselectAll}
+            useDateFilenames={settings.dateAttachmentFilenames}
+            filenameTemplate={settings.attachmentFilenameTemplate}
+            allowLongFilenames={settings.longAttachmentFilenames}
+            attachmentBookmarkingEnabled={settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()}
+            bookmarks={bookmarks}
           />
         ) : (
           <InfoPanel
@@ -333,10 +379,16 @@ export default function App() {
             onOpenGallery={handleOpenGallery}
             header={!galleryOpen && selection.selectedCount > 0 && chat.chatData ? (
               <SelectionHeader
+                activeEntry={chat.activeEntry}
                 chatData={chat.chatData}
                 mediaState={chat.mediaState}
-                selectedAttachments={selectedAttachments}
+                selectedItems={selectedItems}
                 onClearSelection={selection.deselectAll}
+                useDateFilenames={settings.dateAttachmentFilenames}
+                filenameTemplate={settings.attachmentFilenameTemplate}
+                allowLongFilenames={settings.longAttachmentFilenames}
+                attachmentBookmarkingEnabled={settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()}
+                bookmarks={bookmarks}
               />
             ) : undefined}
           />
@@ -376,6 +428,17 @@ export default function App() {
         <div className="delete-toast" role="status" aria-live="polite">
           {deleteToast}
         </div>
+      )}
+      {!deleteToast && bookmarks.error && (
+        <button
+          type="button"
+          className="delete-toast"
+          role="status"
+          onClick={bookmarks.clearError}
+          title="Dismiss"
+        >
+          {bookmarks.error}
+        </button>
       )}
       <TrustModal settings={settings} setSetting={setSetting} />
     </div>

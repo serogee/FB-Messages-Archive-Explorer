@@ -9,7 +9,7 @@ import { escapeHtml } from '../../services/storage';
 import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
 import { ReactionModal } from './ReactionModal';
 import { MediaFileSize } from '../MediaFileSize';
-import { ExternalLink, FileText, Info, Link as LinkIcon, Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { FileText, Info, Link as LinkIcon, Pause, Play, Volume2, VolumeX } from 'lucide-react';
 
 const lazyMediaLoadCallbacks = new Map<Element, () => void>();
 const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => void>();
@@ -70,6 +70,7 @@ interface MessageBubbleProps {
   isFirstInClump: boolean;
   isLastInClump: boolean;
   onMediaClick?: (mediaPath: string, msgIndex: number) => void;
+  onLinkClick?: (url: string, msgIndex: number) => void;
 }
 
 function formatTimestamp(ts: number): string {
@@ -114,20 +115,26 @@ function MessageText({ text, highlightQuery }: { text: string; highlightQuery: s
   return <>{parts}</>;
 }
 
-function SharedLinkPreview({ link, label }: { link: string; label?: string }) {
+function SharedLinkPreview({ link, label, onOpenViewer }: { link: string; label?: string; onOpenViewer?: () => void }) {
   const href = normalizeExternalUrl(link);
   if (!href) return null;
 
   const hostname = new URL(href).hostname.replace(/^www\./i, '');
   return (
-    <a href={href} target="_blank" rel="noreferrer" className="message-shared-link" title={href}>
-      <span className="message-shared-link-icon"><LinkIcon size={17} /></span>
-      <span className="message-shared-link-copy">
-        <strong>{hostname}</strong>
-        <span>{label || href}</span>
-      </span>
-      <ExternalLink size={15} className="message-shared-link-external" />
-    </a>
+    <span className="message-shared-link" title={href}>
+      <a href={href} target="_blank" rel="noreferrer" className="message-shared-link-main">
+        <span className="message-shared-link-icon"><LinkIcon size={17} /></span>
+        <span className="message-shared-link-copy">
+          <strong>{hostname}</strong>
+          <span>{label || href}</span>
+        </span>
+      </a>
+      {onOpenViewer && (
+        <button type="button" className="media-file-info" onClick={onOpenViewer} aria-label="Open link in viewer" title="Open in viewer">
+          <Info size={15} />
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -368,7 +375,7 @@ function LazyMedia({
     content = fileURL
       ? <div className="media-audio-wrap">
           <InlineAudioPlayer src={fileURL} />
-          {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} title="Open in viewer">⛶</button>}
+          {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} aria-label="Open audio in viewer" title="Open in viewer"><Info size={15} /></button>}
         </div>
       : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
   } else {
@@ -421,6 +428,7 @@ export const MessageBubble = memo(function MessageBubble({
   isFirstInClump,
   isLastInClump,
   onMediaClick,
+  onLinkClick,
 }: MessageBubbleProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -495,7 +503,12 @@ export const MessageBubble = memo(function MessageBubble({
             {messageLinks.length > 0 && (
               <div className="message-link-list">
                 {messageLinks.map(link => (
-                  <SharedLinkPreview key={link.url} link={link.url} label={link.label} />
+                  <SharedLinkPreview
+                    key={link.url}
+                    link={link.url}
+                    label={link.label}
+                    onOpenViewer={onLinkClick ? () => onLinkClick(link.url, msgIndex) : undefined}
+                  />
                 ))}
               </div>
             )}

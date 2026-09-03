@@ -1,17 +1,105 @@
+/* Keep scrollbar geometry fixed while revealing the thumb only on interaction. */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+
+*:hover {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.sub-container:hover .sidebar-scroll-region,
+.chat-container:hover #chat,
+.chat-container:hover .gallery-scroll,
+.chat-info-panel:hover .info-panel-content,
+.chat-info-panel:hover .selection-panel-content {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/*
+ * Chromium gives non-default standardized properties precedence over the
+ * WebKit pseudo-elements. Reset them there so the arrow-free custom controls
+ * below are used; Firefox retains the standardized thin scrollbar above.
+ */
+@supports selector(::-webkit-scrollbar) {
+    *,
+    *:hover {
+        scrollbar-width: auto !important;
+        scrollbar-color: auto !important;
+    }
+}
+
+/* Fallback and finer styling for browsers using the WebKit pseudo-elements. */
 *::-webkit-scrollbar {
-    width: 12px;
-    height: 12px;
+    width: 8px;
+    height: 8px;
+}
+
+*::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+*::-webkit-scrollbar-button:single-button,
+*::-webkit-scrollbar-button:start:decrement,
+*::-webkit-scrollbar-button:end:increment {
+    display: none;
+    width: 0;
+    height: 0;
 }
 
 *::-webkit-scrollbar-thumb {
-    background: var(--muted);
-    border-radius: 10px;
+    min-width: 32px;
+    min-height: 32px;
     border: 3px solid transparent;
+    border-radius: 999px;
+    background: transparent;
     background-clip: padding-box;
 }
 
-*::-webkit-scrollbar-track {
+*:hover::-webkit-scrollbar-thumb,
+.sub-container:hover .sidebar-scroll-region::-webkit-scrollbar-thumb,
+.chat-container:hover #chat::-webkit-scrollbar-thumb,
+.chat-container:hover .gallery-scroll::-webkit-scrollbar-thumb,
+.chat-info-panel:hover .info-panel-content::-webkit-scrollbar-thumb,
+.chat-info-panel:hover .selection-panel-content::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    border-width: 1px;
+    background-color: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
     background: transparent;
+}
+
+.scrollbar-stable {
+    scrollbar-gutter: stable;
+}
+
+@media (forced-colors: active) {
+    * {
+        scrollbar-color: auto;
+    }
+
+    *::-webkit-scrollbar-thumb {
+        border-width: 2px;
+        background-color: ButtonText;
+    }
+}
+
+@media (hover: none) {
+    * {
+        scrollbar-color: var(--scrollbar-thumb) transparent;
+    }
+
+    *::-webkit-scrollbar-thumb {
+        background-color: var(--scrollbar-thumb);
+    }
 }
 
 :root {
@@ -31,6 +119,8 @@
     --attachment-grid-gap: 4px;
     --hover-overlay: rgba(0,0,0,0.04);
     --resize-overlay: rgba(255,255,255,0.58);
+    --scrollbar-thumb: rgba(84,89,96,0.72);
+    --scrollbar-thumb-hover: rgba(17,18,19,0.82);
 }
 
 .dark {
@@ -46,4 +136,6 @@
     --border: #1b2330;
     --hover-overlay: rgba(255,255,255,0.04);
     --resize-overlay: rgba(5,9,12,0.62);
+    --scrollbar-thumb: rgba(174,185,200,0.62);
+    --scrollbar-thumb-hover: rgba(230,238,248,0.82);
 }

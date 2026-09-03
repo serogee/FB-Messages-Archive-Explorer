@@ -1,13 +1,20 @@
-.chat-list { display:flex; flex-direction:column; gap:2px; overflow-y:auto; flex:1; min-height:0; }
+.chat-list {
+  display:flex; flex-direction:column; gap:2px; overflow-y:auto; flex:1; min-height:0;
+  /* Match the 8px scrollbar gutter by reducing the sidebar's 17px left inset. */
+  margin-left:-9px;
+}
 .chat-list-item {
   display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:8px;
   cursor:pointer; position:relative; transition:background 0.15s ease;
-  border-left:3px solid transparent;
 }
-.chat-list-item:hover { background:var(--hover-overlay); }
-.dark .chat-list-item:hover { background:var(--hover-overlay-dark); }
-.chat-list-item.active { border-left-color:var(--accent); background:var(--hover-overlay); }
-.dark .chat-list-item.active { background:var(--hover-overlay-dark); }
+.chat-list-item:not(.active):hover { background:rgba(0,0,0,0.06); }
+.dark .chat-list-item:not(.active):hover { background:rgba(255,255,255,0.08); }
+.chat-list-item.active {
+  background:rgba(0,132,255,0.13);
+}
+.chat-list-item.active:hover { background:rgba(0,132,255,0.17); }
+.dark .chat-list-item.active { background:rgba(62,166,255,0.17); }
+.dark .chat-list-item.active:hover { background:rgba(62,166,255,0.22); }
 .chat-list-item.selected { background:rgba(0,132,255,0.08); }
 .dark .chat-list-item.selected { background:rgba(0,132,255,0.15); }
 

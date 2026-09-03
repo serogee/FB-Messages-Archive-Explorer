@@ -124,6 +124,19 @@
 .selection-menu-item:hover .selection-menu-icon {
   color: var(--text);
 }
+.selection-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.selection-menu-item:disabled:hover {
+  background: none;
+}
+
+.selection-menu-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
 
 .selection-panel-content {
   flex: 1;
@@ -137,6 +150,28 @@
   gap: var(--attachment-grid-gap);
 }
 
+.selection-panel .gallery-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 0;
+  color: var(--text);
+}
+.selection-panel .selection-link-card {
+  aspect-ratio: 1;
+  padding: 12px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-decoration: none;
+}
+.selection-panel .selection-link-card:hover {
+  text-decoration: none;
+}
+.selection-panel .gallery-thumb-file {
+  align-items: center;
+  justify-content: center;
+}
 .selection-progress-section {
   flex: 1;
   display: flex;

@@ -14,11 +14,18 @@
 }
 .chat-view-layer {
     position: absolute;
-    inset: 0 10px;
+    inset: 0 0 0 10px;
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+}
+.chat-view-layer > .chat-header,
+.chat-view-layer > .gallery-tabs,
+.chat-view-layer > .gallery-filter-panel,
+.chat-view-layer > #line,
+.chat-view-layer > #loading {
+    margin-right: 10px;
 }
 .chat-view-layer.active {
     visibility: visible;
@@ -147,7 +154,7 @@
 .media-loading-overlay {
     position: absolute;
     bottom: 16px;
-    left: 50%;
+    left: calc(50% - 5px);
     transform: translateX(-50%);
     z-index: 50;
     pointer-events: none;
@@ -303,16 +310,34 @@
     min-width: 0;
     box-sizing: border-box;
     display: flex;
-    align-items: center;
-    gap: 9px;
+    align-items: stretch;
+    gap: 0;
     margin-top: 0;
-    padding: 9px 10px;
+    padding: 0;
     border: 1px solid rgba(0, 0, 0, 0.12);
     border-radius: 10px;
     background: rgba(0, 0, 0, 0.06);
     color: inherit;
     text-decoration: none;
     white-space: normal;
+    overflow: hidden;
+}
+.message-shared-link-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 10px;
+    color: inherit;
+    text-decoration: none;
+}
+.message-shared-link > .media-file-info {
+    align-self: stretch;
+    height: auto;
+}
+.message-shared-link-main:hover {
+    text-decoration: none;
 }
 .message-shared-link:hover {
     background: rgba(0, 0, 0, 0.1);

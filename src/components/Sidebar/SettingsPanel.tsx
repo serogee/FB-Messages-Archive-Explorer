@@ -6,7 +6,9 @@ import { getParticipantNames } from '../../services/parser';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
 import { EnableDeletionModal } from '../Modals/EnableDeletionModal';
 import { ShortcutsModal } from '../Modals/ShortcutsModal';
-import { ChevronUp, ChevronDown, ChevronRight, Keyboard } from 'lucide-react';
+import { FilenamePlaceholdersModal } from '../Modals/FilenamePlaceholdersModal';
+import { Braces, ChevronUp, ChevronDown, ChevronRight, Keyboard } from 'lucide-react';
+import { DEFAULT_ATTACHMENT_FILENAME_TEMPLATE } from '../../services/saveAttachments';
 
 interface SettingsPanelProps {
   settings: Settings;
@@ -16,6 +18,7 @@ interface SettingsPanelProps {
   setSelectedPerspective: (name: string) => void;
   onOpenFolder: () => Promise<void>;
   rootHandle: ReadableDirectoryHandle | null;
+  onAttachmentBookmarkingChange: (enabled: boolean) => Promise<boolean>;
 }
 
 function ToggleRow({ id, label, checked, onChange, disabled }: {
@@ -128,11 +131,14 @@ export function SettingsPanel({
   settings, setSetting,
   chatData, selectedPerspective, setSelectedPerspective,
   onOpenFolder, rootHandle,
+  onAttachmentBookmarkingChange,
 }: SettingsPanelProps) {
   const participants = getParticipantNames(chatData);
   const fsSupported = isFileSystemAccessSupported();
   const [showEnableModal, setShowEnableModal] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [showFilenamePlaceholdersModal, setShowFilenamePlaceholdersModal] = useState(false);
+  const [bookmarkPermissionError, setBookmarkPermissionError] = useState(false);
 
   const handleDeletionToggle = (val: boolean) => {
     if (val) {
@@ -143,8 +149,18 @@ export function SettingsPanel({
     }
   };
 
+  const handleBookmarkingToggle = async (val: boolean) => {
+    setBookmarkPermissionError(false);
+    try {
+      const changed = await onAttachmentBookmarkingChange(val);
+      if (!changed && val) setBookmarkPermissionError(true);
+    } catch {
+      if (val) setBookmarkPermissionError(true);
+    }
+  };
+
   return (
-    <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+    <div className="sidebar-scroll-region settings-scroll-region">
       <div className="settings-section">
         <strong>Messages Folder</strong>
         {rootHandle ? (
@@ -164,28 +180,6 @@ export function SettingsPanel({
         )}
       </div>
 
-      <div className="settings-section">
-        <strong>Appearance</strong>
-        <ToggleRow id="darkModeToggle" label="Dark mode" checked={settings.darkMode} onChange={v => setSetting('darkMode', v as Settings['darkMode'])} />
-      </div>
-
-      <div className="settings-section">
-        <strong>Customization</strong>
-        <ToggleRow id="showMyNameToggle" label="Show my name" checked={settings.showMyName} onChange={v => setSetting('showMyName', v as Settings['showMyName'])} />
-        <ToggleRow id="showTheirNameToggle" label="Show their names" checked={settings.showTheirName} onChange={v => setSetting('showTheirName', v as Settings['showTheirName'])} />
-        <ToggleRow id="showReactionsToggle" label="Show reactions" checked={settings.showReactions} onChange={v => setSetting('showReactions', v as Settings['showReactions'])} />
-        <ToggleRow id="autoCollapseDateNavToggle" label="Auto-collapse date navigator" checked={settings.autoCollapseDateNav} onChange={v => setSetting('autoCollapseDateNav', v as Settings['autoCollapseDateNav'])} />
-      </div>
-
-      <div className="settings-section">
-        <strong>Help</strong>
-        <button className="settings-shortcuts-btn" onClick={() => setShowShortcutsModal(true)}>
-          <Keyboard size={17} />
-          <span>Keyboard shortcuts</span>
-          <ChevronRight size={16} />
-        </button>
-      </div>
-
       {chatData && participants.length > 0 && (
         <div className="settings-section">
           <strong>View perspective</strong>
@@ -197,6 +191,106 @@ export function SettingsPanel({
           <span id="tips" className="footer">Messages from the selected participant appear on the right side as "me".</span>
         </div>
       )}
+
+      <div className="settings-section">
+        <strong>Customization</strong>
+        <ToggleRow id="darkModeToggle" label="Dark mode" checked={settings.darkMode} onChange={v => setSetting('darkMode', v as Settings['darkMode'])} />
+        <ToggleRow id="showMyNameToggle" label="Show my name" checked={settings.showMyName} onChange={v => setSetting('showMyName', v as Settings['showMyName'])} />
+        <ToggleRow id="showTheirNameToggle" label="Show their names" checked={settings.showTheirName} onChange={v => setSetting('showTheirName', v as Settings['showTheirName'])} />
+        <ToggleRow id="showReactionsToggle" label="Show reactions" checked={settings.showReactions} onChange={v => setSetting('showReactions', v as Settings['showReactions'])} />
+        <ToggleRow id="autoCollapseDateNavToggle" label="Auto-collapse date navigator" checked={settings.autoCollapseDateNav} onChange={v => setSetting('autoCollapseDateNav', v as Settings['autoCollapseDateNav'])} />
+      </div>
+
+      <div className="settings-section">
+        <strong>Downloads</strong>
+        <ToggleRow
+          id="dateAttachmentFilenamesToggle"
+          label="Name attachments by message date and time"
+          checked={settings.dateAttachmentFilenames}
+          onChange={v => setSetting('dateAttachmentFilenames', v as Settings['dateAttachmentFilenames'])}
+        />
+        {settings.dateAttachmentFilenames && (
+          <>
+            <label className="filename-template-label" htmlFor="attachmentFilenameTemplate">Filename template</label>
+            <div className="filename-template-row">
+              <input
+                id="attachmentFilenameTemplate"
+                className="filename-template-input"
+                type="text"
+                maxLength={200}
+                value={settings.attachmentFilenameTemplate}
+                placeholder={DEFAULT_ATTACHMENT_FILENAME_TEMPLATE}
+                onChange={event => setSetting(
+                  'attachmentFilenameTemplate',
+                  event.target.value
+                    .replace(/\.?\{ext\}/g, '')
+                    .replace(/[^\p{L}\p{N}\s{}_-]/gu, '') as Settings['attachmentFilenameTemplate']
+                )}
+                spellCheck={false}
+              />
+              <span className="filename-template-extension">.{'{ext}'}</span>
+              <button
+                type="button"
+                className="btn btn-secondary filename-template-reset"
+                onClick={() => setSetting('attachmentFilenameTemplate', DEFAULT_ATTACHMENT_FILENAME_TEMPLATE as Settings['attachmentFilenameTemplate'])}
+                disabled={settings.attachmentFilenameTemplate === DEFAULT_ATTACHMENT_FILENAME_TEMPLATE}
+              >
+                Reset
+              </button>
+            </div>
+            <button className="settings-shortcuts-btn filename-placeholders-btn" onClick={() => setShowFilenamePlaceholdersModal(true)}>
+              <Braces size={17} />
+              <span>Filename placeholders</span>
+              <ChevronRight size={16} />
+            </button>
+            <ToggleRow
+              id="longAttachmentFilenamesToggle"
+              label="Enable long filenames"
+              checked={settings.longAttachmentFilenames}
+              onChange={v => setSetting('longAttachmentFilenames', v as Settings['longAttachmentFilenames'])}
+            />
+            <p className="browser-notice">
+              Names are normalized and stripped of unsupported symbols. The maximum is {settings.longAttachmentFilenames ? '180' : '100'} characters including the extension.
+            </p>
+          </>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <strong>Help</strong>
+        <button className="settings-shortcuts-btn" onClick={() => setShowShortcutsModal(true)}>
+          <Keyboard size={17} />
+          <span>Keyboard shortcuts</span>
+          <ChevronRight size={16} />
+        </button>
+      </div>
+
+      <div className="settings-section">
+        <strong>Attachment Bookmarking</strong>
+        {!fsSupported ? (
+          <>
+            <ToggleRow id="attachmentBookmarkingEnabledToggle" label="Enable attachment bookmarking" checked={false} onChange={() => {}} disabled={true} />
+            <p className="browser-notice">Only available in Chromium-based browsers (Chrome, Edge, Brave).</p>
+          </>
+        ) : (
+          <>
+            <ToggleRow
+              id="attachmentBookmarkingEnabledToggle"
+              label="Enable attachment bookmarking"
+              checked={settings.attachmentBookmarkingEnabled}
+              onChange={handleBookmarkingToggle}
+            />
+            <p className="deletion-info">
+              Saves attachment bookmarks to <code>selected_messages/bookmarks.json</code> inside the messages folder.
+              Existing bookmarks are kept when this feature is disabled.
+              {!rootHandle && settings.attachmentBookmarkingEnabled && ' Write access will be requested when you open a folder.'}
+            </p>
+            {bookmarkPermissionError && (
+              <p className="browser-notice">Write access is required to enable attachment bookmarking.</p>
+            )}
+          </>
+        )}
+      </div>
 
       <div className="settings-section">
         <strong>Chat Deletion</strong>
@@ -230,6 +324,10 @@ export function SettingsPanel({
 
       {showShortcutsModal && (
         <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />
+      )}
+
+      {showFilenamePlaceholdersModal && (
+        <FilenamePlaceholdersModal onClose={() => setShowFilenamePlaceholdersModal(false)} />
       )}
 
       <div className="settings-section download-info">

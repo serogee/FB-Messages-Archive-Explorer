@@ -111,6 +111,8 @@ export interface ResolvedLink {
   sender: string;
 }
 
+export type SelectableItem = ResolvedAttachment | ResolvedLink;
+
 export type DateScale = 'month' | 'week' | 'day';
 
 export interface DateBucket {

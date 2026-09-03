@@ -1,5 +1,24 @@
 import { useState, useCallback, useRef } from 'react';
-import type { ResolvedAttachment } from '../types/messenger';
+import type { ResolvedAttachment, SelectableItem } from '../types/messenger';
+
+function getSelectionKey(item: SelectableItem): string {
+  return item.category === 'links'
+    ? `links:${item.messageIndex}:${item.url}`
+    : `${item.category}:${item.mediaPath.toLowerCase()}`;
+}
+
+export function addItemsToSelection(
+  selectedKeys: Set<string>,
+  items: SelectableItem[],
+): Set<string> {
+  const next = new Set(selectedKeys);
+  for (const item of items) next.add(getSelectionKey(item));
+  return next;
+}
+
+export function shouldConfirmBulkSelection(itemCount: number): boolean {
+  return itemCount > 500;
+}
 
 export function useSelection() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -8,8 +27,8 @@ export function useSelection() {
   const keysRef = useRef(selectedKeys);
   keysRef.current = selectedKeys;
 
-  const toggle = useCallback((attachment: ResolvedAttachment) => {
-    const key = `${attachment.category}:${attachment.mediaPath.toLowerCase()}`;
+  const toggle = useCallback((item: SelectableItem) => {
+    const key = getSelectionKey(item);
     setSelectedKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) {
@@ -26,9 +45,17 @@ export function useSelection() {
     setClearVersion((version) => version + 1);
   }, []);
 
+  const selectMany = useCallback((items: SelectableItem[]) => {
+    if (items.length === 0) return;
+    setSelectedKeys(previous => {
+      const next = addItemsToSelection(previous, items);
+      return next.size === previous.size ? previous : next;
+    });
+  }, []);
+
   const isSelected = useCallback(
-    (attachment: ResolvedAttachment) => {
-      const key = `${attachment.category}:${attachment.mediaPath.toLowerCase()}`;
+    (item: SelectableItem) => {
+      const key = getSelectionKey(item);
       return keysRef.current.has(key);
     },
     []
@@ -44,15 +71,22 @@ export function useSelection() {
     []
   );
 
+  const getSelectedItems = useCallback(
+    (items: SelectableItem[]) => items.filter(item => keysRef.current.has(getSelectionKey(item))),
+    []
+  );
+
   const selectedCount = selectedKeys.size;
 
   return {
     selectedKeys,
     toggle,
+    selectMany,
     deselectAll,
     isSelected,
     selectedCount,
     clearVersion,
     getSelectedAttachments,
+    getSelectedItems,
   };
 }

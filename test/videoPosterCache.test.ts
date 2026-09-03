@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createVideoPoster, VideoPosterCache } from '../src/services/videoPosterCache';
+import { createVideoPoster, createVideoPosterDetails, VideoPosterCache } from '../src/services/videoPosterCache';
 import type { MediaEntry } from '../src/types/messenger';
 
 afterEach(() => {
@@ -19,9 +19,10 @@ describe('video poster cache', () => {
     const staleRequest = cache.getOrCreate(entry);
     await Promise.resolve();
     cache.clear();
-    finish?.(null);
-
     await expect(staleRequest).resolves.toBeNull();
+    finish?.(null);
+    await Promise.resolve();
+    await Promise.resolve();
     await expect(cache.getOrCreate(entry)).resolves.toBe('blob:fresh');
     expect(create).toHaveBeenCalledTimes(2);
   });
@@ -36,9 +37,72 @@ describe('video poster cache', () => {
     await expect(cache.getOrCreate(entry)).resolves.toBe('blob:poster');
     expect(create).toHaveBeenCalledOnce();
   });
+
+  it('does not remember a cancelled running request as a failed video', async () => {
+    const create = vi.fn((_entry: MediaEntry, signal: AbortSignal) => {
+      if (create.mock.calls.length === 1) {
+        return new Promise<null>(resolve => {
+          signal.addEventListener('abort', () => resolve(null), { once: true });
+        });
+      }
+      return Promise.resolve({ url: 'blob:retry', duration: 5 });
+    });
+    const cache = new VideoPosterCache(2, 1, create);
+    const media: MediaEntry = { type: 'video' };
+
+    const unsubscribe = cache.subscribe(media, () => {});
+    unsubscribe();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(cache.getOrCreateDetails(media)).resolves.toEqual({ url: 'blob:retry', duration: 5 });
+    expect(create).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('video poster creation', () => {
+  it('stops waiting for metadata when poster generation is cancelled', async () => {
+    class WaitingVideo extends EventTarget {
+      preload = '';
+      muted = false;
+      playsInline = false;
+      readyState = 0;
+      src = '';
+      pauseCalls = 0;
+      loadCalls = 0;
+      removedSource = false;
+
+      load(): void {
+        this.loadCalls++;
+      }
+
+      pause(): void {
+        this.pauseCalls++;
+      }
+
+      removeAttribute(name: string): void {
+        if (name !== 'src') return;
+        this.src = '';
+        this.removedSource = true;
+      }
+    }
+
+    const video = new WaitingVideo();
+    vi.stubGlobal('HTMLMediaElement', { HAVE_METADATA: 1, HAVE_CURRENT_DATA: 2 });
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => video),
+    });
+    const controller = new AbortController();
+    const request = createVideoPosterDetails('blob:source', controller.signal);
+
+    controller.abort();
+
+    await expect(request).resolves.toBeNull();
+    expect(video.pauseCalls).toBe(1);
+    expect(video.removedSource).toBe(true);
+    expect(video.loadCalls).toBe(2);
+  });
+
   it('loads metadata, seeks for a frame, and releases the video source', async () => {
     class FakeVideo extends EventTarget {
       preload = '';

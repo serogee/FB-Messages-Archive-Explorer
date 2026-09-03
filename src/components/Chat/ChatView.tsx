@@ -1,16 +1,17 @@
 import { useRef, useImperativeHandle, forwardRef, useState, useCallback } from 'react';
-import type { MessengerThread, MediaState, ChatListEntry, ResolvedAttachment } from '../../types/messenger';
+import type { MessengerThread, MediaState, ChatListEntry, SelectableItem } from '../../types/messenger';
 import { Info } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import type { useSearch } from '../../hooks/useSearch';
 import type { GalleryCategory } from '../../hooks/useAttachments';
-import { useAttachments } from '../../hooks/useAttachments';
+import { useAttachments, useSharedLinks } from '../../hooks/useAttachments';
 import { useSelection } from '../../hooks/useSelection';
 import { DateNavigator } from './DateNavigator';
 import { MessageList, type MessageListHandle } from './MessageList';
 import { AttachmentGallery } from '../AttachmentGallery/AttachmentGallery';
 import type { AttachmentJumpTarget } from '../AttachmentGallery/AttachmentGallery';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
+import type { AttachmentBookmarksController } from '../../hooks/useAttachmentBookmarks';
 
 interface ChatViewProps {
   chatData: MessengerThread | null;
@@ -34,6 +35,8 @@ interface ChatViewProps {
   onCloseGallery: () => void;
   galleryHasOpened: boolean;
   selection: ReturnType<typeof useSelection>;
+  attachmentBookmarkingEnabled: boolean;
+  bookmarks: AttachmentBookmarksController;
 }
 
 export interface ChatViewHandle {
@@ -79,14 +82,34 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     onCloseGallery,
     galleryHasOpened,
     selection,
+    attachmentBookmarkingEnabled,
+    bookmarks,
   },
   ref
 ) {
   const messageListRef = useRef<MessageListHandle>(null);
 
-  const [viewerState, setViewerState] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
+  const [viewerState, setViewerState] = useState<{ open: boolean; index: number; kind: 'attachments' | 'links' }>({ open: false, index: 0, kind: 'attachments' });
   const [attachmentJumpTarget, setAttachmentJumpTarget] = useState<AttachmentJumpTarget | null>(null);
   const attachments = useAttachments(chatData, mediaState);
+  const links = useSharedLinks(chatData);
+  const bookmarkRecords = bookmarks.bookmarks;
+  const bookmarkLookup = bookmarks.isBookmarked;
+  const toggleBookmark = bookmarks.toggle;
+  const isAttachmentBookmarked = useCallback(
+    (item: SelectableItem) => {
+      // Capture the records snapshot so memoized consumers refresh when bookmark membership changes.
+      void bookmarkRecords;
+      return !!activeEntry && bookmarkLookup(activeEntry, item);
+    },
+    [activeEntry, bookmarkLookup, bookmarkRecords]
+  );
+  const handleToggleBookmark = useCallback(
+    (item: SelectableItem) => activeEntry
+      ? toggleBookmark(activeEntry, item)
+      : Promise.resolve(),
+    [activeEntry, toggleBookmark]
+  );
 
   useImperativeHandle(ref, () => ({
     scrollToBottom: () => {
@@ -108,24 +131,29 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   const handleMediaClick = useCallback((mediaPath: string, msgIndex: number) => {
     const idx = attachments.findIndex(mediaPath, msgIndex);
     if (idx >= 0) {
-      setViewerState({ open: true, index: idx });
+      setViewerState({ open: true, index: idx, kind: 'attachments' });
     }
   }, [attachments]);
 
+  const handleLinkClick = useCallback((url: string, msgIndex: number) => {
+    const index = links.findIndex(link => link.url === url && link.messageIndex === msgIndex);
+    if (index >= 0) setViewerState({ open: true, index, kind: 'links' });
+  }, [links]);
+
   const handleViewerJump = useCallback((messageIndex: number) => {
-    setViewerState({ open: false, index: 0 });
+    setViewerState(previous => ({ ...previous, open: false, index: 0 }));
     if (galleryOpen) {
       onCloseGallery();
     }
     setTimeout(() => handleJumpToMessage(messageIndex), 50);
   }, [galleryOpen, onCloseGallery]);
 
-  const handleViewerAttachmentJump = useCallback((attachment: ResolvedAttachment) => {
-    const targetTab = galleryHasOpened && galleryDefaultTab === attachment.category
-      ? attachment.category
+  const handleViewerAttachmentJump = useCallback((item: SelectableItem) => {
+    const targetTab = galleryHasOpened && galleryDefaultTab === item.category
+      ? item.category
       : 'all';
-    setAttachmentJumpTarget({ ...attachment, tab: targetTab });
-    setViewerState({ open: false, index: 0 });
+    setAttachmentJumpTarget({ ...item, tab: targetTab });
+    setViewerState(previous => ({ ...previous, open: false, index: 0 }));
     onOpenGallery(targetTab);
   }, [galleryDefaultTab, galleryHasOpened, onOpenGallery]);
 
@@ -152,6 +180,10 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
             showStickers={!activeEntry?._messengerExport}
             attachmentJumpTarget={attachmentJumpTarget}
             onAttachmentJumpHandled={() => setAttachmentJumpTarget(null)}
+            attachmentBookmarkingEnabled={attachmentBookmarkingEnabled}
+            isAttachmentBookmarked={isAttachmentBookmarked}
+            onToggleAttachmentBookmark={handleToggleBookmark}
+            bookmarkBusy={bookmarks.busy}
           />
         )}
       </div>
@@ -211,6 +243,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
               highlightQuery={search.activeQuery}
               onScrollSync={() => {}}
               onMediaClick={handleMediaClick}
+              onLinkClick={handleLinkClick}
             />
           )}
 
@@ -226,14 +259,22 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
 
       {viewerState.open && (
         <MediaViewer
-          attachments={attachments.all}
+          items={viewerState.kind === 'links' ? links : attachments.all}
           initialIndex={viewerState.index}
           mediaState={mediaState}
-          onClose={() => setViewerState({ open: false, index: viewerState.index })}
+          onClose={() => setViewerState(previous => ({ ...previous, open: false }))}
           onJumpToMessage={handleViewerJump}
           onJumpToAttachment={handleViewerAttachmentJump}
           selection={selection}
           selectionMode={selection.selectedCount > 0}
+          useDateFilename={settings.dateAttachmentFilenames}
+          chatTitle={chatData?.title}
+          filenameTemplate={settings.attachmentFilenameTemplate}
+          allowLongFilenames={settings.longAttachmentFilenames}
+          attachmentBookmarkingEnabled={attachmentBookmarkingEnabled}
+          isBookmarked={isAttachmentBookmarked}
+          onToggleBookmark={handleToggleBookmark}
+          bookmarkBusy={bookmarks.busy}
         />
       )}
     </div>

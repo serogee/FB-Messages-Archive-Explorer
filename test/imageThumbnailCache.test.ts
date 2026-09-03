@@ -80,10 +80,41 @@ describe('image thumbnail cache', () => {
     const request = cache.getOrCreate(entry());
 
     cache.clear();
-    finish?.('blob:stale');
-
     await expect(request).resolves.toBeNull();
+    finish?.('blob:stale');
+    await Promise.resolve();
+    await Promise.resolve();
     expect(cache.size).toBe(0);
     expect(revoke).toHaveBeenCalledWith('blob:stale');
+  });
+
+  it('skips an abandoned queued thumbnail in favor of current subscribers', async () => {
+    const blocker = entry();
+    const abandoned = entry();
+    const current = entry();
+    let releaseBlocker = () => {};
+    const started: MediaEntry[] = [];
+    const create = vi.fn(async (media: MediaEntry) => {
+      started.push(media);
+      if (media === blocker) await new Promise<void>(resolve => { releaseBlocker = resolve; });
+      return media === current ? 'blob:current' : 'blob:other';
+    });
+    const cache = new ImageThumbnailCache(10, 1, create);
+
+    cache.subscribe(blocker, () => {});
+    const unsubscribe = cache.subscribe(abandoned, () => {});
+    unsubscribe();
+    const received: Array<string | null> = [];
+    const loaded = new Promise<void>(resolve => {
+      cache.subscribe(current, url => {
+        received.push(url);
+        resolve();
+      });
+    });
+    releaseBlocker();
+    await loaded;
+
+    expect(started).toEqual([blocker, current]);
+    expect(received).toEqual(['blob:current']);
   });
 });

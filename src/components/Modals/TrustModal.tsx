@@ -53,8 +53,8 @@ export function TrustModal({ settings, setSetting }: TrustModalProps) {
             access at any time by closing the tab or refreshing the page.
           </p>
           <p>
-            If you enable chat deletion in settings, write access will be requested separately
-            at that time.
+            If you enable attachment bookmarking or chat deletion in settings, write access will
+            be requested separately at that time.
           </p>
         </div>
         <div className="trust-row">
