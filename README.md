@@ -4,7 +4,11 @@ Browse, search, and manage your exported Facebook or Messenger message archive p
 
 **[🔗 Open the App](https://serogee.github.io/FB-Messages-Archive-Explorer/)**
 
+> [!NOTE]
 > **Your data stays on your computer.** All processing happens in your browser. Your messages and files are never uploaded anywhere.
+
+> [!NOTE]
+> If you don't want to grant read access to an entire folder, use my **[Simple Messenger JSON Explorer](https://github.com/serogee/Simple-Messenger-JSON-Explorer)** instead. If you'd prefer an alternative I didn't create, try **[DuckCIT's Facebook Messenger JSON Viewer](https://github.com/DuckCIT/Facebook-Messenger-JSON-Viewer)**.
 
 ---
 
