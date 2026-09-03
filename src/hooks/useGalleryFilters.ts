@@ -7,6 +7,7 @@ export interface GalleryFilterState {
   includeSenders: Set<string>;
   excludeSenders: Set<string>;
   bookmarkFilter: GalleryBookmarkFilter;
+  searchQuery: string;
 }
 
 export interface GallerySenderOption {
@@ -19,6 +20,7 @@ const EMPTY_FILTER_STATE: GalleryFilterState = {
   includeSenders: new Set(),
   excludeSenders: new Set(),
   bookmarkFilter: 'all',
+  searchQuery: '',
 };
 
 export function normalizeGallerySender(name: string): string {
@@ -30,12 +32,12 @@ export function parseGallerySenderSearch(query: string): {
   term: string;
   currentTabOnly: boolean;
 } {
-  let trimmed = query.trimStart();
-  const currentTabOnly = trimmed.startsWith('.');
-  if (currentTabOnly) trimmed = trimmed.slice(1).trimStart();
+  const operatorIndex = query.search(/[.+-]/);
+  const senderQuery = operatorIndex >= 0 ? query.slice(operatorIndex) : query;
+  const currentTabOnly = senderQuery.includes('.');
   return {
-    mode: trimmed.startsWith('-') ? 'exclude' : 'include',
-    term: trimmed.replace(/^[+-]\s*/, '').trim().toLowerCase(),
+    mode: senderQuery.includes('-') ? 'exclude' : 'include',
+    term: senderQuery.replace(/[.+-]/g, '').trim().toLowerCase(),
     currentTabOnly,
   };
 }
@@ -136,11 +138,22 @@ export function applyGalleryFilters<T extends SelectableItem>(
   isBookmarked: (item: SelectableItem) => boolean,
 ): T[] {
   const { includeSenders, excludeSenders, bookmarkFilter } = filters;
-  if (includeSenders.size === 0 && excludeSenders.size === 0 && bookmarkFilter === 'all') {
+  const searchQuery = filters.searchQuery.trim().toLowerCase();
+  if (includeSenders.size === 0
+    && excludeSenders.size === 0
+    && bookmarkFilter === 'all'
+    && !searchQuery) {
     return items;
   }
 
   return items.filter(item => {
+    if (searchQuery) {
+      const searchableText = item.category === 'links'
+        ? `${item.url} ${item.label || ''}`
+        : item.mediaPath.split('/').pop() || '';
+      if (!searchableText.toLowerCase().includes(searchQuery)) return false;
+    }
+
     const sender = normalizeGallerySender(item.sender);
     if (includeSenders.size > 0 && !includeSenders.has(sender)) return false;
     if (excludeSenders.has(sender)) return false;
@@ -198,19 +211,28 @@ export function useGalleryFilters() {
       : { ...previous, bookmarkFilter });
   }, []);
 
+  const setSearchQuery = useCallback((searchQuery: string) => {
+    const normalizedQuery = searchQuery.trim();
+    setFilters(previous => previous.searchQuery === normalizedQuery
+      ? previous
+      : { ...previous, searchQuery: normalizedQuery });
+  }, []);
+
   const clearAllFilters = useCallback(() => {
     setFilters(previous => (
       previous.includeSenders.size === 0
       && previous.excludeSenders.size === 0
       && previous.bookmarkFilter === 'all'
+      && !previous.searchQuery
         ? previous
-        : { includeSenders: new Set(), excludeSenders: new Set(), bookmarkFilter: 'all' }
+        : { includeSenders: new Set(), excludeSenders: new Set(), bookmarkFilter: 'all', searchQuery: '' }
     ));
   }, []);
 
   const hasActiveFilters = filters.includeSenders.size > 0
     || filters.excludeSenders.size > 0
-    || filters.bookmarkFilter !== 'all';
+    || filters.bookmarkFilter !== 'all'
+    || !!filters.searchQuery;
 
   return useMemo(() => ({
     ...filters,
@@ -220,6 +242,7 @@ export function useGalleryFilters() {
     setSenderFilter,
     removeSenderFilter,
     setBookmarkFilter,
+    setSearchQuery,
     clearAllFilters,
   }), [
     clearAllFilters,
@@ -227,6 +250,7 @@ export function useGalleryFilters() {
     hasActiveFilters,
     removeSenderFilter,
     setBookmarkFilter,
+    setSearchQuery,
     setSenderFilter,
     toggleExcludeSender,
     toggleIncludeSender,

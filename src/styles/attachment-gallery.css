@@ -226,7 +226,7 @@
     background: rgba(62,166,255,0.08);
     outline: none;
 }
-.gallery-sender-search:focus-within {
+.gallery-sender-search:focus-within:not(.result-active) {
     color: var(--accent);
     border-color: var(--accent);
 }
