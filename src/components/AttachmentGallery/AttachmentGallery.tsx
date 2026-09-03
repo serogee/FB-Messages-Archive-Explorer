@@ -1019,6 +1019,12 @@ const AttachmentGalleryBase = function AttachmentGallery({
     setSenderResultAction('default');
   }, [filters]);
 
+  const applySenderFilterFromMouse = useCallback((sender: string, mode: 'include' | 'exclude') => {
+    applySenderFilter(sender, mode);
+    setSenderSearchOpen(false);
+    senderSearchInputRef.current?.blur();
+  }, [applySenderFilter]);
+
   const handleClearFilters = useCallback(() => {
     filters.clearAllFilters();
     setSenderSearch('');
@@ -1271,7 +1277,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
                       role="option"
                       aria-selected={senderResultRow === index && senderResultAction === 'default'}
                       className={`gallery-sender-result-name ${senderSearchMode} ${sender.hasCurrentTabItems ? '' : 'unavailable'} ${senderResultRow === index && senderResultAction === 'default' ? 'keyboard-active' : ''}`}
-                      onClick={() => applySenderFilter(sender.key, senderSearchMode)}
+                      onClick={() => applySenderFilterFromMouse(sender.key, senderSearchMode)}
                       onMouseEnter={() => {
                         setSenderResultRow(index);
                         setSenderResultAction('default');
@@ -1287,7 +1293,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
                       role="option"
                       aria-selected={senderResultRow === index && senderResultAction === 'opposite'}
                       className={`gallery-sender-result-action ${senderSearchMode === 'include' ? 'exclude' : 'include'} ${sender.hasCurrentTabItems ? '' : 'unavailable'} ${senderResultRow === index && senderResultAction === 'opposite' ? 'keyboard-active' : ''}`}
-                      onClick={() => applySenderFilter(
+                      onClick={() => applySenderFilterFromMouse(
                         sender.key,
                         senderSearchMode === 'include' ? 'exclude' : 'include',
                       )}
