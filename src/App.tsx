@@ -4,16 +4,17 @@ import { useArchive } from './hooks/useArchive';
 import { useChat } from './hooks/useChat';
 import { useSearch } from './hooks/useSearch';
 import { useResizable } from './hooks/useResizable';
-import { useSelection } from './hooks/useSelection';
+import { sortSelectableItemsNewestFirst, useSelection } from './hooks/useSelection';
 import { useAttachments, useSharedLinks } from './hooks/useAttachments';
 import { useAttachmentBookmarks } from './hooks/useAttachmentBookmarks';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatView, type ChatViewHandle } from './components/Chat/ChatView';
 import { InfoPanel } from './components/InfoPanel/InfoPanel';
 import { SelectionHeader, SelectionPanel } from './components/InfoPanel/SelectionPanel';
+import { MediaViewer } from './components/MediaViewer/MediaViewer';
 import { TrustModal } from './components/Modals/TrustModal';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
-import type { ChatListEntry } from './types/messenger';
+import type { ChatListEntry, SelectableItem } from './types/messenger';
 import type { GalleryCategory } from './hooks/useAttachments';
 import type { MessengerExportDeletionInfo } from './services/messengerExport';
 import { isFileSystemAccessSupported } from './services/fileSystem';
@@ -48,7 +49,7 @@ export default function App() {
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryDefaultTab, setGalleryDefaultTab] = useState<GalleryCategory>('all');
-  const [galleryHasOpened, setGalleryHasOpened] = useState(false);
+  const [selectedViewer, setSelectedViewer] = useState<{ items: SelectableItem[]; index: number } | null>(null);
 
   const { handleRef: sidebarHandleRef } = useResizable({
     minWidth: 260,
@@ -209,7 +210,6 @@ export default function App() {
         search.clearWideSearchCache();
         selection.deselectAll();
         setGalleryOpen(false);
-        setGalleryHasOpened(false);
         pendingJumpIndexRef.current = null;
       }
     );
@@ -255,8 +255,10 @@ export default function App() {
 
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {
+    if (chat.chatData !== prevChatDataRef.current) setSelectedViewer(null);
     if (chat.chatData && chat.chatData !== prevChatDataRef.current) {
       setGalleryOpen(false);
+      setSelectedViewer(null);
       selection.deselectAll();
       if (pendingJumpIndexRef.current !== null) {
         const idx = pendingJumpIndexRef.current;
@@ -270,11 +272,14 @@ export default function App() {
 
   const handleOpenGallery = useCallback((tab?: string) => {
     if (tab) setGalleryDefaultTab(tab as GalleryCategory);
-    setGalleryHasOpened(true);
     setGalleryOpen(true);
   }, []);
 
-  const selectedItems = selection.getSelectedItems([...attachments.all, ...sharedLinks]);
+  const selectableItemsNewestFirst = useMemo(
+    () => sortSelectableItemsNewestFirst([...attachments.all, ...sharedLinks]),
+    [attachments.all, sharedLinks]
+  );
+  const selectedItems = selection.getSelectedItems(selectableItemsNewestFirst);
 
   return (
     <div className={`container ${settings.infoPanelOpen ? 'info-open' : ''}`}>
@@ -338,7 +343,6 @@ export default function App() {
         onGalleryTabChange={setGalleryDefaultTab}
         onOpenGallery={handleOpenGallery}
         onCloseGallery={() => setGalleryOpen(false)}
-        galleryHasOpened={galleryHasOpened}
         selection={selection}
         attachmentBookmarkingEnabled={settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()}
         bookmarks={bookmarks}
@@ -362,6 +366,7 @@ export default function App() {
             mediaState={chat.mediaState}
             selectedItems={selectedItems}
             onDeselect={selection.toggle}
+            onOpenViewer={index => setSelectedViewer({ items: [...selectedItems], index })}
             onClearSelection={selection.deselectAll}
             useDateFilenames={settings.dateAttachmentFilenames}
             filenameTemplate={settings.attachmentFilenameTemplate}
@@ -422,6 +427,36 @@ export default function App() {
           deletionInfoLoading={deleteInfoLoading}
           deletionInfoSkipped={deleteInfoSkipped}
           deleting={deleteBusy}
+        />
+      )}
+      {selectedViewer && (
+        <MediaViewer
+          items={selectedViewer.items}
+          initialIndex={selectedViewer.index}
+          mediaState={chat.mediaState}
+          onClose={() => setSelectedViewer(null)}
+          onJumpToMessage={messageIndex => {
+            setSelectedViewer(null);
+            setGalleryOpen(false);
+            setTimeout(() => chatViewRef.current?.jumpToMessage(messageIndex), 50);
+          }}
+          onJumpToAttachment={item => {
+            setSelectedViewer(null);
+            chatViewRef.current?.jumpToAttachment(item);
+          }}
+          selection={selection}
+          selectionMode
+          selectedNavigation
+          useDateFilename={settings.dateAttachmentFilenames}
+          chatTitle={chat.chatData?.title}
+          filenameTemplate={settings.attachmentFilenameTemplate}
+          allowLongFilenames={settings.longAttachmentFilenames}
+          attachmentBookmarkingEnabled={settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()}
+          isBookmarked={item => !!chat.activeEntry && bookmarks.isBookmarked(chat.activeEntry, item)}
+          onToggleBookmark={item => chat.activeEntry
+            ? bookmarks.toggle(chat.activeEntry, item)
+            : Promise.resolve()}
+          bookmarkBusy={bookmarks.busy}
         />
       )}
       {deleteToast && (

@@ -8,6 +8,7 @@ import type { MediaState } from '../../types/messenger';
 import type { useSelection } from '../../hooks/useSelection';
 import { downloadSingle, getAttachmentDownloadName } from '../../services/saveAttachments';
 import { MediaFileSize } from '../MediaFileSize';
+import { findNextNavigableIndex } from './mediaViewerNavigation';
 
 interface MediaViewerProps {
   items: SelectableItem[];
@@ -19,6 +20,7 @@ interface MediaViewerProps {
   selection?: ReturnType<typeof useSelection>;
   selectionMode?: boolean;
   reverseNavigation?: boolean;
+  selectedNavigation?: boolean;
   useDateFilename?: boolean;
   chatTitle?: string;
   filenameTemplate?: string;
@@ -84,6 +86,7 @@ export function MediaViewer({
   selection,
   selectionMode = false,
   reverseNavigation = false,
+  selectedNavigation = false,
   useDateFilename = true,
   chatTitle = 'Chat',
   filenameTemplate,
@@ -96,6 +99,7 @@ export function MediaViewer({
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const mediaElementRef = useRef<HTMLMediaElement | null>(null);
   const currentItemRef = useRef<SelectableItem | null>(null);
   const selectionRef = useRef(selection);
@@ -122,6 +126,10 @@ export function MediaViewer({
   closeRef.current = onClose;
 
   useEffect(() => {
+    overlayRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  useEffect(() => {
     if (items.length === 0) {
       closeRef.current();
       return;
@@ -129,26 +137,34 @@ export function MediaViewer({
     setCurrentIndex(index => Math.min(index, items.length - 1));
   }, [items.length]);
 
-  const hasLeft = reverseNavigation
-    ? currentIndex < items.length - 1
-    : currentIndex > 0;
-  const hasRight = reverseNavigation
-    ? currentIndex > 0
-    : currentIndex < items.length - 1;
+  const findNavigableIndex = useCallback((startIndex: number, step: number) => {
+    return findNextNavigableIndex(
+      items,
+      startIndex,
+      step,
+      candidate => !selectedNavigation || !!selection?.isSelected(candidate),
+    );
+  }, [items, selectedNavigation, selection]);
+
+  const leftStep = reverseNavigation ? 1 : -1;
+  const rightStep = -leftStep;
+  const leftIndex = findNavigableIndex(currentIndex, leftStep);
+  const rightIndex = findNavigableIndex(currentIndex, rightStep);
+  const hasLeft = leftIndex >= 0;
+  const hasRight = rightIndex >= 0;
+  const selectedItemCount = selectedNavigation && selection
+    ? items.filter(candidate => selection.isSelected(candidate)).length
+    : 0;
 
   const goLeft = useCallback(() => {
-    setCurrentIndex(index => reverseNavigation
-      ? Math.min(items.length - 1, index + 1)
-      : Math.max(0, index - 1));
+    if (leftIndex >= 0) setCurrentIndex(leftIndex);
     setMenuOpen(false);
-  }, [items.length, reverseNavigation]);
+  }, [leftIndex]);
 
   const goRight = useCallback(() => {
-    setCurrentIndex(index => reverseNavigation
-      ? Math.max(0, index - 1)
-      : Math.min(items.length - 1, index + 1));
+    if (rightIndex >= 0) setCurrentIndex(rightIndex);
     setMenuOpen(false);
-  }, [items.length, reverseNavigation]);
+  }, [rightIndex]);
 
   const handleJump = useCallback(() => {
     if (item) {
@@ -170,7 +186,9 @@ export function MediaViewer({
         }
         return;
       }
-      if ((e.key === ' ' || e.code === 'Space') && selectionModeRef.current) {
+      if (e.key === 'Enter' && selectionModeRef.current) {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest('button, a, input, select, textarea, [contenteditable="true"]')) return;
         const currentItem = currentItemRef.current;
         const currentSelection = selectionRef.current;
         if (currentItem && currentSelection) {
@@ -181,10 +199,8 @@ export function MediaViewer({
         return;
       }
       if (e.key === ' ' || e.code === 'Space') {
-        const target = e.target as HTMLElement | null;
-        const isFocusedControl = !!target?.closest('button, a, input, select, textarea');
         const mediaElement = mediaElementRef.current;
-        if (mediaElement && !isFocusedControl) {
+        if (mediaElement) {
           e.preventDefault();
           e.stopPropagation();
           if (mediaElement.paused) {
@@ -244,13 +260,23 @@ export function MediaViewer({
   })() : '';
 
   return createPortal(
-    <div className="media-viewer-overlay" onClick={(e) => {
-      if (e.target === e.currentTarget) onClose();
-    }}>
+    <div
+      ref={overlayRef}
+      className="media-viewer-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Attachment viewer"
+      tabIndex={-1}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div className="media-viewer-topbar">
         <div className="media-viewer-top-left">
           <div className="media-viewer-counter">
-            {items.length > 0 && `${currentIndex + 1} / ${items.length}`}
+            {items.length > 0 && (selectedNavigation
+              ? `${currentIndex + 1} / ${items.length} · ${selectedItemCount} selected`
+              : `${currentIndex + 1} / ${items.length}`)}
           </div>
           {item && (
             <div className="media-viewer-meta">
@@ -266,7 +292,7 @@ export function MediaViewer({
             <button
               className={`media-viewer-btn media-viewer-select-toggle ${isSelected ? 'selected' : ''}`}
               onClick={() => selection.toggle(item)}
-              title="Select (Space)"
+              title="Select (Enter)"
               aria-label={isSelected ? 'Deselect item' : 'Select item'}
               aria-pressed={isSelected}
             >
@@ -418,7 +444,7 @@ export function MediaViewer({
             key={currentIndex}
             src={url}
             controls
-            autoPlay={!selectionMode}
+            autoPlay
             className="media-viewer-video"
           />
         ) : displayType === 'audio' ? (
@@ -436,7 +462,7 @@ export function MediaViewer({
               ref={mediaElementRef as React.RefObject<HTMLAudioElement>}
               key={currentIndex}
               controls
-              autoPlay={!selectionMode}
+              autoPlay
               src={url}
               className="media-viewer-audio"
             />

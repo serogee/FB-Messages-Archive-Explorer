@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ResolvedAttachment, ResolvedLink, SelectableItem, MediaState, MessengerThread, ChatListEntry } from '../../types/messenger';
-import { MoreHorizontal, X, Check, Image as ImageIcon, Film, Music, FileText, Play, FolderOutput, Archive, Bookmark, BookmarkX, Link as LinkIcon, UserRound } from 'lucide-react';
+import { MoreHorizontal, X, Check, Image as ImageIcon, Film, Music, FileText, Play, FolderOutput, Archive, Bookmark, BookmarkX, Link as LinkIcon, UserRound, Info } from 'lucide-react';
 import { formatFileSize, formatInfoNumber } from '../../services/storage';
 import { saveToFolder, downloadAsZip } from '../../services/saveAttachments';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
@@ -19,6 +19,7 @@ interface SelectionPanelProps {
   mediaState: MediaState;
   selectedItems: SelectableItem[];
   onDeselect: (item: SelectableItem) => void;
+  onOpenViewer: (index: number) => void;
   onClearSelection: () => void;
   useDateFilenames: Settings['dateAttachmentFilenames'];
   filenameTemplate: Settings['attachmentFilenameTemplate'];
@@ -310,6 +311,7 @@ export function SelectionPanel({
   mediaState,
   selectedItems,
   onDeselect,
+  onOpenViewer,
   onClearSelection,
   useDateFilenames,
   filenameTemplate,
@@ -352,7 +354,7 @@ export function SelectionPanel({
       ) : (
         <div className="selection-panel-content">
           <div className="selection-grid">
-            {selectedItems.map(item => {
+            {selectedItems.map((item, index) => {
               if (item.category === 'links') {
                 const hostname = getLinkHostname(item);
                 return (
@@ -377,6 +379,19 @@ export function SelectionPanel({
                         <Bookmark size={15} fill="currentColor" />
                       </span>
                     )}
+                    <button
+                      type="button"
+                      className="gallery-open-viewer-btn"
+                      onClick={event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onOpenViewer(index);
+                      }}
+                      aria-label={`Open ${hostname} in viewer`}
+                      title="Open in viewer"
+                    >
+                      <Info size={15} />
+                    </button>
                   </button>
                 );
               }
@@ -429,6 +444,19 @@ export function SelectionPanel({
                       </div>
                     </>
                   )}
+                  <button
+                    type="button"
+                    className="gallery-open-viewer-btn"
+                    onClick={event => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onOpenViewer(index);
+                    }}
+                    aria-label={`Open ${basename} in viewer`}
+                    title="Open in viewer"
+                  >
+                    <Info size={15} />
+                  </button>
                 </button>
               );
             })}
