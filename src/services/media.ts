@@ -23,6 +23,15 @@ export function getMediaType(filename: string): 'image' | 'video' | 'audio' | 'u
   return 'unknown';
 }
 
+export interface ResolvedMessageMediaItem {
+  media: MediaItem;
+  mediaPath: string;
+  mediaFile: MediaEntry | null;
+  mediaType: 'image' | 'video' | 'audio' | 'unknown';
+  preferredType?: 'image' | 'video' | 'audio';
+  isSticker: boolean;
+}
+
 export function getMediaReferencePath(media: MediaItem): string {
   return String(media?.uri || media?.filename || media?.path || media?.name || '');
 }
@@ -109,6 +118,43 @@ export function getMessageMediaItems(msg: MessengerMessage): MediaItem[] {
     if (seen.has(path)) return false;
     seen.add(path);
     return true;
+  });
+}
+
+export function resolveMessageMediaItems(
+  msg: MessengerMessage,
+  mediaState: MediaState,
+): ResolvedMessageMediaItem[] {
+  const seen = new Set<string>();
+  const items = [
+    ...(msg.photos || []).map(media => ({ media, preferredType: 'image' as const, isSticker: false })),
+    ...(msg.videos || []).map(media => ({ media, preferredType: 'video' as const, isSticker: false })),
+    ...(msg.audio || []).map(media => ({ media, preferredType: 'audio' as const, isSticker: false })),
+    ...(msg.audio_files || []).map(media => ({ media, preferredType: 'audio' as const, isSticker: false })),
+    ...(msg.gifs || []).map(media => ({ media, preferredType: 'image' as const, isSticker: false })),
+    ...(msg.files || []).map(media => ({ media, preferredType: undefined, isSticker: false })),
+    ...(msg.media || []).map(media => ({ media, preferredType: undefined, isSticker: false })),
+    ...(msg.sticker ? [{ media: msg.sticker, preferredType: 'image' as const, isSticker: true }] : []),
+  ].filter(({ media }) => {
+    const mediaPath = getMediaReferencePath(media).toLowerCase();
+    if (!mediaPath || seen.has(mediaPath)) return false;
+    seen.add(mediaPath);
+    return true;
+  });
+
+  return items.map(({ media, preferredType, isSticker }) => {
+    const mediaPath = getMediaReferencePath(media);
+    const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
+    const mediaFile = findMediaFile(mediaState, mediaPath);
+    const detectedType = preferredType || (
+      ext === 'mp4' || ext === 'webm'
+        ? 'video'
+        : mediaFile?.type || getMediaType(mediaPath)
+    );
+    const mediaType = detectedType === 'image' || detectedType === 'video' || detectedType === 'audio'
+      ? detectedType
+      : 'unknown';
+    return { media, preferredType, mediaPath, mediaFile, mediaType, isSticker };
   });
 }
 

@@ -1,16 +1,23 @@
-import React, { memo, useState, useEffect, useRef } from 'react';
+import React, { memo, useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import type { MessengerMessage, MediaState } from '../../types/messenger';
 import { getMessageTimestamp, fixEncoding } from '../../services/parser';
-import { findMediaFile, getMediaReferencePath, getMediaType } from '../../services/media';
+import { findMediaFile, getMediaType, resolveMessageMediaItems } from '../../services/media';
 import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { chatImagePreviewCache, getChatPreviewPixelSize, type ChatImagePreview } from '../../services/chatImagePreviewCache';
 import { chatVideoPosterCache } from '../../services/videoPosterCache';
 import type { TaskSubscription } from '../../services/subscribableTaskQueue';
+import {
+  getCachedMediaDimensions,
+  rememberMediaDimensions,
+  subscribeMediaDimensions,
+  type MediaDimensions,
+} from '../../services/mediaDimensions';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
 import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
 import { ReactionModal } from './ReactionModal';
+import { shouldCompensateHeightChange } from './chatScrollAnchoring';
 import { MediaFileSize } from '../MediaFileSize';
 import { FileText, Image as ImageIcon, Info, Link as LinkIcon, Music2, Pause, Play, Video, Volume2, VolumeX } from 'lucide-react';
 
@@ -26,6 +33,8 @@ const MEDIA_RETENTION_MARGIN_PX = 5_000;
 const MEDIA_PRIORITY_VISIBLE = 0;
 const MEDIA_PRIORITY_PRELOAD = 1;
 const MEDIA_PRIORITY_RETENTION = 2;
+const MAX_SINGLE_MEDIA_HEIGHT = 300;
+const NO_MEDIA_DIMENSIONS = () => null;
 
 interface LazyMediaObserverPair {
   visible: IntersectionObserver;
@@ -94,12 +103,21 @@ function compensateMediaHeightChange(el: Element, oldHeight: number, newHeight: 
     return;
   }
 
-  const scrollDir = container.dataset.scrollDir || 'up';
+  const scrollDir = container.dataset.scrollDir === 'down' ? 'down' : 'up';
   const containerRect = container.getBoundingClientRect();
   const elRect = el.getBoundingClientRect();
-  const isAboveAnchor = scrollDir === 'down'
-    ? elRect.top < containerRect.top
-    : elRect.top < containerRect.bottom;
+  const jumpAnchorOffset = container.dataset.jumpInProgress === 'true'
+    ? Number(container.dataset.jumpAnchorOffset)
+    : Number.NaN;
+  const isAboveAnchor = shouldCompensateHeightChange({
+    direction: scrollDir,
+    elementTop: elRect.top,
+    viewportTop: containerRect.top,
+    viewportBottom: containerRect.bottom,
+    jumpAnchorTop: Number.isFinite(jumpAnchorOffset)
+      ? containerRect.top + jumpAnchorOffset
+      : undefined,
+  });
 
   if (isAboveAnchor) {
     container.scrollTop += newHeight - oldHeight;
@@ -274,6 +292,23 @@ function InlineAudioPlayer({ src }: { src: string }) {
 
 type MediaLoadState = 'dormant' | 'loading' | 'ready' | 'failed';
 
+function getSourceMediaReservationStyle(dimensions: MediaDimensions): React.CSSProperties {
+  const scale = Math.min(1, MAX_SINGLE_MEDIA_HEIGHT / dimensions.height);
+  return {
+    width: Math.max(1, dimensions.width * scale),
+    maxWidth: '100%',
+  };
+}
+
+function getMediaPreviewReservationStyle(
+  dimensions: Pick<ChatImagePreview, 'sourceWidth' | 'sourceHeight'>,
+): React.CSSProperties {
+  return {
+    aspectRatio: `${dimensions.sourceWidth} / ${dimensions.sourceHeight}`,
+    maxHeight: MAX_SINGLE_MEDIA_HEIGHT,
+  };
+}
+
 function MediaLoadingPlaceholder({
   label,
   icon,
@@ -314,13 +349,31 @@ function ChatImageAttachment({
   onFailed: () => void;
 }) {
   if (!url) {
+    if (dimensions && !isSticker) {
+      return (
+        <div
+          className="media-preview media-preview-reserved"
+          style={getMediaPreviewReservationStyle(dimensions)}
+        >
+          {state !== 'failed'
+            ? <MediaLoadingPlaceholder active={state === 'loading'} label="Loading image" icon={<ImageIcon aria-hidden="true" size={24} />} />
+            : <span className="placeholder">[ Image not found ]</span>}
+        </div>
+      );
+    }
     return state !== 'failed'
       ? <MediaLoadingPlaceholder active={state === 'loading'} label={isSticker ? 'Loading sticker' : 'Loading image'} icon={<ImageIcon aria-hidden="true" size={24} />} />
       : <span className="placeholder">[ Image not found ]</span>;
   }
 
   return (
-    <div className={`media-preview${isSticker ? ' sticker-preview' : ''}${state === 'loading' ? ' media-preview-loading' : ''}`} onClick={onActivate} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
+    <div
+      className={`media-preview${isSticker ? ' sticker-preview' : ''}${state === 'loading' ? ' media-preview-loading' : ''}${dimensions && !isSticker ? ' media-preview-reserved' : ''}`}
+      onClick={onActivate}
+      role="button"
+      tabIndex={0}
+      style={{ cursor: 'pointer', ...(dimensions && !isSticker ? getMediaPreviewReservationStyle(dimensions) : {}) }}
+    >
       <img
         src={url}
         alt={isSticker ? 'Sticker' : 'Image'}
@@ -361,7 +414,7 @@ function ChatVideoAttachment({
 
   return (
     <div
-      className={`media-preview${state === 'loading' ? ' media-preview-loading' : ''}`}
+      className={`media-preview${state === 'loading' ? ' media-preview-loading' : ''}${dimensions ? ' media-preview-reserved' : ''}`}
       onClick={onActivate}
       onKeyDown={event => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -370,7 +423,7 @@ function ChatVideoAttachment({
       }}
       role="button"
       tabIndex={0}
-      style={{ cursor: 'pointer' }}
+      style={{ cursor: 'pointer', ...(dimensions ? getMediaPreviewReservationStyle(dimensions) : {}) }}
     >
       <img
         src={url}
@@ -456,6 +509,11 @@ function LazyMedia({
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
   const activateVideo = onMediaClick || (() => openMediaEntryInNewTab(mediaFile));
+  const cachedDimensions = useSyncExternalStore(
+    React.useCallback(listener => subscribeMediaDimensions(mediaFile, listener), [mediaFile]),
+    React.useCallback(() => getCachedMediaDimensions(mediaFile), [mediaFile]),
+    NO_MEDIA_DIMENSIONS,
+  );
 
   // Preload near the viewport, then dehydrate media only after it leaves the
   // larger retention range. The gap between both ranges prevents scroll churn.
@@ -544,10 +602,14 @@ function LazyMedia({
             return;
           }
           hydrated = true;
-          setPreviewDimensions(poster.sourceWidth && poster.sourceHeight ? {
-            sourceWidth: poster.sourceWidth,
-            sourceHeight: poster.sourceHeight,
-          } : null);
+          if (poster.sourceWidth && poster.sourceHeight) {
+            setPreviewDimensions({
+              sourceWidth: poster.sourceWidth,
+              sourceHeight: poster.sourceHeight,
+            });
+          } else {
+            setPreviewDimensions(null);
+          }
           setFileURL(poster.url);
           setLoadState('loading');
         }, loadPriority);
@@ -585,6 +647,10 @@ function LazyMedia({
           if (!canApply(generation)) return;
           hydrated = true;
           finishLoad(generation);
+          rememberMediaDimensions(mediaFile, {
+            width: preview.sourceWidth,
+            height: preview.sourceHeight,
+          });
           setPreviewDimensions(preview);
           setFileURL(preview.url);
           setLoadState('ready');
@@ -593,6 +659,10 @@ function LazyMedia({
           hydrated = true;
           finishLoad(generation);
           // Let the mounted image's load event be the compatibility fallback.
+          rememberMediaDimensions(mediaFile, {
+            width: preview.sourceWidth,
+            height: preview.sourceHeight,
+          });
           setPreviewDimensions(preview);
           setFileURL(preview.url);
           setLoadState('loading');
@@ -697,13 +767,40 @@ function LazyMedia({
     };
   }, []);
 
+  const previewSourceDimensions = previewDimensions ? {
+    width: previewDimensions.sourceWidth,
+    height: previewDimensions.sourceHeight,
+  } : null;
+  const sourceDimensions = previewSourceDimensions || (
+    mediaType === 'image' && !isSticker ? cachedDimensions : null
+  );
+  const attachmentDimensions = sourceDimensions && (!reservedSize || !!fileURL) ? {
+    sourceWidth: sourceDimensions.width,
+    sourceHeight: sourceDimensions.height,
+  } : null;
+  const isVisualMedia = mediaType === 'image' || mediaType === 'video';
+  let wrapperStyle: React.CSSProperties | undefined;
+  let hasExactReservation = false;
+  if (!isGrid && !isSticker) {
+    if (reservedSize && loadState !== 'ready') {
+      hasExactReservation = true;
+      wrapperStyle = {
+        width: reservedSize.width,
+        maxWidth: '100%',
+        aspectRatio: `${reservedSize.width} / ${reservedSize.height}`,
+      };
+    } else if (sourceDimensions) {
+      wrapperStyle = getSourceMediaReservationStyle(sourceDimensions);
+    }
+  }
+
   let content: React.ReactNode;
   if (mediaType === 'image') {
     content = <ChatImageAttachment
       url={fileURL}
       state={loadState}
       isSticker={isSticker}
-      dimensions={previewDimensions}
+      dimensions={attachmentDimensions}
       onActivate={onMediaClick}
       onReady={() => setLoadState('ready')}
       onFailed={() => { setFileURL(null); setLoadState('failed'); }}
@@ -712,7 +809,7 @@ function LazyMedia({
     content = <ChatVideoAttachment
       url={fileURL}
       state={loadState}
-      dimensions={previewDimensions}
+      dimensions={attachmentDimensions}
       onActivate={activateVideo}
       onReady={() => setLoadState('ready')}
       onFailed={() => { setFileURL(null); setLoadState('failed'); }}
@@ -726,12 +823,8 @@ function LazyMedia({
   return (
     <div
       ref={mediaRef as React.RefObject<HTMLDivElement>}
-      className={`lazy-media-wrapper${loadState === 'dormant' ? ' media-dehydrated' : ''}`}
-      style={!isGrid && !fileURL && reservedSize ? {
-        width: reservedSize.width,
-        maxWidth: '100%',
-        aspectRatio: `${reservedSize.width} / ${reservedSize.height}`,
-      } : undefined}
+      className={`lazy-media-wrapper${loadState === 'dormant' ? ' media-dehydrated' : ''}${hasExactReservation ? ' media-slot-reserved' : ''}${isVisualMedia && !isGrid && !isSticker && !wrapperStyle ? ' media-slot-fallback' : ''}`}
+      style={wrapperStyle}
     >
       {content}
     </div>
@@ -759,30 +852,7 @@ export const MessageBubble = memo(function MessageBubble({
   const sender = msg.senderName || msg.sender_name || 'Unknown';
   const rawText = fixEncoding(msg?.text || msg?.content || '').trim();
   const timestamp = getMessageTimestamp(msg) || 0;
-  const seenMediaPaths = new Set<string>();
-  const mediaItems = [
-    ...(msg.photos || []).map(media => ({ media, preferredType: 'image' as const, isSticker: false })),
-    ...(msg.videos || []).map(media => ({ media, preferredType: 'video' as const, isSticker: false })),
-    ...(msg.audio || []).map(media => ({ media, preferredType: 'audio' as const, isSticker: false })),
-    ...(msg.audio_files || []).map(media => ({ media, preferredType: 'audio' as const, isSticker: false })),
-    ...(msg.gifs || []).map(media => ({ media, preferredType: 'image' as const, isSticker: false })),
-    ...(msg.files || []).map(media => ({ media, preferredType: undefined, isSticker: false })),
-    ...(msg.media || []).map(media => ({ media, preferredType: undefined, isSticker: false })),
-    ...(msg.sticker ? [{ media: msg.sticker, preferredType: 'image' as const, isSticker: true }] : []),
-  ].filter(({ media }) => {
-    const mediaPath = getMediaReferencePath(media).toLowerCase();
-    if (!mediaPath || seenMediaPaths.has(mediaPath)) return false;
-    seenMediaPaths.add(mediaPath);
-    return true;
-  });
-
-  const resolvedMediaItems = mediaItems.map(({ media, preferredType, isSticker }) => {
-    const mediaPath = getMediaReferencePath(media);
-    const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
-    const mediaFile = findMediaFile(mediaState, mediaPath);
-    const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
-    return { media, preferredType, mediaPath, mediaFile, mediaType, isSticker };
-  });
+  const resolvedMediaItems = resolveMessageMediaItems(msg, mediaState);
 
   const previewMediaItems = resolvedMediaItems.filter(item => item.mediaType === 'image' || item.mediaType === 'video');
   const otherMediaItems = resolvedMediaItems.filter(item => item.mediaType !== 'image' && item.mediaType !== 'video');

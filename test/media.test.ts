@@ -10,6 +10,7 @@ import {
   getMessageMediaItems,
   isMediaReferenceFound,
   processFacebookStickerReferences,
+  resolveMessageMediaItems,
 } from '../src/services/media';
 import type { MediaEntry, MessengerMessage } from '../src/types/messenger';
 import { createMockDirectoryHandle } from './helpers/mockFileSystem';
@@ -39,6 +40,37 @@ describe('media service', () => {
     } satisfies MessengerMessage;
 
     expect(getMessageMediaItems(msg).map(item => item.uri)).toEqual(['photos/a.jpg', 'videos/b.mp4']);
+  });
+
+  it('resolves rendering media with stable precedence, types, and sticker metadata', () => {
+    const state = createMediaState();
+    const photo: MediaEntry = { type: 'image' };
+    const video: MediaEntry = { type: 'video' };
+    const sticker: MediaEntry = { type: 'image' };
+    addMediaToIndex(state, 'photos/a.jpg', photo);
+    addMediaToIndex(state, 'videos/b.bin', video);
+    addMediaToIndex(state, 'stickers/c.webp', sticker);
+
+    const resolved = resolveMessageMediaItems({
+      sender_name: 'Alice',
+      timestamp_ms: 1,
+      photos: [{ uri: 'photos/a.jpg' }],
+      videos: [{ uri: 'videos/b.bin' }],
+      media: [{ uri: 'photos/a.jpg' }],
+      sticker: { uri: 'stickers/c.webp' },
+    }, state);
+
+    expect(resolved.map(item => ({
+      path: item.mediaPath,
+      type: item.mediaType,
+      preferredType: item.preferredType,
+      isSticker: item.isSticker,
+      entry: item.mediaFile,
+    }))).toEqual([
+      { path: 'photos/a.jpg', type: 'image', preferredType: 'image', isSticker: false, entry: photo },
+      { path: 'videos/b.bin', type: 'video', preferredType: 'video', isSticker: false, entry: video },
+      { path: 'stickers/c.webp', type: 'image', preferredType: 'image', isSticker: true, entry: sticker },
+    ]);
   });
 
   it('categorizes attachment references', () => {
