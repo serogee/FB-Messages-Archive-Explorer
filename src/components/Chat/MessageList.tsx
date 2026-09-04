@@ -3,7 +3,7 @@ import type { MessengerThread, MediaState } from '../../types/messenger';
 import type { Settings } from '../../hooks/useSettings';
 import { isReactionNoticeMessage } from '../../services/reactions';
 import { getMessageTimestamp } from '../../services/parser';
-import { getMessageMediaItems } from '../../services/media';
+import { getMediaReferencePath, getMediaType, getMessageMediaItems } from '../../services/media';
 import { chunkArray } from '../../services/storage';
 import { resolveMessageJumpTarget } from '../../services/messageJump';
 import { MessageBubble } from './MessageBubble';
@@ -53,7 +53,17 @@ function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages
   messages.forEach((msg, localIdx) => {
     if (isReactionNoticeMessage(msg)) return;
     visibleCount++;
-    mediaCount += getMessageMediaItems(msg).length;
+    const mediaItems = getMessageMediaItems(msg);
+    let previewCount = 0;
+    let otherCount = 0;
+    mediaItems.forEach(item => {
+      const mediaType = getMediaType(getMediaReferencePath(item));
+      if (mediaType === 'image' || mediaType === 'video') previewCount++;
+      else otherCount++;
+    });
+    // Preview media renders in two columns, so estimate its rows instead of
+    // charging a complete row for every item. Keep non-preview media unchanged.
+    mediaCount += (previewCount > 1 ? Math.ceil(previewCount / 2) : previewCount) + otherCount;
     const globalIdx = chunkIndex * CHUNK_SIZE + localIdx;
     if (globalIdx === 0) { separatorCount++; return; }
     const prevIdx = findPreviousVisibleIndex(allMessages, globalIdx);

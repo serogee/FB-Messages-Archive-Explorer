@@ -9,7 +9,7 @@ import { escapeHtml } from '../../services/storage';
 import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
 import { ReactionModal } from './ReactionModal';
 import { MediaFileSize } from '../MediaFileSize';
-import { FileText, Info, Link as LinkIcon, Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { FileText, Image as ImageIcon, Info, Link as LinkIcon, Music2, Pause, Play, Video, Volume2, VolumeX } from 'lucide-react';
 
 const lazyMediaLoadCallbacks = new Map<Element, () => void>();
 const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => void>();
@@ -56,6 +56,34 @@ function getSharedLazyMediaVisibilityObserver() {
     }, { threshold: 0 });
   }
   return sharedLazyMediaVisibilityObserver;
+}
+
+function compensateMediaHeightChange(el: Element, oldHeight: number, newHeight: number): void {
+  if (oldHeight === newHeight) return;
+
+  const appContainer = el.closest('.container');
+  if (appContainer?.classList.contains('resizing') || appContainer?.classList.contains('resize-settling')) return;
+
+  const container = el.closest('#chat') as HTMLElement | null;
+  if (!container) return;
+
+  if (container.dataset.isAtBottom === 'true') {
+    container.scrollTop = container.scrollHeight;
+    container.dataset.lastScrollTop = String(container.scrollTop);
+    return;
+  }
+
+  const scrollDir = container.dataset.scrollDir || 'up';
+  const containerRect = container.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const isAboveAnchor = scrollDir === 'down'
+    ? elRect.top < containerRect.top
+    : elRect.top < containerRect.bottom;
+
+  if (isAboveAnchor) {
+    container.scrollTop += newHeight - oldHeight;
+    container.dataset.lastScrollTop = String(container.scrollTop);
+  }
 }
 
 interface MessageBubbleProps {
@@ -240,6 +268,10 @@ function LazyMedia({
     if (!mediaFile) return null;
     return blobCache.get(mediaFile) || mediaFile.url || null;
   });
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>(() => {
+    if (!mediaFile) return 'failed';
+    return 'loading';
+  });
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
   const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
@@ -248,26 +280,45 @@ function LazyMedia({
   // Sharing observers keeps message-heavy chats from allocating one per attachment.
   useEffect(() => {
     let isMounted = true;
-    if (!mediaFile || !mediaFile.handle || fileURL) return;
+    if (!mediaFile) {
+      setFileURL(null);
+      setLoadState('failed');
+      return;
+    }
 
     const cached = blobCache.get(mediaFile);
     if (cached) {
       setFileURL(cached);
+      setLoadState('loading');
       return;
     }
     if (mediaFile.url) {
       blobCache.put(mediaFile, mediaFile.url);
       setFileURL(mediaFile.url);
+      setLoadState('loading');
+      return;
+    }
+    if (!mediaFile.handle) {
+      setFileURL(null);
+      setLoadState('failed');
       return;
     }
 
+    setFileURL(null);
+    setLoadState('loading');
     const el = mediaRef.current;
     if (!el) return;
 
     const observer = getSharedLazyMediaObserver();
     lazyMediaLoadCallbacks.set(el, () => {
       blobCache.getOrCreate(mediaFile).then(url => {
-        if (isMounted && url) setFileURL(url);
+        if (!isMounted) return;
+        if (url) {
+          setFileURL(url);
+          setLoadState('loading');
+        } else {
+          setLoadState('failed');
+        }
       });
     });
     observer.observe(el);
@@ -277,7 +328,7 @@ function LazyMedia({
       observer.unobserve(el);
       lazyMediaLoadCallbacks.delete(el);
     };
-  }, [mediaFile, fileURL]);
+  }, [mediaFile]);
 
   // Compensate for lazy media height changes so the user's scroll anchor stays stable.
   useEffect(() => {
@@ -288,42 +339,17 @@ function LazyMedia({
     lazyMediaResizeCallbacks.set(el, (entry) => {
       const newHeight = entry.borderBoxSize ? entry.borderBoxSize[0].blockSize : entry.contentRect.height;
 
-      const appContainer = el.closest('.container');
-      if (appContainer?.classList.contains('resizing') || appContainer?.classList.contains('resize-settling')) {
+      // Grid cells reserve their final square geometry with aspect-ratio. The
+      // grid changes height once per row, so compensating every child would
+      // apply the same layout change multiple times and push the viewport.
+      if (el.closest('.message-media-grid')) {
         prevHeight.current = newHeight;
         return;
       }
-      
+
       const oldHeight = prevHeight.current;
       if (oldHeight !== null && oldHeight !== newHeight) {
-        const delta = newHeight - oldHeight;
-        const container = el.closest('#chat') as HTMLElement;
-        
-        if (container) {
-          const scrollDir = container.dataset.scrollDir || 'up';
-          const containerRect = container.getBoundingClientRect();
-          const elRect = el.getBoundingClientRect();
-          
-          const isAtBottom = container.dataset.isAtBottom === 'true';
-
-          let isAboveAnchor = false;
-          if (isAtBottom) {
-            container.scrollTop = container.scrollHeight;
-            container.dataset.lastScrollTop = String(container.scrollTop);
-          } else {
-            // Anchor to the top edge while scrolling down and the bottom edge while scrolling up.
-            if (scrollDir === 'down') {
-              if (elRect.top < containerRect.top) isAboveAnchor = true;
-            } else {
-              if (elRect.top < containerRect.bottom) isAboveAnchor = true;
-            }
-
-            if (isAboveAnchor) {
-              container.scrollTop += delta;
-              container.dataset.lastScrollTop = String(container.scrollTop);
-            }
-          }
-        }
+        compensateMediaHeightChange(el, oldHeight, newHeight);
       }
       prevHeight.current = newHeight;
     });
@@ -357,27 +383,62 @@ function LazyMedia({
   }, [mediaType]);
 
   let content: React.ReactNode;
+  const loadingPlaceholder = (label: string, icon: React.ReactNode, audio = false) => (
+    <span
+      className={`placeholder media-loading-placeholder${audio ? ' audio-placeholder' : ''}`}
+      role="status"
+      aria-label={label}
+    >
+      {icon}
+    </span>
+  );
   if (mediaType === 'image') {
     content = fileURL
-      ? <div className={`media-preview${isSticker ? ' sticker-preview' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
-          <img src={fileURL} alt={isSticker ? 'Sticker' : 'Image'} className="preview" />
+      ? <div className={`media-preview${isSticker ? ' sticker-preview' : ''}${loadState === 'loading' ? ' media-preview-loading' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
+          <img
+            src={fileURL}
+            alt={isSticker ? 'Sticker' : 'Image'}
+            className="preview"
+            onLoad={() => setLoadState('ready')}
+            onError={() => {
+              setFileURL(null);
+              setLoadState('failed');
+            }}
+          />
+          {loadState === 'loading' && loadingPlaceholder(isSticker ? 'Loading sticker' : 'Loading image', <ImageIcon aria-hidden="true" size={24} />)}
         </div>
-      : <span className="placeholder">[ Image not found ]</span>;
+      : loadState === 'loading'
+        ? loadingPlaceholder(isSticker ? 'Loading sticker' : 'Loading image', <ImageIcon aria-hidden="true" size={24} />)
+        : <span className="placeholder">[ Image not found ]</span>;
   } else if (mediaType === 'video') {
     content = fileURL
-      ? <div className="media-preview" onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
-          <video controls className="preview-video" onClick={(e) => { e.preventDefault(); onMediaClick?.(); }}>
+      ? <div className={`media-preview${loadState === 'loading' ? ' media-preview-loading' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
+          <video
+            controls
+            className="preview-video"
+            onLoadedData={() => setLoadState('ready')}
+            onError={() => {
+              setFileURL(null);
+              setLoadState('failed');
+            }}
+            onClick={(e) => { e.preventDefault(); onMediaClick?.(); }}
+          >
             <source src={fileURL} type="video/mp4" />
           </video>
+          {loadState === 'loading' && loadingPlaceholder('Loading video', <Video aria-hidden="true" size={24} />)}
         </div>
-      : <span className="placeholder">[ Video not found ]</span>;
+      : loadState === 'loading'
+        ? loadingPlaceholder('Loading video', <Video aria-hidden="true" size={24} />)
+        : <span className="placeholder">[ Video not found ]</span>;
   } else if (mediaType === 'audio') {
     content = fileURL
       ? <div className="media-audio-wrap">
           <InlineAudioPlayer src={fileURL} />
           {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} aria-label="Open audio in viewer" title="Open in viewer"><Info size={15} /></button>}
         </div>
-      : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
+      : loadState === 'loading'
+        ? loadingPlaceholder('Loading audio', <Music2 aria-hidden="true" size={20} />, true)
+        : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
   } else {
     const filename = mediaPath.split('/').pop() || 'File attachment';
     content = mediaFile
@@ -431,6 +492,8 @@ export const MessageBubble = memo(function MessageBubble({
   onLinkClick,
 }: MessageBubbleProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const mediaGridRef = useRef<HTMLDivElement | null>(null);
+  const mediaGridPrevHeight = useRef<number | null>(null);
 
   const sender = msg.senderName || msg.sender_name || 'Unknown';
   const rawText = fixEncoding(msg?.text || msg?.content || '').trim();
@@ -465,6 +528,26 @@ export const MessageBubble = memo(function MessageBubble({
   const hasMediaPreview = previewMediaItems.length > 0;
   const hasMediaGrid = previewMediaItems.length > 1;
   const hasOddMediaGrid = hasMediaGrid && previewMediaItems.length % 2 === 1;
+
+  useEffect(() => {
+    const grid = mediaGridRef.current;
+    if (!grid || !hasMediaGrid) return;
+
+    const observer = getSharedLazyMediaResizeObserver();
+    lazyMediaResizeCallbacks.set(grid, entry => {
+      const newHeight = entry.borderBoxSize ? entry.borderBoxSize[0].blockSize : entry.contentRect.height;
+      const oldHeight = mediaGridPrevHeight.current;
+      if (oldHeight !== null) compensateMediaHeightChange(grid, oldHeight, newHeight);
+      mediaGridPrevHeight.current = newHeight;
+    });
+    observer.observe(grid);
+
+    return () => {
+      observer.unobserve(grid);
+      lazyMediaResizeCallbacks.delete(grid);
+      mediaGridPrevHeight.current = null;
+    };
+  }, [hasMediaGrid]);
 
   const messageLinks = getMessageLinks(msg).map(link => ({
     ...link,
@@ -514,7 +597,7 @@ export const MessageBubble = memo(function MessageBubble({
             )}
 
             {hasMediaGrid ? (
-              <div className="message-media-grid">
+              <div ref={mediaGridRef} className="message-media-grid">
                 {previewMediaItems.map(({ preferredType, mediaPath, mediaFile, isSticker }, i) => (
                   <LazyMedia
                     key={`${mediaPath}:${i}`}
