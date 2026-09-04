@@ -18,8 +18,6 @@ interface ChatViewProps {
   chatData: MessengerThread | null;
   activeEntry: ChatListEntry | null;
   mediaState: MediaState;
-  mediaLoading: boolean;
-  mediaProgress: number;
   msgProgress: number;
   msgStatusText: string;
   chatError: string | null;
@@ -66,8 +64,6 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     chatData,
     activeEntry,
     mediaState,
-    mediaLoading,
-    mediaProgress,
     msgProgress,
     msgStatusText,
     chatError,
@@ -255,13 +251,6 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
             />
           )}
 
-          {mediaLoading && (
-            <div className="media-loading-overlay">
-              <div className="media-loading-card">
-                <ProgressBar value={mediaProgress} label="Loading attachments" />
-              </div>
-            </div>
-          )}
         </>
       </div>
 

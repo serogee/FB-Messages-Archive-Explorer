@@ -178,6 +178,7 @@ export default function App() {
   }, [archive]);
 
   const handleSelectChat = useCallback(async (entry: ChatListEntry) => {
+    setGalleryOpen(false);
     if (entry.folderSize <= 0 || (entry._messengerExport && !entry._sizeIncludesMedia)) {
       void archive.computeAndUpdateFolderSize(entry).catch(error => {
         console.error('Failed to calculate chat size:', error);
@@ -328,8 +329,6 @@ export default function App() {
         chatData={chat.chatData}
         activeEntry={chat.activeEntry}
         mediaState={chat.mediaState}
-        mediaLoading={chat.mediaLoading}
-        mediaProgress={chat.mediaProgress}
         msgProgress={chat.msgProgress}
         msgStatusText={chat.msgStatusText}
         chatError={chat.error}

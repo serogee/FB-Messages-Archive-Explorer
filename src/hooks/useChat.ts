@@ -11,8 +11,6 @@ import { getParticipantNames } from '../services/parser';
 export function useChat(): {
   chatData: MessengerThread | null;
   mediaState: MediaState;
-  mediaLoading: boolean;
-  mediaProgress: number;  // 0–1
   msgProgress: number;    // 0–1
   msgStatusText: string;
   error: string | null;
@@ -25,8 +23,6 @@ export function useChat(): {
 } {
   const [chatData, setChatData] = useState<MessengerThread | null>(null);
   const [mediaState, setMediaState] = useState<MediaState>(createMediaState);
-  const [mediaLoading, setMediaLoading] = useState(false);
-  const [mediaProgress, setMediaProgress] = useState(0);
   const [msgProgress, setMsgProgress] = useState(0);
   const [msgStatusText, setMsgStatusText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +46,6 @@ export function useChat(): {
     setLoading(true);
     setMsgProgress(0);
     setMsgStatusText("");
-    setMediaProgress(0);
 
     if (mediaAbortControllerRef.current) {
       mediaAbortControllerRef.current.abort();
@@ -66,49 +61,46 @@ export function useChat(): {
       });
 
       const newMediaState = createMediaState();
-      setMediaLoading(true);
-      setMediaProgress(0);
-      if (entry._messengerExport) {
-        processMessengerExportMedia(entry.dirHandle, newMediaState, (done, total) => {
-          setMediaProgress(total > 0 ? done / total : 1);
-        }, abortCtrl.signal)
-          .then(() => {
-            if (abortCtrl.signal.aborted) return;
-            setMediaState({ ...newMediaState });
-            setMediaLoading(false);
-            setMediaProgress(1);
-          })
-          .catch(() => {
-            if (abortCtrl.signal.aborted) return;
-            setMediaLoading(false);
-            setMediaProgress(1);
-          });
-      } else {
-        processMediaFromDirectory(entry.dirHandle, newMediaState, (done, total) => {
-          setMediaProgress(total > 0 ? done / total : 1);
-        }, abortCtrl.signal)
-          .then(() => {
-            if (abortCtrl.signal.aborted) return;
-            setMediaState({ ...newMediaState });
-            setMediaLoading(false);
-            setMediaProgress(1);
-          })
-          .catch(() => {
-            if (abortCtrl.signal.aborted) return;
-            setMediaLoading(false);
-            setMediaProgress(1);
-          });
-      }
+      let messageProgress = 0;
+      let attachmentProgress = 0;
+      let attachmentLoadingComplete = false;
+      const updateCombinedProgress = () => {
+        if (!abortCtrl.signal.aborted) {
+          setMsgProgress((messageProgress + attachmentProgress) / 2);
+        }
+      };
+      const updateAttachmentProgress = (done: number, total: number) => {
+        attachmentProgress = total > 0 ? done / total : 1;
+        updateCombinedProgress();
+      };
+      const attachmentTask = (entry._messengerExport
+        ? processMessengerExportMedia(entry.dirHandle, newMediaState, updateAttachmentProgress, abortCtrl.signal)
+        : processMediaFromDirectory(entry.dirHandle, newMediaState, updateAttachmentProgress, abortCtrl.signal))
+        .then(() => {
+          if (abortCtrl.signal.aborted) return;
+          attachmentProgress = 1;
+          updateCombinedProgress();
+          setMediaState({ ...newMediaState });
+        })
+        .catch(() => { /* Media indexing is best-effort; messages remain usable. */ })
+        .finally(() => {
+          attachmentLoadingComplete = true;
+        });
+
+      const updateMessageProgress = (progress: number, statusText: string) => {
+        if (abortCtrl.signal.aborted) return;
+        messageProgress = progress;
+        updateCombinedProgress();
+        setMsgStatusText(statusText);
+      };
 
       const data = entry._messengerExport
-        ? await loadMessengerExportChat(entry.dirHandle, entry._jsonFileName!, (progress, statusText) => {
-            setMsgProgress(progress);
-            setMsgStatusText(statusText);
-          }, abortCtrl.signal)
-        : await loadChatMessages(entry.dirHandle, (progress, statusText) => {
-            setMsgProgress(progress);
-            setMsgStatusText(statusText);
-          }, abortCtrl.signal);
+        ? await loadMessengerExportChat(entry.dirHandle, entry._jsonFileName!, updateMessageProgress, abortCtrl.signal)
+        : await loadChatMessages(entry.dirHandle, updateMessageProgress, abortCtrl.signal);
+
+      messageProgress = 1;
+      updateCombinedProgress();
+      if (!attachmentLoadingComplete) setMsgStatusText("Loading attachments");
 
       if (!entry._messengerExport && messagesRootHandle && !abortCtrl.signal.aborted) {
         await processFacebookStickerReferences(
@@ -122,7 +114,9 @@ export function useChat(): {
       
       if (abortCtrl.signal.aborted) return;
 
-      setMsgProgress(0.95);
+      await attachmentTask;
+      if (abortCtrl.signal.aborted) return;
+
       setMsgStatusText("Loading messages...");
       await new Promise(r => setTimeout(r, 10));
 
@@ -174,14 +168,12 @@ export function useChat(): {
     setActiveEntry(null);
     setError(null);
     setLoading(false);
-    setMediaLoading(false);
-    setMediaProgress(0);
     setMsgProgress(0);
     setMsgStatusText("");
   }, []);
 
   return {
-    chatData, mediaState, mediaLoading, mediaProgress, msgProgress, msgStatusText, error,
+    chatData, mediaState, msgProgress, msgStatusText, error,
     loading, selectedPerspective, setSelectedPerspective, loadChat, clearChat, activeEntry,
   };
 }
