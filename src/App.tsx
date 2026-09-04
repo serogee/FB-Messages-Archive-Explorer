@@ -329,8 +329,6 @@ export default function App() {
         chatData={chat.chatData}
         activeEntry={chat.activeEntry}
         mediaState={chat.mediaState}
-        mediaLoading={chat.mediaLoading}
-        mediaProgress={chat.mediaProgress}
         msgProgress={chat.msgProgress}
         msgStatusText={chat.msgStatusText}
         chatError={chat.error}
