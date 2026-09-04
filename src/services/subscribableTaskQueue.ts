@@ -5,11 +5,22 @@ export type TaskCompletion<Value> =
 
 type Subscriber<Value> = (completion: TaskCompletion<Value>) => void;
 
+export interface TaskSubscription {
+  (): void;
+  setPriority: (priority: number) => void;
+}
+
+export function createNoopTaskSubscription(): TaskSubscription {
+  const subscription = (() => {}) as TaskSubscription;
+  subscription.setPriority = () => {};
+  return subscription;
+}
+
 interface QueuedTask<Key, Value> {
   key: Key;
   state: 'queued' | 'running';
   controller: AbortController;
-  subscribers: Set<Subscriber<Value>>;
+  subscribers: Map<Subscriber<Value>, number>;
 }
 
 /**
@@ -32,7 +43,7 @@ export class SubscribableTaskQueue<Key, Value> {
     this.worker = worker;
   }
 
-  subscribe(key: Key, subscriber: Subscriber<Value>): () => void {
+  subscribe(key: Key, subscriber: Subscriber<Value>, priority = 0): TaskSubscription {
     let task = this.tasks.get(key);
     if (task?.controller.signal.aborted) task = undefined;
 
@@ -41,7 +52,7 @@ export class SubscribableTaskQueue<Key, Value> {
         key,
         state: 'queued',
         controller: new AbortController(),
-        subscribers: new Set(),
+        subscribers: new Map(),
       };
       this.tasks.set(key, task);
       this.queue.push(task);
@@ -49,11 +60,11 @@ export class SubscribableTaskQueue<Key, Value> {
       this.promote(task);
     }
 
-    task.subscribers.add(subscriber);
+    task.subscribers.set(subscriber, priority);
     this.drain();
 
     let subscribed = true;
-    return () => {
+    const unsubscribe = (() => {
       if (!subscribed) return;
       subscribed = false;
       task.subscribers.delete(subscriber);
@@ -62,7 +73,12 @@ export class SubscribableTaskQueue<Key, Value> {
       if (task.state === 'queued') this.removeQueued(task);
       task.controller.abort();
       if (this.tasks.get(key) === task) this.tasks.delete(key);
+    }) as TaskSubscription;
+    unsubscribe.setPriority = nextPriority => {
+      if (!subscribed || task.state !== 'queued') return;
+      task.subscribers.set(subscriber, nextPriority);
     };
+    return unsubscribe;
   }
 
   clear(): void {
@@ -90,7 +106,7 @@ export class SubscribableTaskQueue<Key, Value> {
 
   private drain(): void {
     while (this.activeTasks < this.maxConcurrentTasks) {
-      const task = this.queue.shift();
+      const task = this.takeNextQueuedTask();
       if (!task) return;
       if (task.subscribers.size === 0 || task.controller.signal.aborted) continue;
 
@@ -98,6 +114,25 @@ export class SubscribableTaskQueue<Key, Value> {
       this.activeTasks++;
       void this.run(task);
     }
+  }
+
+  private takeNextQueuedTask(): QueuedTask<Key, Value> | undefined {
+    let selectedIndex = -1;
+    let selectedPriority = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < this.queue.length; index++) {
+      const task = this.queue[index];
+      if (task.subscribers.size === 0 || task.controller.signal.aborted) continue;
+      const priority = Math.min(...task.subscribers.values());
+      if (priority < selectedPriority) {
+        selectedIndex = index;
+        selectedPriority = priority;
+      }
+    }
+    if (selectedIndex < 0) {
+      this.queue.length = 0;
+      return undefined;
+    }
+    return this.queue.splice(selectedIndex, 1)[0];
   }
 
   private async run(task: QueuedTask<Key, Value>): Promise<void> {
@@ -120,7 +155,7 @@ export class SubscribableTaskQueue<Key, Value> {
   }
 
   private notify(task: QueuedTask<Key, Value>, completion: TaskCompletion<Value>): void {
-    const subscribers = [...task.subscribers];
+    const subscribers = [...task.subscribers.keys()];
     task.subscribers.clear();
     for (const subscriber of subscribers) {
       try {

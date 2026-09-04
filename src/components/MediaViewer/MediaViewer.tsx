@@ -109,6 +109,14 @@ export function MediaViewer({
   const bookmarkingEnabledRef = useRef(attachmentBookmarkingEnabled);
   const closeRef = useRef(onClose);
   const linkCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeViewer = useCallback(() => {
+    const media = mediaElementRef.current;
+    if (media) {
+      media.pause();
+      media.removeAttribute('src');
+    }
+    onClose();
+  }, [onClose]);
 
   const item = items[currentIndex] || null;
   const attachment = item && item.category !== 'links' ? item : null;
@@ -125,7 +133,7 @@ export function MediaViewer({
   selectionModeRef.current = selectionMode;
   bookmarkToggleRef.current = onToggleBookmark;
   bookmarkingEnabledRef.current = attachmentBookmarkingEnabled;
-  closeRef.current = onClose;
+  closeRef.current = closeViewer;
 
   useEffect(() => {
     overlayRef.current?.focus({ preventScroll: true });
@@ -182,9 +190,9 @@ export function MediaViewer({
   const handleJump = useCallback(() => {
     if (item) {
       onJumpToMessage(item.messageIndex);
-      onClose();
+      closeViewer();
     }
-  }, [item, onJumpToMessage, onClose]);
+  }, [item, onJumpToMessage, closeViewer]);
 
   const handleCopyLink = useCallback(async () => {
     if (!link) return;
@@ -252,7 +260,7 @@ export function MediaViewer({
         }
         return;
       }
-      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key === 'Escape') { closeViewer(); return; }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         e.stopPropagation();
@@ -268,7 +276,7 @@ export function MediaViewer({
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [onClose, hasLeft, hasRight, goLeft, goRight]);
+  }, [closeViewer, hasLeft, hasRight, goLeft, goRight]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -296,7 +304,7 @@ export function MediaViewer({
       aria-label="Attachment viewer"
       tabIndex={-1}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) closeViewer();
       }}
     >
       <div className="media-viewer-topbar">
@@ -402,7 +410,7 @@ export function MediaViewer({
           </div>
           <button
             className="media-viewer-btn media-viewer-close-btn"
-            onClick={onClose}
+            onClick={closeViewer}
             aria-label="Close"
             title="Close"
           >

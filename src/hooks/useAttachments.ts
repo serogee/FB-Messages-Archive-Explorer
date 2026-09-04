@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink } from '../types/messenger';
 import { getMessageAttachmentReferences, findMediaFile } from '../services/media';
 import { getMessageTimestamp } from '../services/parser';
@@ -89,16 +89,22 @@ export function useAttachments(
     return groups;
   }, [all]);
 
-  const getFiltered = (category: AttachmentCategory): ResolvedAttachment[] => {
+  const getFiltered = useCallback((category: AttachmentCategory): ResolvedAttachment[] => {
     return category === 'all' ? all : byCategory[category];
-  };
+  }, [all, byCategory]);
 
-  const findIndex = (mediaPath: string, messageIndex: number): number => {
-    const pathLower = mediaPath.toLowerCase();
-    return all.findIndex(
-      a => a.mediaPath.toLowerCase() === pathLower && a.messageIndex === messageIndex
-    );
-  };
+  const attachmentIndex = useMemo(() => {
+    const index = new Map<string, number>();
+    for (let itemIndex = 0; itemIndex < all.length; itemIndex++) {
+      const attachment = all[itemIndex];
+      index.set(`${attachment.messageIndex}:${attachment.mediaPath.toLowerCase()}`, itemIndex);
+    }
+    return index;
+  }, [all]);
 
-  return { all, byCategory, getFiltered, findIndex };
+  const findIndex = useCallback((mediaPath: string, messageIndex: number): number => (
+    attachmentIndex.get(`${messageIndex}:${mediaPath.toLowerCase()}`) ?? -1
+  ), [attachmentIndex]);
+
+  return useMemo(() => ({ all, byCategory, getFiltered, findIndex }), [all, byCategory, findIndex, getFiltered]);
 }

@@ -44,6 +44,46 @@ describe('subscribable task queue', () => {
     expect(started.slice(0, 2)).toEqual(['blocker', 'promoted']);
   });
 
+  it('starts visible work before preload and retention work', async () => {
+    let releaseBlocker = () => {};
+    const started: string[] = [];
+    const queue = new SubscribableTaskQueue<string, string>(1, async key => {
+      started.push(key);
+      if (key === 'blocker') await new Promise<void>(resolve => { releaseBlocker = resolve; });
+      return key;
+    });
+
+    queue.subscribe('blocker', () => {});
+    queue.subscribe('retention', () => {}, 2);
+    queue.subscribe('preload', () => {}, 1);
+    queue.subscribe('visible', () => {}, 0);
+    releaseBlocker();
+    await flush();
+    await flush();
+
+    expect(started).toEqual(['blocker', 'visible', 'preload', 'retention']);
+  });
+
+  it('moves unfinished retention work behind nearby work without restarting it', async () => {
+    let releaseBlocker = () => {};
+    const started: string[] = [];
+    const queue = new SubscribableTaskQueue<string, string>(1, async key => {
+      started.push(key);
+      if (key === 'blocker') await new Promise<void>(resolve => { releaseBlocker = resolve; });
+      return key;
+    });
+
+    queue.subscribe('blocker', () => {});
+    const retained = queue.subscribe('retained', () => {}, 1);
+    queue.subscribe('nearby', () => {}, 1);
+    retained.setPriority(2);
+    releaseBlocker();
+    await flush();
+    await flush();
+
+    expect(started).toEqual(['blocker', 'nearby', 'retained']);
+  });
+
   it('keeps shared work alive until the last subscriber leaves', async () => {
     let finish = (_value: string) => {};
     const worker = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));

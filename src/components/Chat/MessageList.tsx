@@ -1,19 +1,37 @@
 import React, { useRef, useImperativeHandle, forwardRef, useCallback } from 'react';
-import type { MessengerThread, MediaState } from '../../types/messenger';
+import type { MediaEntry, MessengerThread, MediaState } from '../../types/messenger';
 import type { Settings } from '../../hooks/useSettings';
 import { isReactionNoticeMessage } from '../../services/reactions';
 import { getMessageTimestamp } from '../../services/parser';
-import { getMediaReferencePath, getMediaType, getMessageMediaItems } from '../../services/media';
+import { getMediaReferencePath, getMediaType, getMessageMediaItems, resolveMessageMediaItems } from '../../services/media';
+import { scanMediaDimensions } from '../../services/mediaDimensions';
 import { chunkArray } from '../../services/storage';
 import { resolveMessageJumpTarget } from '../../services/messageJump';
 import { MessageBubble } from './MessageBubble';
+import {
+  captureChatScrollAnchor,
+  hasPendingMediaBeforeJumpTarget,
+  prepareChatScrollAnchorForJump,
+  recordChatScroll,
+  resetChatScrollAnchor,
+  stabilizeChatScrollAnchor,
+} from './chatScrollAnchoring';
 
 const CHUNK_SIZE = 50;
 const CHUNK_ESTIMATED_MESSAGE_HEIGHT = 58;
 const CHUNK_ESTIMATED_MEDIA_HEIGHT = 150;
 const CHUNK_ESTIMATED_SEPARATOR_HEIGHT = 34;
+const CHUNK_PRELOAD_MARGIN_PX = 2_000;
 const TIME_GAP_MS = 10 * 60 * 1000;
 const JUMP_HIGHLIGHT_SCROLL_THRESHOLD = 24;
+const JUMP_SETTLING_CHECK_MS = 250;
+const JUMP_SETTLING_QUIET_MS = 350;
+const JUMP_SETTLING_MAX_MS = 8_000;
+const CHAT_OPENING_CHECK_MS = 50;
+const CHAT_OPENING_QUIET_MS = 150;
+const CHAT_OPENING_MAX_MS = 8_000;
+const CHAT_OPENING_MEDIA_MARGIN_PX = 2_000;
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
 type Messages = MessengerThread['messages'];
 
@@ -94,6 +112,23 @@ function formatSeparatorDate(ts: number): string {
   });
 }
 
+function getChunkDimensionEntries(messages: Messages, mediaState: MediaState): MediaEntry[] {
+  const entries = new Set<MediaEntry>();
+  for (const message of messages) {
+    const previewItems = resolveMessageMediaItems(message, mediaState)
+      .filter(item => item.mediaType === 'image' || item.mediaType === 'video');
+    if (previewItems.length !== 1) continue;
+    const item = previewItems[0];
+    if (item.mediaType === 'image' && !item.isSticker && item.mediaFile) entries.add(item.mediaFile);
+  }
+  return [...entries];
+}
+
+async function waitForDimensionPreflight(entries: readonly MediaEntry[], priority: number): Promise<void> {
+  if (entries.length === 0) return;
+  await scanMediaDimensions(entries, priority);
+}
+
 interface MessageChunkProps {
   chunkIndex: number;
   messages: Messages;
@@ -107,7 +142,9 @@ interface MessageChunkProps {
   onMediaClick?: (mediaPath: string, msgIndex: number) => void;
   onLinkClick?: (url: string, msgIndex: number) => void;
   forceRender?: boolean;
+  dimensionPriority: number;
   onRendered: (chunkIndex: number) => void;
+  onHeightMeasured: (chunkIndex: number, height: number) => void;
 }
 
 const MessageChunk = React.memo(function MessageChunk({
@@ -123,64 +160,91 @@ const MessageChunk = React.memo(function MessageChunk({
   onMediaClick,
   onLinkClick,
   forceRender,
+  dimensionPriority,
   onRendered,
+  onHeightMeasured,
 }: MessageChunkProps) {
   const chunkRef = useRef<HTMLDivElement>(null);
-  const [rendered, setRendered] = React.useState(!!forceRender);
-  const shouldRender = rendered || !!forceRender;
+  const [rendered, setRendered] = React.useState(false);
+  const preparationRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const shouldRender = rendered;
+  const dimensionEntries = React.useMemo(
+    () => getChunkDimensionEntries(messages, mediaState),
+    [mediaState, messages],
+  );
+
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const prepareAndRender = React.useCallback((priority = dimensionPriority): Promise<void> => {
+    if (rendered) return Promise.resolve();
+    if (preparationRef.current) {
+      // A visible or jump-target chunk can promote reads that started as preload work.
+      void scanMediaDimensions(dimensionEntries, priority);
+      return preparationRef.current;
+    }
+    const preparation = waitForDimensionPreflight(dimensionEntries, priority)
+      .then(() => {
+        if (mountedRef.current) {
+          const container = chatContainerRef.current;
+          // The chunk itself is about to change height, so it is only an
+          // exclusion boundary; anchoring chooses stable content in the viewport.
+          if (container) captureChatScrollAnchor(container, false, chunkRef.current);
+          setRendered(true);
+        }
+      });
+    preparationRef.current = preparation;
+    return preparation;
+  }, [chatContainerRef, dimensionEntries, dimensionPriority, rendered]);
+
+  React.useEffect(() => {
+    if (forceRender) void prepareAndRender();
+  }, [forceRender, prepareAndRender]);
 
   React.useEffect(() => {
     const el = chunkRef.current;
     const container = chatContainerRef.current;
     if (!el || !container || shouldRender) return;
 
-    const observer = new IntersectionObserver(
+    const preloadObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach(entry => {
-          if (entry.isIntersecting && !rendered) {
-            setRendered(true);
-          }
+          if (entry.isIntersecting && !rendered) void prepareAndRender();
         });
       },
-      { root: container, threshold: 0.01, rootMargin: '200px' }
+      { root: container, threshold: 0.01, rootMargin: `${CHUNK_PRELOAD_MARGIN_PX}px 0px` }
+    );
+    const visibleObserver = new IntersectionObserver(
+      entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting && !rendered) void prepareAndRender(0);
+        });
+      },
+      { root: container, threshold: 0.01 },
     );
 
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [rendered, shouldRender, chatContainerRef]);
+    preloadObserver.observe(el);
+    visibleObserver.observe(el);
+    return () => {
+      preloadObserver.disconnect();
+      visibleObserver.disconnect();
+    };
+  }, [rendered, shouldRender, chatContainerRef, prepareAndRender]);
 
   React.useLayoutEffect(() => {
     if (shouldRender && chunkRef.current && chatContainerRef.current) {
-      if (!rendered) setRendered(true);
       const actualHeight = chunkRef.current.offsetHeight;
-      const delta = actualHeight - estimatedHeight;
-      if (delta !== 0) {
-        const container = chatContainerRef.current;
-        const scrollDir = container.dataset.scrollDir || 'up';
-        const chunkRect = chunkRef.current.getBoundingClientRect();
-        const containerRect = container.getBoundingClientRect();
-        
-        const isAtBottom = container.dataset.isAtBottom === 'true';
-        
-        let isAboveAnchor = false;
-        if (isAtBottom) {
-          container.scrollTop = container.scrollHeight;
-          container.dataset.lastScrollTop = String(container.scrollTop);
-        } else {
-          if (scrollDir === 'down') {
-            if (chunkRect.top < containerRect.top) isAboveAnchor = true;
-          } else {
-            if (chunkRect.top < containerRect.bottom) isAboveAnchor = true;
-          }
-          if (isAboveAnchor) {
-            container.scrollTop += delta;
-            container.dataset.lastScrollTop = String(container.scrollTop);
-          }
-        }
-      }
+      const container = chatContainerRef.current;
+      onHeightMeasured(chunkIndex, actualHeight);
+      stabilizeChatScrollAnchor(container);
       onRendered(chunkIndex);
     }
-  }, [rendered, shouldRender, estimatedHeight, chatContainerRef, chunkIndex, onRendered]);
+  }, [rendered, shouldRender, chatContainerRef, chunkIndex, onHeightMeasured, onRendered]);
 
 
 
@@ -192,6 +256,7 @@ const MessageChunk = React.memo(function MessageChunk({
         data-chunk-index={chunkIndex}
         data-start-msg-index={chunkIndex * CHUNK_SIZE}
         data-end-msg-index={Math.min(allMessages.length - 1, (chunkIndex + 1) * CHUNK_SIZE - 1)}
+        data-rendered="false"
         style={{ minHeight: estimatedHeight }}
       />
     );
@@ -271,6 +336,7 @@ const MessageChunk = React.memo(function MessageChunk({
       data-chunk-index={chunkIndex}
       data-start-msg-index={chunkIndex * CHUNK_SIZE}
       data-end-msg-index={Math.min(allMessages.length - 1, (chunkIndex + 1) * CHUNK_SIZE - 1)}
+      data-rendered="true"
     >
       {items}
     </div>
@@ -284,6 +350,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jumpSettlingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightedMessageRef = useRef<HTMLElement | null>(null);
   const highlightScrollTopRef = useRef<number | null>(null);
   const jumpRequestIdRef = useRef(0);
@@ -292,6 +359,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     resolve: (rendered: boolean) => void;
   } | null>(null);
   const [forcedChunkIndex, setForcedChunkIndex] = React.useState<number | null>(null);
+  const [readyChat, setReadyChat] = React.useState<MessengerThread | null>(null);
 
   const cancelPendingChunkRender = useCallback(() => {
     const pending = pendingChunkRenderRef.current;
@@ -324,27 +392,92 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     highlightScrollTopRef.current = null;
   }, []);
 
+  const clearJumpSettling = useCallback(() => {
+    if (jumpSettlingTimerRef.current) {
+      clearTimeout(jumpSettlingTimerRef.current);
+      jumpSettlingTimerRef.current = null;
+    }
+    const container = chatContainerRef.current;
+    if (!container) return;
+    const wasSettling = container.dataset.jumpInProgress === 'true';
+    delete container.dataset.jumpInProgress;
+    delete container.dataset.jumpAnchorOffset;
+    delete container.dataset.jumpTargetIndex;
+    if (wasSettling) resetChatScrollAnchor(container);
+  }, []);
+
+  const beginJumpSettling = useCallback((container: HTMLDivElement, targetIndex: number, anchorOffset: number) => {
+    clearJumpSettling();
+    container.dataset.jumpInProgress = 'true';
+    container.dataset.jumpAnchorOffset = String(anchorOffset);
+    container.dataset.jumpTargetIndex = String(targetIndex);
+    resetChatScrollAnchor(container);
+    const deadline = Date.now() + JUMP_SETTLING_MAX_MS;
+
+    const checkSettling = () => {
+      if (container !== chatContainerRef.current || container.dataset.jumpInProgress !== 'true') {
+        jumpSettlingTimerRef.current = null;
+        return;
+      }
+      if (hasPendingMediaBeforeJumpTarget(container) && Date.now() < deadline) {
+        jumpSettlingTimerRef.current = setTimeout(checkSettling, JUMP_SETTLING_CHECK_MS);
+        return;
+      }
+      delete container.dataset.jumpInProgress;
+      delete container.dataset.jumpAnchorOffset;
+      delete container.dataset.jumpTargetIndex;
+      resetChatScrollAnchor(container);
+      jumpSettlingTimerRef.current = null;
+    };
+
+    jumpSettlingTimerRef.current = setTimeout(checkSettling, JUMP_SETTLING_QUIET_MS);
+  }, [clearJumpSettling]);
+
+  const handleJumpKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (SCROLL_KEYS.has(event.key)) clearJumpSettling();
+  }, [clearJumpSettling]);
+
   useImperativeHandle(ref, () => ({
     jumpToMessage: async (index: number) => {
       const container = chatContainerRef.current;
       if (!container) return;
+      if (chatData) setReadyChat(chatData);
       clearJumpHighlight();
+      clearJumpSettling();
       const requestId = ++jumpRequestIdRef.current;
       cancelPendingChunkRender();
       const findMessage = () => (
         container.querySelector(`.message[data-msg-index="${index}"]`) as HTMLElement | null
       );
+      const isCurrent = () => (
+        requestId === jumpRequestIdRef.current && container === chatContainerRef.current
+      );
       const chunkIndex = Math.floor(index / CHUNK_SIZE);
+      const dimensionEntries = chatData
+        ? getChunkDimensionEntries(
+            chatData.messages.slice(chunkIndex * CHUNK_SIZE, (chunkIndex + 1) * CHUNK_SIZE),
+            mediaState,
+          )
+        : [];
+      if (dimensionEntries.length > 0) {
+        await scanMediaDimensions(dimensionEntries, 0);
+        if (!isCurrent()) return;
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (!isCurrent()) return;
+      }
+      prepareChatScrollAnchorForJump(container);
 
       const msgEl = await resolveMessageJumpTarget({
         findMessage,
-        isCurrent: () => requestId === jumpRequestIdRef.current && container === chatContainerRef.current,
+        isCurrent,
         renderChunk: () => {
           const chunkEl = container.querySelector(
             `.message-chunk[data-chunk-index="${chunkIndex}"]`
           ) as HTMLElement | null;
           if (!chunkEl) return Promise.resolve(false);
           chunkEl.scrollIntoView({ block: 'start' });
+          container.dataset.isAtBottom = 'false';
+          container.dataset.lastScrollTop = String(container.scrollTop);
           return renderChunk(chunkIndex);
         },
       });
@@ -353,6 +486,14 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
         const containerRect = container.getBoundingClientRect();
         const elRect = msgEl.getBoundingClientRect();
         container.scrollTop += elRect.top - containerRect.top - 120;
+        container.dataset.lastScrollTop = String(container.scrollTop);
+        container.dataset.isAtBottom = String(
+          Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 20,
+        );
+
+        const landedContainerRect = container.getBoundingClientRect();
+        const landedMessageRect = msgEl.getBoundingClientRect();
+        beginJumpSettling(container, index, landedMessageRect.top - landedContainerRect.top);
 
         msgEl.classList.add('highlight-target', 'temporary-highlight');
         highlightedMessageRef.current = msgEl;
@@ -367,10 +508,14 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     scrollToBottom: () => {
       const container = chatContainerRef.current;
       if (container) {
+        if (chatData) setReadyChat(chatData);
+        clearJumpSettling();
+        container.dataset.isAtBottom = 'true';
         container.scrollTop = container.scrollHeight;
+        resetChatScrollAnchor(container);
       }
     },
-  }), [cancelPendingChunkRender, clearJumpHighlight, renderChunk]);
+  }), [beginJumpSettling, cancelPendingChunkRender, chatData, clearJumpHighlight, clearJumpSettling, mediaState, renderChunk]);
 
   const handleScroll = useCallback(() => {
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
@@ -379,10 +524,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     const container = chatContainerRef.current;
     if (container) {
       const st = container.scrollTop;
-      const lastSt = Number(container.dataset.lastScrollTop || st);
-      if (st > lastSt) container.dataset.scrollDir = 'down';
-      else if (st < lastSt) container.dataset.scrollDir = 'up';
-      container.dataset.lastScrollTop = String(st);
+      recordChatScroll(container);
       
       const isAtBottom = Math.abs(container.scrollHeight - st - container.clientHeight) < 20;
       container.dataset.isAtBottom = String(isAtBottom);
@@ -402,49 +544,142 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     jumpRequestIdRef.current++;
     cancelPendingChunkRender();
     clearJumpHighlight();
+    clearJumpSettling();
     setForcedChunkIndex(null);
     if (chatData && chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
       chatContainerRef.current.dataset.isAtBottom = 'true';
+      resetChatScrollAnchor(chatContainerRef.current);
     }
-  }, [chatData, cancelPendingChunkRender, clearJumpHighlight]);
+  }, [chatData, cancelPendingChunkRender, clearJumpHighlight, clearJumpSettling]);
 
   React.useEffect(() => () => {
     jumpRequestIdRef.current++;
     cancelPendingChunkRender();
     clearJumpHighlight();
+    clearJumpSettling();
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
-  }, [cancelPendingChunkRender, clearJumpHighlight]);
+  }, [cancelPendingChunkRender, clearJumpHighlight, clearJumpSettling]);
 
   const { chunks, chunkHeights } = React.useMemo(
     () => chatData ? getChunksAndHeights(chatData) : { chunks: [], chunkHeights: [] },
     [chatData]
   );
 
+  const opening = !!chatData && readyChat !== chatData;
+
+  React.useEffect(() => {
+    if (!chatData || readyChat === chatData) return;
+    const openingChat = chatData;
+    const startedAt = Date.now();
+    let quietSince: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let revealFrame: number | null = null;
+    let cancelled = false;
+
+    const finishOpening = (container: HTMLDivElement) => {
+      container.dataset.isAtBottom = 'true';
+      container.scrollTop = container.scrollHeight;
+      resetChatScrollAnchor(container);
+      revealFrame = requestAnimationFrame(() => {
+        if (cancelled || openingChat !== chatData || container !== chatContainerRef.current) return;
+        container.scrollTop = container.scrollHeight;
+        setReadyChat(openingChat);
+      });
+    };
+
+    const checkOpening = () => {
+      if (cancelled || openingChat !== chatData) return;
+      const container = chatContainerRef.current;
+      if (!container) {
+        timer = setTimeout(checkOpening, CHAT_OPENING_CHECK_MS);
+        return;
+      }
+
+      container.dataset.isAtBottom = 'true';
+      container.scrollTop = container.scrollHeight;
+      const lastChunkIndex = chunks.length - 1;
+      const lastChunkReady = lastChunkIndex < 0 || !!container.querySelector(
+        `.message-chunk[data-chunk-index="${lastChunkIndex}"][data-rendered="true"]`,
+      );
+      const viewport = container.getBoundingClientRect();
+      const pendingNearbyMedia = [...container.querySelectorAll(
+        '.lazy-media-wrapper[data-media-geometry-pending="true"]',
+      )].some(element => {
+        const mediaRect = element.getBoundingClientRect();
+        return mediaRect.bottom > viewport.top - CHAT_OPENING_MEDIA_MARGIN_PX
+          && mediaRect.top < viewport.bottom + CHAT_OPENING_MEDIA_MARGIN_PX;
+      });
+      const now = Date.now();
+
+      if (lastChunkReady && !pendingNearbyMedia) {
+        quietSince ??= now;
+        if (now - quietSince >= CHAT_OPENING_QUIET_MS) {
+          finishOpening(container);
+          return;
+        }
+      } else {
+        quietSince = null;
+      }
+
+      if (now - startedAt >= CHAT_OPENING_MAX_MS) {
+        finishOpening(container);
+        return;
+      }
+      timer = setTimeout(checkOpening, CHAT_OPENING_CHECK_MS);
+    };
+
+    timer = setTimeout(checkOpening, 0);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      if (revealFrame !== null) cancelAnimationFrame(revealFrame);
+    };
+  }, [chatData, chunks.length, readyChat]);
+
+  const handleChunkHeightMeasured = useCallback((chunkIndex: number, height: number) => {
+    if (chatData?._chunkHeights) chatData._chunkHeights[chunkIndex] = height;
+  }, [chatData]);
+
   if (!chatData) return null;
 
   const allMessages = chatData.messages;
 
   return (
-    <div id="chat" ref={chatContainerRef} onScroll={handleScroll}>
-      {chunks.map((chunk, i) => (
-        <MessageChunk
-          key={i}
-          chunkIndex={i}
-          messages={chunk}
-          allMessages={allMessages}
-          estimatedHeight={chunkHeights[i]}
-          selectedPerspective={selectedPerspective}
-          settings={settings}
-          mediaState={mediaState}
-          highlightQuery={highlightQuery}
-          chatContainerRef={chatContainerRef}
-          onMediaClick={onMediaClick}
-          onLinkClick={onLinkClick}
-          forceRender={i === chunks.length - 1 || i === forcedChunkIndex}
-          onRendered={handleChunkRendered}
-        />
-      ))}
+    <div
+      id="chat"
+      ref={chatContainerRef}
+      aria-busy={opening}
+      data-opening={opening ? 'true' : undefined}
+      onScroll={handleScroll}
+      onWheel={clearJumpSettling}
+      onTouchStart={clearJumpSettling}
+      onPointerDown={clearJumpSettling}
+      onKeyDown={handleJumpKeyDown}
+    >
+      {opening && <div className="chat-opening-status" role="status">Preparing messages...</div>}
+      <div className="message-list-content">
+        {chunks.map((chunk, i) => (
+          <MessageChunk
+            key={i}
+            chunkIndex={i}
+            messages={chunk}
+            allMessages={allMessages}
+            estimatedHeight={chunkHeights[i]}
+            selectedPerspective={selectedPerspective}
+            settings={settings}
+            mediaState={mediaState}
+            highlightQuery={highlightQuery}
+            chatContainerRef={chatContainerRef}
+            onMediaClick={onMediaClick}
+            onLinkClick={onLinkClick}
+            forceRender={i === chunks.length - 1 || i === forcedChunkIndex}
+            dimensionPriority={i === chunks.length - 1 || i === forcedChunkIndex ? 0 : 1}
+            onRendered={handleChunkRendered}
+            onHeightMeasured={handleChunkHeightMeasured}
+          />
+        ))}
+      </div>
     </div>
   );
 });

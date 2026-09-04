@@ -47,6 +47,31 @@ describe('message jump coordination', () => {
     })).resolves.toBe(target);
   });
 
+  it('does not resolve a cold target before asynchronous chunk preparation commits', async () => {
+    const target = element('prepared-target');
+    let rendered = false;
+    let finishPreparation: ((rendered: boolean) => void) | undefined;
+    const preparation = new Promise<boolean>(resolve => { finishPreparation = resolve; });
+
+    const jumping = resolveMessageJumpTarget({
+      findMessage: () => rendered ? target : null,
+      renderChunk: async () => {
+        const prepared = await preparation;
+        rendered = prepared;
+        return prepared;
+      },
+      isCurrent: () => true,
+    });
+
+    let settled = false;
+    void jumping.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    finishPreparation?.(true);
+    await expect(jumping).resolves.toBe(target);
+  });
+
   it('ignores a request that becomes stale while its chunk renders', async () => {
     const target = element('target');
     let current = true;

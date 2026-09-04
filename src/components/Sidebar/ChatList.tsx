@@ -171,7 +171,9 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
     const handleResize = () => {
       setDropdownOpen(false);
     };
-    const handleScroll = () => {
+    const handleScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && dropdownRef.current?.contains(target)) return;
       setDropdownOpen(false);
     };
 

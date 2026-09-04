@@ -1,21 +1,27 @@
 import type { MediaEntry } from '../types/messenger';
+import { blobCache } from './blobCache';
 import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
-import { SubscribableTaskQueue } from './subscribableTaskQueue';
+import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
 
 interface PosterCacheEntry {
   url: string;
   duration: number | null;
+  sourceWidth?: number;
+  sourceHeight?: number;
 }
 
 const DEFAULT_MAX_POSTERS = 200;
 const POSTER_WIDTH = MEDIA_THUMBNAIL_SIZE;
+const CHAT_POSTER_WIDTH = 1024;
+const CHAT_POSTER_HEIGHT = 768;
 const MAX_CONCURRENT_POSTER_JOBS = 2;
 const VIDEO_EVENT_TIMEOUT_MS = 5_000;
-const SEEK_FALLBACK_SECONDS = 0.5;
 
 export interface VideoPosterDetails {
   url: string;
   duration: number | null;
+  sourceWidth?: number;
+  sourceHeight?: number;
 }
 
 type PosterCreator = (entry: MediaEntry, signal: AbortSignal) => Promise<VideoPosterDetails | null>;
@@ -52,7 +58,12 @@ export class VideoPosterCache {
 
     this.cache.delete(entry);
     this.cache.set(entry, cached);
-    return { url: cached.url, duration: cached.duration };
+    return {
+      url: cached.url,
+      duration: cached.duration,
+      sourceWidth: cached.sourceWidth,
+      sourceHeight: cached.sourceHeight,
+    };
   }
 
   getOrCreate(entry: MediaEntry): Promise<string | null> {
@@ -80,7 +91,7 @@ export class VideoPosterCache {
     return task;
   }
 
-  subscribe(entry: MediaEntry, subscriber: PosterSubscriber): () => void {
+  subscribe(entry: MediaEntry, subscriber: PosterSubscriber, priority = 0): TaskSubscription {
     const cached = this.getDetails(entry);
     if (cached || this.failed.has(entry)) {
       try {
@@ -88,12 +99,12 @@ export class VideoPosterCache {
       } catch {
         // Keep cache reads isolated from consumer callback failures.
       }
-      return () => {};
+      return createNoopTaskSubscription();
     }
 
     return this.scheduler.subscribe(entry, completion => {
       subscriber(completion.status === 'completed' ? completion.value : null);
-    });
+    }, priority);
   }
 
   clear(): void {
@@ -154,7 +165,12 @@ export class VideoPosterCache {
   }
 }
 
-async function createVideoPosterForEntry(entry: MediaEntry, signal: AbortSignal): Promise<VideoPosterDetails | null> {
+async function createVideoPosterForEntry(
+  entry: MediaEntry,
+  signal: AbortSignal,
+  posterWidth = POSTER_WIDTH,
+  posterHeight?: number,
+): Promise<VideoPosterDetails | null> {
   if (entry.handle) {
     let temporaryUrl: string | null = null;
     try {
@@ -162,7 +178,7 @@ async function createVideoPosterForEntry(entry: MediaEntry, signal: AbortSignal)
       if (signal.aborted) return null;
       const source = file.type ? file : new Blob([file], { type: getVideoMimeType(entry.handle.name) });
       temporaryUrl = URL.createObjectURL(source);
-      return await createVideoPosterDetails(temporaryUrl, signal);
+      return await createVideoPosterDetails(temporaryUrl, signal, posterWidth, posterHeight);
     } catch {
       return null;
     } finally {
@@ -170,7 +186,16 @@ async function createVideoPosterForEntry(entry: MediaEntry, signal: AbortSignal)
     }
   }
 
-  return entry.url ? createVideoPosterDetails(entry.url, signal) : null;
+  return entry.url ? createVideoPosterDetails(entry.url, signal, posterWidth, posterHeight) : null;
+}
+
+async function createChatVideoPosterForEntry(
+  entry: MediaEntry,
+  signal: AbortSignal,
+): Promise<VideoPosterDetails | null> {
+  const sourceUrl = await blobCache.getOrCreate(entry);
+  if (!sourceUrl || signal.aborted) return null;
+  return createVideoPosterDetails(sourceUrl, signal, CHAT_POSTER_WIDTH, CHAT_POSTER_HEIGHT);
 }
 
 function getVideoMimeType(filename: string): string {
@@ -262,6 +287,8 @@ export async function createVideoPoster(videoUrl: string): Promise<string | null
 export async function createVideoPosterDetails(
   videoUrl: string,
   signal: AbortSignal = new AbortController().signal,
+  posterWidth = POSTER_WIDTH,
+  posterHeight?: number,
 ): Promise<VideoPosterDetails | null> {
   const video = document.createElement('video');
   video.preload = 'metadata';
@@ -278,34 +305,42 @@ export async function createVideoPosterDetails(
     if (signal.aborted) return null;
 
     const duration = Number.isFinite(video.duration) ? video.duration : null;
-    const targetTime = duration && duration > 0 ? Math.min(duration * 0.1, SEEK_FALLBACK_SECONDS) : 0;
-    if (targetTime > 0) {
-      const seeked = waitForVideoEvent(video, 'seeked', signal);
-      video.currentTime = targetTime;
-      await seeked;
-    }
-    await waitForVideoState(video, 'loadeddata', HTMLMediaElement.HAVE_CURRENT_DATA, signal);
-    if (signal.aborted) return null;
-
     const sourceWidth = video.videoWidth || POSTER_WIDTH;
     const sourceHeight = video.videoHeight || POSTER_WIDTH;
-    const width = POSTER_WIDTH;
-    const height = Math.max(1, Math.round((sourceHeight / sourceWidth) * width));
+    const scale = posterHeight
+      ? Math.min(posterWidth / sourceWidth, posterHeight / sourceHeight, 1)
+      : posterWidth / sourceWidth;
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    if (signal.aborted) return null;
+    let foundVisibleFrame = false;
+    for (const targetTime of getPosterCandidateTimes(duration)) {
+      if (targetTime !== video.currentTime) {
+        const seeked = waitForVideoEvent(video, 'seeked', signal);
+        video.currentTime = targetTime;
+        await seeked;
+      }
+      await waitForVideoState(video, 'loadeddata', HTMLMediaElement.HAVE_CURRENT_DATA, signal);
+      if (signal.aborted) return null;
 
-    ctx.drawImage(video, 0, 0, width, height);
+      ctx.drawImage(video, 0, 0, width, height);
+      if (!isVideoFrameMostlyBlack(ctx, width, height)) {
+        foundVisibleFrame = true;
+        break;
+      }
+    }
+    if (!foundVisibleFrame) return null;
 
     const blob = await new Promise<Blob | null>(resolve => {
-      canvas.toBlob(resolve, 'image/jpeg', 0.72);
+      canvas.toBlob(resolve, 'image/webp', 0.86);
     });
     if (signal.aborted) return null;
-    return blob ? { url: URL.createObjectURL(blob), duration } : null;
+    return blob ? { url: URL.createObjectURL(blob), duration, sourceWidth, sourceHeight } : null;
   } catch {
     return null;
   } finally {
@@ -316,3 +351,44 @@ export async function createVideoPosterDetails(
 }
 
 export const videoPosterCache = new VideoPosterCache(DEFAULT_MAX_POSTERS);
+export const chatVideoPosterCache = new VideoPosterCache(
+  DEFAULT_MAX_POSTERS,
+  MAX_CONCURRENT_POSTER_JOBS,
+  createChatVideoPosterForEntry,
+);
+
+export function getPosterCandidateTimes(duration: number | null): number[] {
+  if (!duration || duration <= 0) return [0];
+  const lastUsefulFrame = Math.max(0, duration * 0.9);
+  const candidates = [
+    Math.min(duration * 0.1, lastUsefulFrame),
+    Math.min(duration * 0.25, lastUsefulFrame),
+    Math.min(duration * 0.5, lastUsefulFrame),
+  ];
+  return [...new Set(candidates.map(time => Math.max(0, time)))];
+}
+
+export function isVideoFrameMostlyBlack(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  width: number,
+  height: number,
+): boolean {
+  if (typeof context.getImageData !== 'function') return false;
+  try {
+    const pixels = context.getImageData(0, 0, width, height).data;
+    const sampleStride = Math.max(1, Math.floor((width * height) / 4096));
+    let visible = 0;
+    let dark = 0;
+    for (let pixel = 0; pixel < width * height; pixel += sampleStride) {
+      const offset = pixel * 4;
+      if (pixels[offset + 3] < 16) continue;
+      visible++;
+      const luminance = pixels[offset] * 0.2126 + pixels[offset + 1] * 0.7152 + pixels[offset + 2] * 0.0722;
+      if (luminance < 18) dark++;
+    }
+    return visible > 0 && dark / visible > 0.96;
+  } catch {
+    // A frame that cannot be inspected is still preferable to no poster.
+    return false;
+  }
+}
