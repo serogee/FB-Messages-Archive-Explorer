@@ -253,6 +253,9 @@
     line-height: 1.4;
     white-space: pre-wrap;
 }
+.message.has-media-grid .message-content {
+    width: 100%;
+}
 .message.media-only .message-content {
     line-height: 0;
 }
@@ -667,6 +670,7 @@
     overflow: hidden;
 }
 .media-preview {
+    position: relative;
     display: block;
     width: calc(100% + 30px);
     max-width: none;
@@ -785,6 +789,23 @@
     width: 100%;
     height: 100%;
     border-radius: 0;
+}
+.media-preview-loading {
+    min-height: 110px;
+}
+.media-preview-loading > .preview,
+.media-preview-loading > .preview-video {
+    opacity: 0;
+}
+.media-preview-loading > .media-loading-placeholder {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+}
+.message-media-grid .media-preview-loading {
+    min-height: 0;
 }
 .preview-video,
 .preview {

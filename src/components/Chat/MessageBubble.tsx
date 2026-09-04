@@ -58,6 +58,34 @@ function getSharedLazyMediaVisibilityObserver() {
   return sharedLazyMediaVisibilityObserver;
 }
 
+function compensateMediaHeightChange(el: Element, oldHeight: number, newHeight: number): void {
+  if (oldHeight === newHeight) return;
+
+  const appContainer = el.closest('.container');
+  if (appContainer?.classList.contains('resizing') || appContainer?.classList.contains('resize-settling')) return;
+
+  const container = el.closest('#chat') as HTMLElement | null;
+  if (!container) return;
+
+  if (container.dataset.isAtBottom === 'true') {
+    container.scrollTop = container.scrollHeight;
+    container.dataset.lastScrollTop = String(container.scrollTop);
+    return;
+  }
+
+  const scrollDir = container.dataset.scrollDir || 'up';
+  const containerRect = container.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const isAboveAnchor = scrollDir === 'down'
+    ? elRect.top < containerRect.top
+    : elRect.top < containerRect.bottom;
+
+  if (isAboveAnchor) {
+    container.scrollTop += newHeight - oldHeight;
+    container.dataset.lastScrollTop = String(container.scrollTop);
+  }
+}
+
 interface MessageBubbleProps {
   msg: MessengerMessage;
   isMe: boolean;
@@ -242,7 +270,7 @@ function LazyMedia({
   });
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>(() => {
     if (!mediaFile) return 'failed';
-    return blobCache.get(mediaFile) || mediaFile.url ? 'ready' : 'loading';
+    return 'loading';
   });
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
@@ -261,13 +289,13 @@ function LazyMedia({
     const cached = blobCache.get(mediaFile);
     if (cached) {
       setFileURL(cached);
-      setLoadState('ready');
+      setLoadState('loading');
       return;
     }
     if (mediaFile.url) {
       blobCache.put(mediaFile, mediaFile.url);
       setFileURL(mediaFile.url);
-      setLoadState('ready');
+      setLoadState('loading');
       return;
     }
     if (!mediaFile.handle) {
@@ -287,7 +315,7 @@ function LazyMedia({
         if (!isMounted) return;
         if (url) {
           setFileURL(url);
-          setLoadState('ready');
+          setLoadState('loading');
         } else {
           setLoadState('failed');
         }
@@ -311,42 +339,17 @@ function LazyMedia({
     lazyMediaResizeCallbacks.set(el, (entry) => {
       const newHeight = entry.borderBoxSize ? entry.borderBoxSize[0].blockSize : entry.contentRect.height;
 
-      const appContainer = el.closest('.container');
-      if (appContainer?.classList.contains('resizing') || appContainer?.classList.contains('resize-settling')) {
+      // Grid cells reserve their final square geometry with aspect-ratio. The
+      // grid changes height once per row, so compensating every child would
+      // apply the same layout change multiple times and push the viewport.
+      if (el.closest('.message-media-grid')) {
         prevHeight.current = newHeight;
         return;
       }
-      
+
       const oldHeight = prevHeight.current;
       if (oldHeight !== null && oldHeight !== newHeight) {
-        const delta = newHeight - oldHeight;
-        const container = el.closest('#chat') as HTMLElement;
-        
-        if (container) {
-          const scrollDir = container.dataset.scrollDir || 'up';
-          const containerRect = container.getBoundingClientRect();
-          const elRect = el.getBoundingClientRect();
-          
-          const isAtBottom = container.dataset.isAtBottom === 'true';
-
-          let isAboveAnchor = false;
-          if (isAtBottom) {
-            container.scrollTop = container.scrollHeight;
-            container.dataset.lastScrollTop = String(container.scrollTop);
-          } else {
-            // Anchor to the top edge while scrolling down and the bottom edge while scrolling up.
-            if (scrollDir === 'down') {
-              if (elRect.top < containerRect.top) isAboveAnchor = true;
-            } else {
-              if (elRect.top < containerRect.bottom) isAboveAnchor = true;
-            }
-
-            if (isAboveAnchor) {
-              container.scrollTop += delta;
-              container.dataset.lastScrollTop = String(container.scrollTop);
-            }
-          }
-        }
+        compensateMediaHeightChange(el, oldHeight, newHeight);
       }
       prevHeight.current = newHeight;
     });
@@ -391,18 +394,38 @@ function LazyMedia({
   );
   if (mediaType === 'image') {
     content = fileURL
-      ? <div className={`media-preview${isSticker ? ' sticker-preview' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
-          <img src={fileURL} alt={isSticker ? 'Sticker' : 'Image'} className="preview" />
+      ? <div className={`media-preview${isSticker ? ' sticker-preview' : ''}${loadState === 'loading' ? ' media-preview-loading' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
+          <img
+            src={fileURL}
+            alt={isSticker ? 'Sticker' : 'Image'}
+            className="preview"
+            onLoad={() => setLoadState('ready')}
+            onError={() => {
+              setFileURL(null);
+              setLoadState('failed');
+            }}
+          />
+          {loadState === 'loading' && loadingPlaceholder(isSticker ? 'Loading sticker' : 'Loading image', <ImageIcon aria-hidden="true" size={24} />)}
         </div>
       : loadState === 'loading'
         ? loadingPlaceholder(isSticker ? 'Loading sticker' : 'Loading image', <ImageIcon aria-hidden="true" size={24} />)
         : <span className="placeholder">[ Image not found ]</span>;
   } else if (mediaType === 'video') {
     content = fileURL
-      ? <div className="media-preview" onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
-          <video controls className="preview-video" onClick={(e) => { e.preventDefault(); onMediaClick?.(); }}>
+      ? <div className={`media-preview${loadState === 'loading' ? ' media-preview-loading' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
+          <video
+            controls
+            className="preview-video"
+            onLoadedData={() => setLoadState('ready')}
+            onError={() => {
+              setFileURL(null);
+              setLoadState('failed');
+            }}
+            onClick={(e) => { e.preventDefault(); onMediaClick?.(); }}
+          >
             <source src={fileURL} type="video/mp4" />
           </video>
+          {loadState === 'loading' && loadingPlaceholder('Loading video', <Video aria-hidden="true" size={24} />)}
         </div>
       : loadState === 'loading'
         ? loadingPlaceholder('Loading video', <Video aria-hidden="true" size={24} />)
@@ -469,6 +492,8 @@ export const MessageBubble = memo(function MessageBubble({
   onLinkClick,
 }: MessageBubbleProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const mediaGridRef = useRef<HTMLDivElement | null>(null);
+  const mediaGridPrevHeight = useRef<number | null>(null);
 
   const sender = msg.senderName || msg.sender_name || 'Unknown';
   const rawText = fixEncoding(msg?.text || msg?.content || '').trim();
@@ -503,6 +528,26 @@ export const MessageBubble = memo(function MessageBubble({
   const hasMediaPreview = previewMediaItems.length > 0;
   const hasMediaGrid = previewMediaItems.length > 1;
   const hasOddMediaGrid = hasMediaGrid && previewMediaItems.length % 2 === 1;
+
+  useEffect(() => {
+    const grid = mediaGridRef.current;
+    if (!grid || !hasMediaGrid) return;
+
+    const observer = getSharedLazyMediaResizeObserver();
+    lazyMediaResizeCallbacks.set(grid, entry => {
+      const newHeight = entry.borderBoxSize ? entry.borderBoxSize[0].blockSize : entry.contentRect.height;
+      const oldHeight = mediaGridPrevHeight.current;
+      if (oldHeight !== null) compensateMediaHeightChange(grid, oldHeight, newHeight);
+      mediaGridPrevHeight.current = newHeight;
+    });
+    observer.observe(grid);
+
+    return () => {
+      observer.unobserve(grid);
+      lazyMediaResizeCallbacks.delete(grid);
+      mediaGridPrevHeight.current = null;
+    };
+  }, [hasMediaGrid]);
 
   const messageLinks = getMessageLinks(msg).map(link => ({
     ...link,
@@ -552,7 +597,7 @@ export const MessageBubble = memo(function MessageBubble({
             )}
 
             {hasMediaGrid ? (
-              <div className="message-media-grid">
+              <div ref={mediaGridRef} className="message-media-grid">
                 {previewMediaItems.map(({ preferredType, mediaPath, mediaFile, isSticker }, i) => (
                   <LazyMedia
                     key={`${mediaPath}:${i}`}
