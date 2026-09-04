@@ -9,12 +9,15 @@ type DimensionListener = () => void;
 type DimensionReader = (entry: MediaEntry) => Promise<MediaDimensions | null>;
 
 const DEFAULT_MAX_CONCURRENT_READS = 4;
+const DEFAULT_READ_TIMEOUT_MS = 2_000;
 const INITIAL_HEADER_BYTES = 32;
 const MAX_JPEG_HEADER_BYTES = 64 * 1024;
 const MAX_MEDIA_DIMENSION = 1 << 24;
 
 interface QueuedRead {
   entry: MediaEntry;
+  priority: number;
+  promise: Promise<MediaDimensions | null>;
   resolve: (dimensions: MediaDimensions | null) => void;
 }
 
@@ -199,20 +202,23 @@ export async function readMediaDimensionsFromEntry(entry: MediaEntry): Promise<M
 
 export class MediaDimensionsCache {
   private readonly dimensions = new WeakMap<MediaEntry, MediaDimensions>();
-  private readonly pending = new WeakMap<MediaEntry, Promise<MediaDimensions | null>>();
+  private readonly pending = new WeakMap<MediaEntry, QueuedRead>();
   private readonly failed = new WeakSet<MediaEntry>();
   private readonly listeners = new WeakMap<MediaEntry, Set<DimensionListener>>();
   private readonly queue: QueuedRead[] = [];
   private readonly maxConcurrentReads: number;
   private readonly reader: DimensionReader;
+  private readonly readTimeoutMs: number;
   private activeReads = 0;
 
   constructor(
     maxConcurrentReads = DEFAULT_MAX_CONCURRENT_READS,
     reader: DimensionReader = readMediaDimensionsFromEntry,
+    readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
   ) {
     this.maxConcurrentReads = maxConcurrentReads;
     this.reader = reader;
+    this.readTimeoutMs = Math.max(1, readTimeoutMs);
   }
 
   get(entry: MediaEntry | null): MediaDimensions | null {
@@ -233,24 +239,30 @@ export class MediaDimensionsCache {
     };
   }
 
-  read(entry: MediaEntry): Promise<MediaDimensions | null> {
+  read(entry: MediaEntry, priority = 1): Promise<MediaDimensions | null> {
     const cached = this.get(entry);
     if (cached) return Promise.resolve(cached);
     if (this.failed.has(entry)) return Promise.resolve(null);
     const existing = this.pending.get(entry);
-    if (existing) return existing;
+    if (existing) {
+      existing.priority = Math.min(existing.priority, priority);
+      return existing.promise;
+    }
 
-    const task = new Promise<MediaDimensions | null>(resolve => {
-      this.queue.push({ entry, resolve });
+    let resolveTask!: (dimensions: MediaDimensions | null) => void;
+    const promise = new Promise<MediaDimensions | null>(resolve => {
+      resolveTask = resolve;
     });
+    const task: QueuedRead = { entry, priority, promise, resolve: resolveTask };
+    this.queue.push(task);
     this.pending.set(entry, task);
     this.drain();
-    return task;
+    return promise;
   }
 
-  async scan(entries: readonly MediaEntry[]): Promise<void> {
+  async scan(entries: readonly MediaEntry[], priority = 1): Promise<void> {
     const uniqueEntries = [...new Set(entries)];
-    await Promise.all(uniqueEntries.map(entry => this.read(entry)));
+    await Promise.all(uniqueEntries.map(entry => this.read(entry, priority)));
   }
 
   remember(entry: MediaEntry, dimensions: MediaDimensions): void {
@@ -265,7 +277,11 @@ export class MediaDimensionsCache {
 
   private drain(): void {
     while (this.activeReads < Math.max(1, this.maxConcurrentReads) && this.queue.length > 0) {
-      const queued = this.queue.shift();
+      let nextIndex = 0;
+      for (let index = 1; index < this.queue.length; index++) {
+        if (this.queue[index].priority < this.queue[nextIndex].priority) nextIndex = index;
+      }
+      const [queued] = this.queue.splice(nextIndex, 1);
       if (!queued) return;
       this.activeReads++;
       void this.run(queued);
@@ -274,10 +290,23 @@ export class MediaDimensionsCache {
 
   private async run(queued: QueuedRead): Promise<void> {
     let result = this.get(queued.entry);
+    let timeout: ReturnType<typeof setTimeout> | null = null;
     try {
-      if (!result) result = await this.reader(queued.entry);
+      if (!result) {
+        // File-system handles cannot be aborted consistently across browsers.
+        // Release the logical queue slot and negatively cache the entry if a
+        // read stalls, while safely ignoring any later completion.
+        result = await Promise.race([
+          this.reader(queued.entry),
+          new Promise<null>(resolve => {
+            timeout = setTimeout(() => resolve(null), this.readTimeoutMs);
+          }),
+        ]);
+      }
     } catch {
       result = null;
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
 
     if (result) this.remember(queued.entry, result);
@@ -309,12 +338,12 @@ export function subscribeMediaDimensions(entry: MediaEntry | null, listener: Dim
   return mediaDimensionsCache.subscribe(entry, listener);
 }
 
-export function readMediaDimensions(entry: MediaEntry): Promise<MediaDimensions | null> {
-  return mediaDimensionsCache.read(entry);
+export function readMediaDimensions(entry: MediaEntry, priority = 1): Promise<MediaDimensions | null> {
+  return mediaDimensionsCache.read(entry, priority);
 }
 
-export function scanMediaDimensions(entries: readonly MediaEntry[]): Promise<void> {
-  return mediaDimensionsCache.scan(entries);
+export function scanMediaDimensions(entries: readonly MediaEntry[], priority = 1): Promise<void> {
+  return mediaDimensionsCache.scan(entries, priority);
 }
 
 export function rememberMediaDimensions(entry: MediaEntry, dimensions: MediaDimensions): void {

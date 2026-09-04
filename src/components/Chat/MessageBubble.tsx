@@ -17,14 +17,14 @@ import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
 import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
 import { ReactionModal } from './ReactionModal';
-import { shouldCompensateHeightChange } from './chatScrollAnchoring';
+import { registerChatAnchorCandidate, stabilizeChatScrollAnchor } from './chatScrollAnchoring';
 import { MediaFileSize } from '../MediaFileSize';
 import { FileText, Image as ImageIcon, Info, Link as LinkIcon, Music2, Pause, Play, Video, Volume2, VolumeX } from 'lucide-react';
 
 const lazyMediaVisibleCallbacks = new Map<Element, (inside: boolean) => void>();
 const lazyMediaPreloadCallbacks = new Map<Element, (inside: boolean) => void>();
 const lazyMediaRetentionCallbacks = new Map<Element, (inside: boolean) => void>();
-const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => void>();
+const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => HTMLElement | null>();
 const lazyMediaObserverPairs = new WeakMap<Element, LazyMediaObserverPair>();
 let viewportLazyMediaObserverPair: LazyMediaObserverPair | null = null;
 let sharedLazyMediaResizeObserver: ResizeObserver | null = null;
@@ -79,50 +79,25 @@ function getSharedLazyMediaObservers(root: Element | null): LazyMediaObserverPai
 function getSharedLazyMediaResizeObserver() {
   if (!sharedLazyMediaResizeObserver) {
     sharedLazyMediaResizeObserver = new ResizeObserver((entries) => {
+      const changedContainers = new Set<HTMLElement>();
       entries.forEach(entry => {
         const callback = lazyMediaResizeCallbacks.get(entry.target);
-        if (callback) callback(entry);
+        const container = callback?.(entry);
+        if (container) changedContainers.add(container);
       });
+      changedContainers.forEach(stabilizeChatScrollAnchor);
     });
   }
   return sharedLazyMediaResizeObserver;
 }
 
-function compensateMediaHeightChange(el: Element, oldHeight: number, newHeight: number): void {
-  if (oldHeight === newHeight) return;
+function getChangedMediaContainer(el: Element, oldHeight: number, newHeight: number): HTMLElement | null {
+  if (oldHeight === newHeight) return null;
 
   const appContainer = el.closest('.container');
-  if (appContainer?.classList.contains('resizing') || appContainer?.classList.contains('resize-settling')) return;
+  if (appContainer?.classList.contains('resizing') || appContainer?.classList.contains('resize-settling')) return null;
 
-  const container = el.closest('#chat') as HTMLElement | null;
-  if (!container) return;
-
-  if (container.dataset.isAtBottom === 'true') {
-    container.scrollTop = container.scrollHeight;
-    container.dataset.lastScrollTop = String(container.scrollTop);
-    return;
-  }
-
-  const scrollDir = container.dataset.scrollDir === 'down' ? 'down' : 'up';
-  const containerRect = container.getBoundingClientRect();
-  const elRect = el.getBoundingClientRect();
-  const jumpAnchorOffset = container.dataset.jumpInProgress === 'true'
-    ? Number(container.dataset.jumpAnchorOffset)
-    : Number.NaN;
-  const isAboveAnchor = shouldCompensateHeightChange({
-    direction: scrollDir,
-    elementTop: elRect.top,
-    viewportTop: containerRect.top,
-    viewportBottom: containerRect.bottom,
-    jumpAnchorTop: Number.isFinite(jumpAnchorOffset)
-      ? containerRect.top + jumpAnchorOffset
-      : undefined,
-  });
-
-  if (isAboveAnchor) {
-    container.scrollTop += newHeight - oldHeight;
-    container.dataset.lastScrollTop = String(container.scrollTop);
-  }
+  return el.closest('#chat') as HTMLElement | null;
 }
 
 interface MessageBubbleProps {
@@ -498,6 +473,7 @@ function LazyMedia({
 }) {
   const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
   const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
+  const isVisualMedia = mediaType === 'image' || mediaType === 'video';
   const usesGeneratedPreview = mediaType === 'image' && !isSticker && ext !== 'gif';
   const [fileURL, setFileURL] = useState<string | null>(null);
   const [previewDimensions, setPreviewDimensions] = useState<Pick<ChatImagePreview, 'sourceWidth' | 'sourceHeight'> | null>(null);
@@ -514,6 +490,45 @@ function LazyMedia({
     React.useCallback(() => getCachedMediaDimensions(mediaFile), [mediaFile]),
     NO_MEDIA_DIMENSIONS,
   );
+
+  const previewSourceDimensions = previewDimensions ? {
+    width: previewDimensions.sourceWidth,
+    height: previewDimensions.sourceHeight,
+  } : null;
+  const sourceDimensions = previewSourceDimensions || (
+    mediaType === 'image' && !isSticker ? cachedDimensions : null
+  );
+  const attachmentDimensions = sourceDimensions && (!reservedSize || !!fileURL) ? {
+    sourceWidth: sourceDimensions.width,
+    sourceHeight: sourceDimensions.height,
+  } : null;
+  let wrapperStyle: React.CSSProperties | undefined;
+  let hasExactReservation = false;
+  if (!isGrid && !isSticker) {
+    if (reservedSize && loadState !== 'ready') {
+      hasExactReservation = true;
+      wrapperStyle = {
+        width: reservedSize.width,
+        maxWidth: '100%',
+        aspectRatio: `${reservedSize.width} / ${reservedSize.height}`,
+      };
+    } else if (sourceDimensions) {
+      wrapperStyle = getSourceMediaReservationStyle(sourceDimensions);
+    }
+  }
+  const isGeometryPending = isVisualMedia
+    && !isGrid
+    && !isSticker
+    && !wrapperStyle
+    && loadState !== 'ready'
+    && loadState !== 'failed';
+
+  React.useLayoutEffect(() => {
+    const element = mediaRef.current;
+    const container = element?.closest('#chat') as HTMLElement | null;
+    if (!element || !container || !isGeometryPending) return;
+    return registerChatAnchorCandidate(container, element, 'media');
+  }, [isGeometryPending]);
 
   // Preload near the viewport, then dehydrate media only after it leaves the
   // larger retention range. The gap between both ranges prevents scroll churn.
@@ -750,14 +765,12 @@ function LazyMedia({
       // apply the same layout change multiple times and push the viewport.
       if (el.closest('.message-media-grid')) {
         prevHeight.current = newHeight;
-        return;
+        return null;
       }
 
       const oldHeight = prevHeight.current;
-      if (oldHeight !== null && oldHeight !== newHeight) {
-        compensateMediaHeightChange(el, oldHeight, newHeight);
-      }
       prevHeight.current = newHeight;
+      return oldHeight === null ? null : getChangedMediaContainer(el, oldHeight, newHeight);
     });
 
     observer.observe(el);
@@ -766,33 +779,6 @@ function LazyMedia({
       lazyMediaResizeCallbacks.delete(el);
     };
   }, []);
-
-  const previewSourceDimensions = previewDimensions ? {
-    width: previewDimensions.sourceWidth,
-    height: previewDimensions.sourceHeight,
-  } : null;
-  const sourceDimensions = previewSourceDimensions || (
-    mediaType === 'image' && !isSticker ? cachedDimensions : null
-  );
-  const attachmentDimensions = sourceDimensions && (!reservedSize || !!fileURL) ? {
-    sourceWidth: sourceDimensions.width,
-    sourceHeight: sourceDimensions.height,
-  } : null;
-  const isVisualMedia = mediaType === 'image' || mediaType === 'video';
-  let wrapperStyle: React.CSSProperties | undefined;
-  let hasExactReservation = false;
-  if (!isGrid && !isSticker) {
-    if (reservedSize && loadState !== 'ready') {
-      hasExactReservation = true;
-      wrapperStyle = {
-        width: reservedSize.width,
-        maxWidth: '100%',
-        aspectRatio: `${reservedSize.width} / ${reservedSize.height}`,
-      };
-    } else if (sourceDimensions) {
-      wrapperStyle = getSourceMediaReservationStyle(sourceDimensions);
-    }
-  }
 
   let content: React.ReactNode;
   if (mediaType === 'image') {
@@ -824,6 +810,7 @@ function LazyMedia({
     <div
       ref={mediaRef as React.RefObject<HTMLDivElement>}
       className={`lazy-media-wrapper${loadState === 'dormant' ? ' media-dehydrated' : ''}${hasExactReservation ? ' media-slot-reserved' : ''}${isVisualMedia && !isGrid && !isSticker && !wrapperStyle ? ' media-slot-fallback' : ''}`}
+      data-media-geometry-pending={isGeometryPending ? 'true' : undefined}
       style={wrapperStyle}
     >
       {content}
@@ -846,6 +833,7 @@ export const MessageBubble = memo(function MessageBubble({
   onLinkClick,
 }: MessageBubbleProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const messageRef = useRef<HTMLDivElement | null>(null);
   const mediaGridRef = useRef<HTMLDivElement | null>(null);
   const mediaGridPrevHeight = useRef<number | null>(null);
 
@@ -868,8 +856,8 @@ export const MessageBubble = memo(function MessageBubble({
     lazyMediaResizeCallbacks.set(grid, entry => {
       const newHeight = entry.borderBoxSize ? entry.borderBoxSize[0].blockSize : entry.contentRect.height;
       const oldHeight = mediaGridPrevHeight.current;
-      if (oldHeight !== null) compensateMediaHeightChange(grid, oldHeight, newHeight);
       mediaGridPrevHeight.current = newHeight;
+      return oldHeight === null ? null : getChangedMediaContainer(grid, oldHeight, newHeight);
     });
     observer.observe(grid);
 
@@ -900,6 +888,7 @@ export const MessageBubble = memo(function MessageBubble({
         <div className="sender-name">{sender}</div>
       )}
       <div
+        ref={messageRef}
         className={`message ${isMe ? 'from-me' : 'from-them'} ${isFirstInClump ? 'clump-first' : ''} ${isLastInClump ? 'clump-last' : ''} ${hasReactions ? 'has-reactions' : ''} ${hasMediaPreview ? 'has-media-preview' : ''} ${hasMediaGrid ? 'has-media-grid' : ''} ${hasOddMediaGrid ? 'has-odd-media-grid' : ''} ${isMediaOnly ? 'media-only' : ''}`}
         data-msg-index={msgIndex}
       >

@@ -192,6 +192,34 @@ describe('media dimension cache', () => {
     expect(reader).toHaveBeenCalledOnce();
   });
 
+  it('times out a stalled read, releases the queue, and negatively caches it', async () => {
+    vi.useFakeTimers();
+    try {
+      const started: string[] = [];
+      const reader = vi.fn((media: MediaEntry) => {
+        const name = media.handle?.name || 'unknown';
+        started.push(name);
+        return name === 'stalled'
+          ? new Promise<null>(() => {})
+          : Promise.resolve({ width: 10, height: 10 });
+      });
+      const cache = new MediaDimensionsCache(1, reader, 25);
+      const stalled = entry('stalled');
+      const following = entry('following');
+
+      const scanning = cache.scan([stalled, following]);
+      await vi.advanceTimersByTimeAsync(25);
+
+      await expect(scanning).resolves.toBeUndefined();
+      await expect(cache.read(stalled)).resolves.toBeNull();
+      await expect(cache.read(following)).resolves.toEqual({ width: 10, height: 10 });
+      expect(started).toEqual(['stalled', 'following']);
+      expect(reader).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('bounds global reader concurrency and deduplicates scan input', async () => {
     let active = 0;
     let maximum = 0;
@@ -215,5 +243,50 @@ describe('media dimension cache', () => {
 
     expect(maximum).toBe(2);
     expect(reader).toHaveBeenCalledTimes(4);
+  });
+
+  it('moves jump reads ahead of queued preload reads', async () => {
+    let releaseBlocker = () => {};
+    const started: string[] = [];
+    const reader = vi.fn(async (media: MediaEntry) => {
+      started.push(media.handle?.name || 'unknown');
+      if (media.handle?.name === 'blocker') {
+        await new Promise<void>(resolve => { releaseBlocker = resolve; });
+      }
+      return { width: 10, height: 10 };
+    });
+    const cache = new MediaDimensionsCache(1, reader);
+    const blocker = entry('blocker');
+    const preload = entry('preload');
+    const jump = entry('jump');
+
+    const tasks = [cache.read(blocker), cache.read(preload, 1), cache.read(jump, 0)];
+    releaseBlocker();
+    await Promise.all(tasks);
+
+    expect(started).toEqual(['blocker', 'jump', 'preload']);
+  });
+
+  it('promotes an existing queued dimension read', async () => {
+    let releaseBlocker = () => {};
+    const started: string[] = [];
+    const reader = vi.fn(async (media: MediaEntry) => {
+      started.push(media.handle?.name || 'unknown');
+      if (media.handle?.name === 'blocker') {
+        await new Promise<void>(resolve => { releaseBlocker = resolve; });
+      }
+      return { width: 10, height: 10 };
+    });
+    const cache = new MediaDimensionsCache(1, reader);
+    const blocker = entry('blocker');
+    const promoted = entry('promoted');
+    const other = entry('other');
+
+    const tasks = [cache.read(blocker), cache.read(promoted, 2), cache.read(other, 1)];
+    tasks.push(cache.read(promoted, 0));
+    releaseBlocker();
+    await Promise.all(tasks);
+
+    expect(started).toEqual(['blocker', 'promoted', 'other']);
   });
 });
