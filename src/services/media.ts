@@ -2,6 +2,7 @@ import type { MediaItem, MediaState, MediaEntry, MessengerMessage } from '../typ
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../types/fileSystem';
 import { blobCache } from './blobCache';
 import { imageThumbnailCache } from './imageThumbnailCache';
+import { chatImagePreviewCache } from './chatImagePreviewCache';
 import { videoPosterCache } from './videoPosterCache';
 
 
@@ -73,6 +74,7 @@ export function findMediaFile(state: MediaState, path: string): MediaEntry | nul
 }
 
 export function revokeAllMedia(state: MediaState): void {
+  chatImagePreviewCache.clear();
   imageThumbnailCache.clear();
   videoPosterCache.clear();
   blobCache.clear();

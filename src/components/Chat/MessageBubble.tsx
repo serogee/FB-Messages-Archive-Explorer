@@ -3,6 +3,7 @@ import type { MessengerMessage, MediaState } from '../../types/messenger';
 import { getMessageTimestamp, fixEncoding } from '../../services/parser';
 import { findMediaFile, getMediaReferencePath, getMediaType } from '../../services/media';
 import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
+import { chatImagePreviewCache, getChatPreviewPixelSize, type ChatImagePreview } from '../../services/chatImagePreviewCache';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
@@ -256,79 +257,125 @@ function LazyMedia({
   mediaFile,
   preferredType,
   isSticker = false,
+  isGrid = false,
   onMediaClick,
 }: {
   mediaPath: string;
   mediaFile: ReturnType<typeof findMediaFile>;
   preferredType?: 'image' | 'video' | 'audio';
   isSticker?: boolean;
+  isGrid?: boolean;
   onMediaClick?: () => void;
 }) {
+  const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
+  const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
+  const usesGeneratedPreview = mediaType === 'image' && !isSticker && ext !== 'gif';
   const [fileURL, setFileURL] = useState<string | null>(() => {
-    if (!mediaFile) return null;
+    if (!mediaFile || usesGeneratedPreview) return null;
     return blobCache.get(mediaFile) || mediaFile.url || null;
   });
+  const [previewDimensions, setPreviewDimensions] = useState<Pick<ChatImagePreview, 'sourceWidth' | 'sourceHeight'> | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>(() => {
     if (!mediaFile) return 'failed';
     return 'loading';
   });
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
-  const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
-  const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
 
   // Sharing observers keeps message-heavy chats from allocating one per attachment.
   useEffect(() => {
     let isMounted = true;
+    let unsubscribePreview = () => {};
     if (!mediaFile) {
       setFileURL(null);
+      setPreviewDimensions(null);
       setLoadState('failed');
       return;
     }
 
-    const cached = blobCache.get(mediaFile);
-    if (cached) {
-      setFileURL(cached);
-      setLoadState('loading');
-      return;
-    }
-    if (mediaFile.url) {
-      blobCache.put(mediaFile, mediaFile.url);
-      setFileURL(mediaFile.url);
-      setLoadState('loading');
-      return;
-    }
-    if (!mediaFile.handle) {
-      setFileURL(null);
-      setLoadState('failed');
-      return;
-    }
-
-    setFileURL(null);
-    setLoadState('loading');
+    setPreviewDimensions(null);
     const el = mediaRef.current;
     if (!el) return;
 
+    const loadOriginal = () => {
+      const cached = blobCache.get(mediaFile);
+      if (cached) {
+        setFileURL(cached);
+        setLoadState('loading');
+        return;
+      }
+      if (mediaFile.url) {
+        blobCache.put(mediaFile, mediaFile.url);
+        setFileURL(mediaFile.url);
+        setLoadState('loading');
+        return;
+      }
+      if (!mediaFile.handle) {
+        setFileURL(null);
+        setLoadState('failed');
+        return;
+      }
+      void blobCache.getOrCreate(mediaFile).then(url => {
+        if (!isMounted) return;
+        setFileURL(url);
+        setLoadState(url ? 'loading' : 'failed');
+      });
+    };
+
     const observer = getSharedLazyMediaObserver();
     lazyMediaLoadCallbacks.set(el, () => {
-      blobCache.getOrCreate(mediaFile).then(url => {
+      if (!usesGeneratedPreview) {
+        loadOriginal();
+        return;
+      }
+
+      const ratio = window.devicePixelRatio || 1;
+      const wrapperWidth = el.getBoundingClientRect().width;
+      const messageWidth = el.closest('.message-wrapper')?.getBoundingClientRect().width || wrapperWidth * 2;
+      const cssWidth = isGrid ? wrapperWidth : Math.max(wrapperWidth, messageWidth * 0.5);
+      const cssHeight = isGrid ? wrapperWidth : 300;
+      const options = {
+        width: getChatPreviewPixelSize(cssWidth, ratio),
+        height: getChatPreviewPixelSize(cssHeight, ratio),
+        fit: isGrid ? 'cover' as const : 'contain' as const,
+      };
+
+      unsubscribePreview = chatImagePreviewCache.subscribe(mediaFile, options, preview => {
         if (!isMounted) return;
-        if (url) {
-          setFileURL(url);
-          setLoadState('loading');
-        } else {
-          setLoadState('failed');
+        if (!preview) {
+          // Unsupported image formats still remain viewable through the original path.
+          loadOriginal();
+          return;
         }
+
+        const decoded = new Image();
+        decoded.decoding = 'async';
+        decoded.src = preview.url;
+        void decoded.decode().then(() => {
+          if (!isMounted) return;
+          setPreviewDimensions(preview);
+          setFileURL(preview.url);
+          setLoadState('ready');
+        }, () => {
+          if (!isMounted) return;
+          // Let the mounted image's load event be the compatibility fallback.
+          setPreviewDimensions(preview);
+          setFileURL(preview.url);
+          setLoadState('loading');
+        });
       });
     });
+    setFileURL(null);
+    setLoadState('loading');
     observer.observe(el);
 
-    return () => { 
-      isMounted = false; 
+    return () => {
+      isMounted = false;
+      unsubscribePreview();
       observer.unobserve(el);
       lazyMediaLoadCallbacks.delete(el);
     };
-  }, [mediaFile]);
+  }, [isGrid, mediaFile, usesGeneratedPreview]);
 
   // Compensate for lazy media height changes so the user's scroll anchor stays stable.
   useEffect(() => {
@@ -399,6 +446,8 @@ function LazyMedia({
             src={fileURL}
             alt={isSticker ? 'Sticker' : 'Image'}
             className="preview"
+            width={previewDimensions?.sourceWidth}
+            height={previewDimensions?.sourceHeight}
             onLoad={() => setLoadState('ready')}
             onError={() => {
               setFileURL(null);
@@ -605,6 +654,7 @@ export const MessageBubble = memo(function MessageBubble({
                     mediaFile={mediaFile}
                     preferredType={preferredType}
                     isSticker={isSticker}
+                    isGrid
                     onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
                   />
                 ))}
