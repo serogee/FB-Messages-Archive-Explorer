@@ -192,6 +192,8 @@ const MessageChunk = React.memo(function MessageChunk({
       .then(() => {
         if (mountedRef.current) {
           const container = chatContainerRef.current;
+          // The chunk itself is about to change height, so it is only an
+          // exclusion boundary; anchoring chooses stable content in the viewport.
           if (container) captureChatScrollAnchor(container, false, chunkRef.current);
           setRendered(true);
         }

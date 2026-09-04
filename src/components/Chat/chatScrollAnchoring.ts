@@ -15,6 +15,8 @@ interface ChatAnchorState {
   visibleCandidates: Set<HTMLElement>;
   observer: IntersectionObserver;
   anchor: ChatAnchor | null;
+  separatelyObservedAnchor: HTMLElement | null;
+  anchorGeneration: number;
   direction: ChatOpeningDirection;
   lastScrollTop: number | null;
   releaseTimer: ReturnType<typeof setTimeout> | null;
@@ -55,11 +57,36 @@ function createAnchor(
   };
 }
 
+function isInside(element: HTMLElement, possibleAncestor?: HTMLElement | null): boolean {
+  return !!possibleAncestor && (
+    element === possibleAncestor
+    || (typeof possibleAncestor.contains === 'function' && possibleAncestor.contains(element))
+  );
+}
+
+function setChatAnchor(state: ChatAnchorState, anchor: ChatAnchor | null): void {
+  const separatelyObserved = state.separatelyObservedAnchor;
+  if (separatelyObserved && !state.candidates.has(separatelyObserved)) {
+    state.observer.unobserve(separatelyObserved);
+  }
+
+  state.anchor = anchor;
+  state.separatelyObservedAnchor = null;
+  state.anchorGeneration++;
+
+  if (anchor && !state.candidates.has(anchor.element)) {
+    state.observer.observe(anchor.element);
+    state.separatelyObservedAnchor = anchor.element;
+  }
+}
+
 function createChatAnchorState(container: HTMLElement): ChatAnchorState {
   const state = {} as ChatAnchorState;
   state.candidates = new Map();
   state.visibleCandidates = new Set();
   state.anchor = null;
+  state.separatelyObservedAnchor = null;
+  state.anchorGeneration = 0;
   state.direction = container.dataset.scrollDir === 'up' ? 'up' : 'down';
   state.lastScrollTop = Number.isFinite(Number(container.dataset.lastScrollTop))
     ? Number(container.dataset.lastScrollTop)
@@ -68,11 +95,25 @@ function createChatAnchorState(container: HTMLElement): ChatAnchorState {
   state.observer = new IntersectionObserver(entries => {
     for (const entry of entries) {
       const element = entry.target as HTMLElement;
-      if (entry.isIntersecting) state.visibleCandidates.add(element);
-      else state.visibleCandidates.delete(element);
+      if (state.candidates.has(element)) {
+        if (entry.isIntersecting) state.visibleCandidates.add(element);
+        else state.visibleCandidates.delete(element);
+      }
+
+      if (
+        !entry.isIntersecting
+        && state.anchor?.element === element
+        && container.dataset.jumpInProgress !== 'true'
+      ) {
+        setChatAnchor(state, selectLayoutAnchor(container, state, element));
+      }
     }
-    if (container.dataset.jumpInProgress !== 'true' && !state.anchor) {
-      state.anchor = selectChatAnchor(container, state);
+    if (
+      container.dataset.jumpInProgress !== 'true'
+      && !state.anchor
+      && state.candidates.size > 0
+    ) {
+      setChatAnchor(state, selectLayoutAnchor(container, state));
     }
   }, { root: container, threshold: 0 });
   return state;
@@ -87,10 +128,18 @@ function getChatAnchorState(container: HTMLElement): ChatAnchorState {
   return state;
 }
 
-function selectChatAnchor(container: HTMLElement, state: ChatAnchorState): ChatAnchor | null {
+function selectChatAnchor(
+  container: HTMLElement,
+  state: ChatAnchorState,
+  excludedElement?: HTMLElement | null,
+): ChatAnchor | null {
   const viewport = container.getBoundingClientRect();
   const visible = [...state.visibleCandidates]
-    .filter(element => element.isConnected && state.candidates.has(element))
+    .filter(element => (
+      element.isConnected
+      && state.candidates.has(element)
+      && !isInside(element, excludedElement)
+    ))
     .map(element => ({
       element,
       kind: state.candidates.get(element)!,
@@ -109,6 +158,69 @@ function selectChatAnchor(container: HTMLElement, state: ChatAnchorState): ChatA
   return createAnchor(selected.element, selected.kind, edge, viewport);
 }
 
+function getHitMessage(container: HTMLElement, x: number, y: number): HTMLElement | null {
+  const hit = container.ownerDocument?.elementFromPoint?.(x, y) as HTMLElement | null;
+  if (!hit || (typeof container.contains === 'function' && !container.contains(hit))) return null;
+
+  const directMessage = hit.closest?.('.message[data-msg-index]') as HTMLElement | null;
+  if (directMessage) return directMessage;
+
+  const wrapper = hit.closest?.('.message-wrapper') as HTMLElement | null;
+  return wrapper?.querySelector?.('.message[data-msg-index]') as HTMLElement | null;
+}
+
+function selectStableMessageAnchor(
+  container: HTMLElement,
+  state: ChatAnchorState,
+  excludedElement?: HTMLElement | null,
+): ChatAnchor | null {
+  const viewport = container.getBoundingClientRect();
+  const width = viewport.right - viewport.left;
+  const height = viewport.bottom - viewport.top;
+  if (width <= 0 || height <= 0 || !container.ownerDocument?.elementFromPoint) return null;
+
+  const xPositions = [0.12, 0.5, 0.88].map(ratio => viewport.left + width * ratio);
+  const stepCount = 12;
+  for (let step = 0; step <= stepCount; step++) {
+    const progress = step / stepCount;
+    const y = state.direction === 'up'
+      ? viewport.bottom - 1 - progress * Math.max(0, height - 2)
+      : viewport.top + 1 + progress * Math.max(0, height - 2);
+
+    for (const x of xPositions) {
+      const message = getHitMessage(container, x, y);
+      if (!message?.isConnected || isInside(message, excludedElement)) continue;
+      if (message.querySelector?.('.lazy-media-wrapper[data-media-geometry-pending="true"]')) continue;
+
+      const rect = message.getBoundingClientRect();
+      if (!intersectsViewport(rect, viewport)) continue;
+      const edge = anchorEdgeForRect(rect, viewport, state.direction);
+      return createAnchor(message, 'message', edge, viewport);
+    }
+  }
+
+  return null;
+}
+
+function selectLayoutAnchor(
+  container: HTMLElement,
+  state: ChatAnchorState,
+  excludedElement?: HTMLElement | null,
+): ChatAnchor | null {
+  return selectChatAnchor(container, state, excludedElement)
+    || selectStableMessageAnchor(container, state, excludedElement);
+}
+
+function isUsableAnchor(
+  anchor: ChatAnchor,
+  viewport: DOMRect,
+  changingElement?: HTMLElement | null,
+): boolean {
+  return anchor.element.isConnected
+    && !isInside(anchor.element, changingElement)
+    && intersectsViewport(anchor.element.getBoundingClientRect(), viewport);
+}
+
 function cancelAnchorRelease(state: ChatAnchorState): void {
   if (!state.releaseTimer) return;
   clearTimeout(state.releaseTimer);
@@ -117,9 +229,12 @@ function cancelAnchorRelease(state: ChatAnchorState): void {
 
 function scheduleAnchorRelease(state: ChatAnchorState): void {
   cancelAnchorRelease(state);
+  const scheduledGeneration = state.anchorGeneration;
   state.releaseTimer = setTimeout(() => {
     state.releaseTimer = null;
-    if (state.candidates.size === 0) state.anchor = null;
+    if (state.candidates.size === 0 && state.anchorGeneration === scheduledGeneration) {
+      setChatAnchor(state, null);
+    }
   }, ANCHOR_RELEASE_DELAY_MS);
 }
 
@@ -137,43 +252,45 @@ export function registerChatAnchorCandidate(
   }
   state.observer.observe(element);
   if (!state.anchor && container.dataset.jumpInProgress !== 'true') {
-    state.anchor = selectChatAnchor(container, state);
+    setChatAnchor(state, selectLayoutAnchor(container, state));
   }
 
   return () => {
     state.observer.unobserve(element);
     state.candidates.delete(element);
     state.visibleCandidates.delete(element);
-    if (state.anchor?.element === element && !element.isConnected) state.anchor = null;
+    if (state.anchor?.element === element) {
+      if (!element.isConnected) {
+        setChatAnchor(state, null);
+      } else {
+        state.observer.observe(element);
+        state.separatelyObservedAnchor = element;
+      }
+    }
     if (state.candidates.size === 0) scheduleAnchorRelease(state);
   };
 }
 
-/** Capture a one-shot anchor immediately before a virtual chunk changes size. */
+/** Capture a stable viewport anchor immediately before an element changes size. */
 export function captureChatScrollAnchor(
   container: HTMLElement,
   forceNew = false,
-  preferredElement?: HTMLElement | null,
+  changingElement?: HTMLElement | null,
 ): void {
   if (container.dataset.jumpInProgress === 'true') return;
   const state = getChatAnchorState(container);
+  cancelAnchorRelease(state);
   state.lastScrollTop = container.scrollTop;
   container.dataset.lastScrollTop = String(container.scrollTop);
   const viewport = container.getBoundingClientRect();
   const current = state.anchor;
-  const keepPendingAnchor = state.candidates.size > 0;
-  if (!forceNew && current?.element.isConnected && (keepPendingAnchor || !preferredElement)) {
+  if (!forceNew && current && isUsableAnchor(current, viewport, changingElement)) {
     current.offset = edgePosition(current.element.getBoundingClientRect(), current.edge) - viewport.top;
+    state.anchorGeneration++;
     return;
   }
 
-  if (preferredElement?.isConnected) {
-    const rect = preferredElement.getBoundingClientRect();
-    const edge = anchorEdgeForRect(rect, viewport, state.direction);
-    state.anchor = createAnchor(preferredElement, 'message', edge, viewport);
-    return;
-  }
-  state.anchor = selectChatAnchor(container, state);
+  setChatAnchor(state, selectLayoutAnchor(container, state, changingElement));
 }
 
 export function recordChatScroll(container: HTMLElement): void {
@@ -194,7 +311,7 @@ export function recordChatScroll(container: HTMLElement): void {
 
   const isAtBottom = Math.abs(container.scrollHeight - scrollTop - container.clientHeight) < 20;
   if (!isAtBottom && !state.anchor && state.candidates.size > 0) {
-    state.anchor = selectChatAnchor(container, state);
+    setChatAnchor(state, selectLayoutAnchor(container, state));
   }
 }
 
@@ -206,13 +323,13 @@ export function stabilizeChatScrollAnchor(container: HTMLElement): boolean {
     container.scrollTop = container.scrollHeight;
     state.lastScrollTop = container.scrollTop;
     container.dataset.lastScrollTop = String(container.scrollTop);
-    state.anchor = null;
+    setChatAnchor(state, null);
     return true;
   }
 
   let anchor = state.anchor;
   if (!anchor?.element.isConnected) {
-    state.anchor = selectChatAnchor(container, state);
+    setChatAnchor(state, state.candidates.size > 0 ? selectLayoutAnchor(container, state) : null);
     anchor = state.anchor;
     if (!anchor) return false;
   }
@@ -228,7 +345,7 @@ export function stabilizeChatScrollAnchor(container: HTMLElement): boolean {
     anchor.offset = currentOffset;
     state.lastScrollTop = container.scrollTop;
     container.dataset.lastScrollTop = String(container.scrollTop);
-    if (state.candidates.size === 0) state.anchor = null;
+    if (state.candidates.size === 0) setChatAnchor(state, null);
     return false;
   }
 
@@ -238,7 +355,7 @@ export function stabilizeChatScrollAnchor(container: HTMLElement): boolean {
   anchor.offset = currentOffset - appliedCorrection;
   state.lastScrollTop = container.scrollTop;
   container.dataset.lastScrollTop = String(container.scrollTop);
-  if (state.candidates.size === 0) state.anchor = null;
+  if (state.candidates.size === 0) setChatAnchor(state, null);
   return appliedCorrection !== 0;
 }
 
@@ -247,16 +364,19 @@ export function resetChatScrollAnchor(container: HTMLElement): void {
   cancelAnchorRelease(state);
   state.lastScrollTop = container.scrollTop;
   container.dataset.lastScrollTop = String(container.scrollTop);
-  state.anchor = container.dataset.jumpInProgress === 'true'
-    ? null
-    : selectChatAnchor(container, state);
+  setChatAnchor(
+    state,
+    container.dataset.jumpInProgress === 'true' || state.candidates.size === 0
+      ? null
+      : selectLayoutAnchor(container, state),
+  );
 }
 
 export function prepareChatScrollAnchorForJump(container: HTMLElement): void {
   const state = getChatAnchorState(container);
   cancelAnchorRelease(state);
   state.direction = 'down';
-  state.anchor = null;
+  setChatAnchor(state, null);
   state.lastScrollTop = container.scrollTop;
   container.dataset.scrollDir = 'down';
   container.dataset.lastScrollTop = String(container.scrollTop);
