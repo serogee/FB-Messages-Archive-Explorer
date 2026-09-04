@@ -776,6 +776,16 @@
     color: #555;
     transition: all 0.2s ease;
 }
+.media-loading-placeholder {
+    height: 110px;
+    color: var(--muted);
+    background: var(--border);
+}
+.message-media-grid .media-loading-placeholder {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+}
 .preview-video,
 .preview {
     display: block;

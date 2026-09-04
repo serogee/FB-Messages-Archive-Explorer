@@ -9,7 +9,7 @@ import { escapeHtml } from '../../services/storage';
 import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
 import { ReactionModal } from './ReactionModal';
 import { MediaFileSize } from '../MediaFileSize';
-import { FileText, Info, Link as LinkIcon, Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { FileText, Image as ImageIcon, Info, Link as LinkIcon, Music2, Pause, Play, Video, Volume2, VolumeX } from 'lucide-react';
 
 const lazyMediaLoadCallbacks = new Map<Element, () => void>();
 const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => void>();
@@ -240,6 +240,10 @@ function LazyMedia({
     if (!mediaFile) return null;
     return blobCache.get(mediaFile) || mediaFile.url || null;
   });
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>(() => {
+    if (!mediaFile) return 'failed';
+    return blobCache.get(mediaFile) || mediaFile.url ? 'ready' : 'loading';
+  });
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
   const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
@@ -248,26 +252,45 @@ function LazyMedia({
   // Sharing observers keeps message-heavy chats from allocating one per attachment.
   useEffect(() => {
     let isMounted = true;
-    if (!mediaFile || !mediaFile.handle || fileURL) return;
+    if (!mediaFile) {
+      setFileURL(null);
+      setLoadState('failed');
+      return;
+    }
 
     const cached = blobCache.get(mediaFile);
     if (cached) {
       setFileURL(cached);
+      setLoadState('ready');
       return;
     }
     if (mediaFile.url) {
       blobCache.put(mediaFile, mediaFile.url);
       setFileURL(mediaFile.url);
+      setLoadState('ready');
+      return;
+    }
+    if (!mediaFile.handle) {
+      setFileURL(null);
+      setLoadState('failed');
       return;
     }
 
+    setFileURL(null);
+    setLoadState('loading');
     const el = mediaRef.current;
     if (!el) return;
 
     const observer = getSharedLazyMediaObserver();
     lazyMediaLoadCallbacks.set(el, () => {
       blobCache.getOrCreate(mediaFile).then(url => {
-        if (isMounted && url) setFileURL(url);
+        if (!isMounted) return;
+        if (url) {
+          setFileURL(url);
+          setLoadState('ready');
+        } else {
+          setLoadState('failed');
+        }
       });
     });
     observer.observe(el);
@@ -277,7 +300,7 @@ function LazyMedia({
       observer.unobserve(el);
       lazyMediaLoadCallbacks.delete(el);
     };
-  }, [mediaFile, fileURL]);
+  }, [mediaFile]);
 
   // Compensate for lazy media height changes so the user's scroll anchor stays stable.
   useEffect(() => {
@@ -357,12 +380,23 @@ function LazyMedia({
   }, [mediaType]);
 
   let content: React.ReactNode;
+  const loadingPlaceholder = (label: string, icon: React.ReactNode, audio = false) => (
+    <span
+      className={`placeholder media-loading-placeholder${audio ? ' audio-placeholder' : ''}`}
+      role="status"
+      aria-label={label}
+    >
+      {icon}
+    </span>
+  );
   if (mediaType === 'image') {
     content = fileURL
       ? <div className={`media-preview${isSticker ? ' sticker-preview' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
           <img src={fileURL} alt={isSticker ? 'Sticker' : 'Image'} className="preview" />
         </div>
-      : <span className="placeholder">[ Image not found ]</span>;
+      : loadState === 'loading'
+        ? loadingPlaceholder(isSticker ? 'Loading sticker' : 'Loading image', <ImageIcon aria-hidden="true" size={24} />)
+        : <span className="placeholder">[ Image not found ]</span>;
   } else if (mediaType === 'video') {
     content = fileURL
       ? <div className="media-preview" onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
@@ -370,14 +404,18 @@ function LazyMedia({
             <source src={fileURL} type="video/mp4" />
           </video>
         </div>
-      : <span className="placeholder">[ Video not found ]</span>;
+      : loadState === 'loading'
+        ? loadingPlaceholder('Loading video', <Video aria-hidden="true" size={24} />)
+        : <span className="placeholder">[ Video not found ]</span>;
   } else if (mediaType === 'audio') {
     content = fileURL
       ? <div className="media-audio-wrap">
           <InlineAudioPlayer src={fileURL} />
           {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} aria-label="Open audio in viewer" title="Open in viewer"><Info size={15} /></button>}
         </div>
-      : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
+      : loadState === 'loading'
+        ? loadingPlaceholder('Loading audio', <Music2 aria-hidden="true" size={20} />, true)
+        : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
   } else {
     const filename = mediaPath.split('/').pop() || 'File attachment';
     content = mediaFile

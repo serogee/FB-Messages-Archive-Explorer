@@ -66,7 +66,8 @@ export function useChat(): {
       let attachmentLoadingComplete = false;
       const updateCombinedProgress = () => {
         if (!abortCtrl.signal.aborted) {
-          setMsgProgress((messageProgress + attachmentProgress) / 2);
+          // Reserve 100% for the completed state after the loading view closes.
+          setMsgProgress(Math.min(0.99, (messageProgress + attachmentProgress) / 2));
         }
       };
       const updateAttachmentProgress = (done: number, total: number) => {
