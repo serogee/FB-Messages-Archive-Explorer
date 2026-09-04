@@ -3,7 +3,7 @@ import type { ReadableDirectoryHandle, ReadableFileHandle } from '../types/fileS
 import { blobCache } from './blobCache';
 import { imageThumbnailCache } from './imageThumbnailCache';
 import { chatImagePreviewCache } from './chatImagePreviewCache';
-import { videoPosterCache } from './videoPosterCache';
+import { chatVideoPosterCache, videoPosterCache } from './videoPosterCache';
 
 
 function normalizeMediaPath(path: string): string {
@@ -76,6 +76,7 @@ export function findMediaFile(state: MediaState, path: string): MediaEntry | nul
 export function revokeAllMedia(state: MediaState): void {
   chatImagePreviewCache.clear();
   imageThumbnailCache.clear();
+  chatVideoPosterCache.clear();
   videoPosterCache.clear();
   blobCache.clear();
   for (const url of Object.values(state.files)) {

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createVideoPoster, createVideoPosterDetails, VideoPosterCache } from '../src/services/videoPosterCache';
+import {
+  createVideoPoster,
+  createVideoPosterDetails,
+  getPosterCandidateTimes,
+  isVideoFrameMostlyBlack,
+  VideoPosterCache,
+} from '../src/services/videoPosterCache';
 import type { MediaEntry } from '../src/types/messenger';
 
 afterEach(() => {
@@ -61,6 +67,23 @@ describe('video poster cache', () => {
 });
 
 describe('video poster creation', () => {
+  it('checks later parts of a video when an early frame is unusable', () => {
+    expect(getPosterCandidateTimes(10)).toEqual([1, 2.5, 5]);
+    expect(getPosterCandidateTimes(null)).toEqual([0]);
+  });
+
+  it('distinguishes black frames from visible frames', () => {
+    const pixels = new Uint8ClampedArray(4 * 16).fill(0);
+    for (let index = 3; index < pixels.length; index += 4) pixels[index] = 255;
+    const context = { getImageData: () => ({ data: pixels }) } as unknown as CanvasRenderingContext2D;
+
+    expect(isVideoFrameMostlyBlack(context, 4, 4)).toBe(true);
+    pixels[0] = 220;
+    pixels[1] = 220;
+    pixels[2] = 220;
+    expect(isVideoFrameMostlyBlack(context, 4, 4)).toBe(false);
+  });
+
   it('stops waiting for metadata when poster generation is cancelled', async () => {
     class WaitingVideo extends EventTarget {
       preload = '';
@@ -167,10 +190,68 @@ describe('video poster creation', () => {
     await expect(createVideoPoster('blob:source')).resolves.toBe('blob:poster');
 
     expect(video.preload).toBe('metadata');
-    expect(video.currentTime).toBe(0.5);
+    expect(video.currentTime).toBe(1);
     expect(drawImage).toHaveBeenCalledOnce();
     expect(video.pauseCalls).toBe(1);
     expect(video.removedSource).toBe(true);
     expect(video.loadCalls).toBe(2);
+  });
+
+  it('moves to a later candidate when the first sampled frame is black', async () => {
+    class FakeVideo extends EventTarget {
+      preload = '';
+      muted = false;
+      playsInline = false;
+      readyState = 0;
+      duration = 20;
+      videoWidth = 320;
+      videoHeight = 180;
+      src = '';
+      private playbackTime = 0;
+
+      get currentTime(): number { return this.playbackTime; }
+      set currentTime(value: number) {
+        this.playbackTime = value;
+        queueMicrotask(() => {
+          this.readyState = 2;
+          this.dispatchEvent(new Event('seeked'));
+        });
+      }
+
+      load(): void {
+        if (!this.src || this.readyState !== 0) return;
+        queueMicrotask(() => {
+          this.readyState = 1;
+          this.dispatchEvent(new Event('loadedmetadata'));
+        });
+      }
+
+      pause(): void {}
+      removeAttribute(): void { this.src = ''; }
+    }
+
+    const video = new FakeVideo();
+    let framesDrawn = 0;
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => ({
+        drawImage: () => { framesDrawn++; },
+        getImageData: () => {
+          const data = new Uint8ClampedArray(canvas.width * canvas.height * 4);
+          for (let index = 3; index < data.length; index += 4) data[index] = 255;
+          if (framesDrawn > 1) data.fill(220);
+          return { data };
+        },
+      })),
+      toBlob: vi.fn((resolve: (blob: Blob | null) => void) => resolve(new Blob())),
+    };
+    vi.stubGlobal('HTMLMediaElement', { HAVE_METADATA: 1, HAVE_CURRENT_DATA: 2 });
+    vi.stubGlobal('document', { createElement: vi.fn((tagName: string) => tagName === 'video' ? video : canvas) });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:visible-poster');
+
+    await expect(createVideoPoster('blob:source')).resolves.toBe('blob:visible-poster');
+    expect(framesDrawn).toBe(2);
+    expect(video.currentTime).toBe(5);
   });
 });

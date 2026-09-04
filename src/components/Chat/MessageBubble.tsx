@@ -4,6 +4,7 @@ import { getMessageTimestamp, fixEncoding } from '../../services/parser';
 import { findMediaFile, getMediaReferencePath, getMediaType } from '../../services/media';
 import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { chatImagePreviewCache, getChatPreviewPixelSize, type ChatImagePreview } from '../../services/chatImagePreviewCache';
+import { chatVideoPosterCache } from '../../services/videoPosterCache';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
@@ -14,10 +15,8 @@ import { FileText, Image as ImageIcon, Info, Link as LinkIcon, Music2, Pause, Pl
 
 const lazyMediaLoadCallbacks = new Map<Element, () => void>();
 const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => void>();
-const lazyMediaVisibilityCallbacks = new Map<Element, (isVisible: boolean) => void>();
 let sharedLazyMediaObserver: IntersectionObserver | null = null;
 let sharedLazyMediaResizeObserver: ResizeObserver | null = null;
-let sharedLazyMediaVisibilityObserver: IntersectionObserver | null = null;
 
 function getSharedLazyMediaObserver() {
   if (!sharedLazyMediaObserver) {
@@ -45,18 +44,6 @@ function getSharedLazyMediaResizeObserver() {
     });
   }
   return sharedLazyMediaResizeObserver;
-}
-
-function getSharedLazyMediaVisibilityObserver() {
-  if (!sharedLazyMediaVisibilityObserver) {
-    sharedLazyMediaVisibilityObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        const callback = lazyMediaVisibilityCallbacks.get(entry.target);
-        if (callback) callback(entry.isIntersecting);
-      });
-    }, { threshold: 0 });
-  }
-  return sharedLazyMediaVisibilityObserver;
 }
 
 function compensateMediaHeightChange(el: Element, oldHeight: number, newHeight: number): void {
@@ -252,6 +239,152 @@ function InlineAudioPlayer({ src }: { src: string }) {
   );
 }
 
+type MediaLoadState = 'loading' | 'ready' | 'failed';
+
+function MediaLoadingPlaceholder({ label, icon, audio = false }: { label: string; icon: React.ReactNode; audio?: boolean }) {
+  return (
+    <span
+      className={`placeholder media-loading-placeholder${audio ? ' audio-placeholder' : ''}`}
+      role="status"
+      aria-label={label}
+    >
+      {icon}
+    </span>
+  );
+}
+
+function ChatImageAttachment({
+  url,
+  state,
+  isSticker,
+  dimensions,
+  onActivate,
+  onReady,
+  onFailed,
+}: {
+  url: string | null;
+  state: MediaLoadState;
+  isSticker: boolean;
+  dimensions: Pick<ChatImagePreview, 'sourceWidth' | 'sourceHeight'> | null;
+  onActivate?: () => void;
+  onReady: () => void;
+  onFailed: () => void;
+}) {
+  if (!url) {
+    return state === 'loading'
+      ? <MediaLoadingPlaceholder label={isSticker ? 'Loading sticker' : 'Loading image'} icon={<ImageIcon aria-hidden="true" size={24} />} />
+      : <span className="placeholder">[ Image not found ]</span>;
+  }
+
+  return (
+    <div className={`media-preview${isSticker ? ' sticker-preview' : ''}${state === 'loading' ? ' media-preview-loading' : ''}`} onClick={onActivate} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
+      <img
+        src={url}
+        alt={isSticker ? 'Sticker' : 'Image'}
+        className="preview"
+        width={dimensions?.sourceWidth}
+        height={dimensions?.sourceHeight}
+        onLoad={onReady}
+        onError={onFailed}
+      />
+      {state === 'loading' && <MediaLoadingPlaceholder label={isSticker ? 'Loading sticker' : 'Loading image'} icon={<ImageIcon aria-hidden="true" size={24} />} />}
+    </div>
+  );
+}
+
+function ChatVideoAttachment({
+  url,
+  state,
+  dimensions,
+  onActivate,
+  onReady,
+  onFailed,
+}: {
+  url: string | null;
+  state: MediaLoadState;
+  dimensions: Pick<ChatImagePreview, 'sourceWidth' | 'sourceHeight'> | null;
+  onActivate: () => void;
+  onReady: () => void;
+  onFailed: () => void;
+}) {
+  if (!url) {
+    return state === 'loading'
+      ? <MediaLoadingPlaceholder label="Loading video" icon={<Video aria-hidden="true" size={24} />} />
+      : <button type="button" className="placeholder chat-video-fallback" onClick={onActivate}>
+          <Video aria-hidden="true" size={24} />
+          <span>Open video</span>
+        </button>;
+  }
+
+  return (
+    <div
+      className={`media-preview${state === 'loading' ? ' media-preview-loading' : ''}`}
+      onClick={onActivate}
+      onKeyDown={event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        onActivate();
+      }}
+      role="button"
+      tabIndex={0}
+      style={{ cursor: 'pointer' }}
+    >
+      <img
+        src={url}
+        className="preview-video chat-video-poster"
+        alt="Video preview"
+        width={dimensions?.sourceWidth}
+        height={dimensions?.sourceHeight}
+        onLoad={onReady}
+        onError={onFailed}
+      />
+      <span className="chat-video-play" aria-hidden="true"><Play fill="currentColor" size={26} /></span>
+      {state === 'loading' && <MediaLoadingPlaceholder label="Loading video" icon={<Video aria-hidden="true" size={24} />} />}
+    </div>
+  );
+}
+
+function ChatAudioAttachment({ url, state, onOpenViewer }: { url: string | null; state: MediaLoadState; onOpenViewer?: () => void }) {
+  if (!url) {
+    return state === 'loading'
+      ? <MediaLoadingPlaceholder label="Loading audio" icon={<Music2 aria-hidden="true" size={20} />} audio />
+      : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
+  }
+
+  return (
+    <div className="media-audio-wrap">
+      <InlineAudioPlayer src={url} />
+      {onOpenViewer && <button className="media-audio-expand" onClick={onOpenViewer} aria-label="Open audio in viewer" title="Open in viewer"><Info size={15} /></button>}
+    </div>
+  );
+}
+
+function ChatFileAttachment({ mediaPath, mediaFile, onOpenViewer }: {
+  mediaPath: string;
+  mediaFile: ReturnType<typeof findMediaFile>;
+  onOpenViewer?: () => void;
+}) {
+  const filename = mediaPath.split('/').pop() || 'File attachment';
+  if (!mediaFile) return <span className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
+
+  return (
+    <div className="media-file-card">
+      <button type="button" className="media-file-open" onClick={() => openMediaEntryInNewTab(mediaFile)} title={`Open ${filename} in a new tab`}>
+        <FileText size={17} />
+        <span className="media-file-copy">
+          <span className="media-file-name">{filename}</span>
+          <MediaFileSize entry={mediaFile} className="media-file-size" />
+        </span>
+      </button>
+      {onOpenViewer && (
+        <button type="button" className="media-file-info" onClick={onOpenViewer} aria-label={`View information for ${filename}`} title="Open in viewer">
+          <Info size={15} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function LazyMedia({
   mediaPath,
   mediaFile,
@@ -271,16 +404,17 @@ function LazyMedia({
   const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
   const usesGeneratedPreview = mediaType === 'image' && !isSticker && ext !== 'gif';
   const [fileURL, setFileURL] = useState<string | null>(() => {
-    if (!mediaFile || usesGeneratedPreview) return null;
+    if (!mediaFile || usesGeneratedPreview || mediaType === 'video') return null;
     return blobCache.get(mediaFile) || mediaFile.url || null;
   });
   const [previewDimensions, setPreviewDimensions] = useState<Pick<ChatImagePreview, 'sourceWidth' | 'sourceHeight'> | null>(null);
-  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>(() => {
+  const [loadState, setLoadState] = useState<MediaLoadState>(() => {
     if (!mediaFile) return 'failed';
     return 'loading';
   });
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
+  const activateVideo = onMediaClick || (() => openMediaEntryInNewTab(mediaFile));
 
   // Sharing observers keeps message-heavy chats from allocating one per attachment.
   useEffect(() => {
@@ -324,6 +458,24 @@ function LazyMedia({
 
     const observer = getSharedLazyMediaObserver();
     lazyMediaLoadCallbacks.set(el, () => {
+      if (mediaType === 'video') {
+        unsubscribePreview = chatVideoPosterCache.subscribe(mediaFile, poster => {
+          if (!isMounted) return;
+          if (!poster) {
+            setFileURL(null);
+            setLoadState('failed');
+            return;
+          }
+          setPreviewDimensions(poster.sourceWidth && poster.sourceHeight ? {
+            sourceWidth: poster.sourceWidth,
+            sourceHeight: poster.sourceHeight,
+          } : null);
+          setFileURL(poster.url);
+          setLoadState('loading');
+        });
+        return;
+      }
+
       if (!usesGeneratedPreview) {
         loadOriginal();
         return;
@@ -375,7 +527,7 @@ function LazyMedia({
       observer.unobserve(el);
       lazyMediaLoadCallbacks.delete(el);
     };
-  }, [isGrid, mediaFile, usesGeneratedPreview]);
+  }, [isGrid, mediaFile, mediaType, usesGeneratedPreview]);
 
   // Compensate for lazy media height changes so the user's scroll anchor stays stable.
   useEffect(() => {
@@ -408,115 +560,30 @@ function LazyMedia({
     };
   }, []);
 
-  useEffect(() => {
-    const el = mediaRef.current;
-    if (!el || mediaType !== 'video') return;
-
-    const observer = getSharedLazyMediaVisibilityObserver();
-    lazyMediaVisibilityCallbacks.set(el, (isVisible) => {
-      if (isVisible) return;
-
-      const video = el.querySelector('video');
-      if (video && !video.paused) {
-        video.pause();
-      }
-    });
-    observer.observe(el);
-
-    return () => {
-      observer.unobserve(el);
-      lazyMediaVisibilityCallbacks.delete(el);
-    };
-  }, [mediaType]);
-
   let content: React.ReactNode;
-  const loadingPlaceholder = (label: string, icon: React.ReactNode, audio = false) => (
-    <span
-      className={`placeholder media-loading-placeholder${audio ? ' audio-placeholder' : ''}`}
-      role="status"
-      aria-label={label}
-    >
-      {icon}
-    </span>
-  );
   if (mediaType === 'image') {
-    content = fileURL
-      ? <div className={`media-preview${isSticker ? ' sticker-preview' : ''}${loadState === 'loading' ? ' media-preview-loading' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
-          <img
-            src={fileURL}
-            alt={isSticker ? 'Sticker' : 'Image'}
-            className="preview"
-            width={previewDimensions?.sourceWidth}
-            height={previewDimensions?.sourceHeight}
-            onLoad={() => setLoadState('ready')}
-            onError={() => {
-              setFileURL(null);
-              setLoadState('failed');
-            }}
-          />
-          {loadState === 'loading' && loadingPlaceholder(isSticker ? 'Loading sticker' : 'Loading image', <ImageIcon aria-hidden="true" size={24} />)}
-        </div>
-      : loadState === 'loading'
-        ? loadingPlaceholder(isSticker ? 'Loading sticker' : 'Loading image', <ImageIcon aria-hidden="true" size={24} />)
-        : <span className="placeholder">[ Image not found ]</span>;
+    content = <ChatImageAttachment
+      url={fileURL}
+      state={loadState}
+      isSticker={isSticker}
+      dimensions={previewDimensions}
+      onActivate={onMediaClick}
+      onReady={() => setLoadState('ready')}
+      onFailed={() => { setFileURL(null); setLoadState('failed'); }}
+    />;
   } else if (mediaType === 'video') {
-    content = fileURL
-      ? <div className={`media-preview${loadState === 'loading' ? ' media-preview-loading' : ''}`} onClick={onMediaClick} role="button" tabIndex={0} style={{ cursor: 'pointer' }}>
-          <video
-            controls
-            className="preview-video"
-            onLoadedData={() => setLoadState('ready')}
-            onError={() => {
-              setFileURL(null);
-              setLoadState('failed');
-            }}
-            onClick={(e) => { e.preventDefault(); onMediaClick?.(); }}
-          >
-            <source src={fileURL} type="video/mp4" />
-          </video>
-          {loadState === 'loading' && loadingPlaceholder('Loading video', <Video aria-hidden="true" size={24} />)}
-        </div>
-      : loadState === 'loading'
-        ? loadingPlaceholder('Loading video', <Video aria-hidden="true" size={24} />)
-        : <span className="placeholder">[ Video not found ]</span>;
+    content = <ChatVideoAttachment
+      url={fileURL}
+      state={loadState}
+      dimensions={previewDimensions}
+      onActivate={activateVideo}
+      onReady={() => setLoadState('ready')}
+      onFailed={() => { setFileURL(null); setLoadState('failed'); }}
+    />;
   } else if (mediaType === 'audio') {
-    content = fileURL
-      ? <div className="media-audio-wrap">
-          <InlineAudioPlayer src={fileURL} />
-          {onMediaClick && <button className="media-audio-expand" onClick={onMediaClick} aria-label="Open audio in viewer" title="Open in viewer"><Info size={15} /></button>}
-        </div>
-      : loadState === 'loading'
-        ? loadingPlaceholder('Loading audio', <Music2 aria-hidden="true" size={20} />, true)
-        : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
+    content = <ChatAudioAttachment url={fileURL} state={loadState} onOpenViewer={onMediaClick} />;
   } else {
-    const filename = mediaPath.split('/').pop() || 'File attachment';
-    content = mediaFile
-      ? <div className="media-file-card">
-          <button
-            type="button"
-            className="media-file-open"
-            onClick={() => openMediaEntryInNewTab(mediaFile)}
-            title={`Open ${filename} in a new tab`}
-          >
-            <FileText size={17} />
-            <span className="media-file-copy">
-              <span className="media-file-name">{filename}</span>
-              <MediaFileSize entry={mediaFile} className="media-file-size" />
-            </span>
-          </button>
-          {onMediaClick && (
-            <button
-              type="button"
-              className="media-file-info"
-              onClick={onMediaClick}
-              aria-label={`View information for ${filename}`}
-              title="Open in viewer"
-            >
-              <Info size={15} />
-            </button>
-          )}
-        </div>
-      : <span className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
+    content = <ChatFileAttachment mediaPath={mediaPath} mediaFile={mediaFile} onOpenViewer={onMediaClick} />;
   }
 
   return (
