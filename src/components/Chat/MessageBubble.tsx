@@ -5,6 +5,7 @@ import { findMediaFile, getMediaReferencePath, getMediaType } from '../../servic
 import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { chatImagePreviewCache, getChatPreviewPixelSize, type ChatImagePreview } from '../../services/chatImagePreviewCache';
 import { chatVideoPosterCache } from '../../services/videoPosterCache';
+import type { TaskSubscription } from '../../services/subscribableTaskQueue';
 import { getReactionTimestamp } from '../../services/reactions';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
@@ -13,25 +14,57 @@ import { ReactionModal } from './ReactionModal';
 import { MediaFileSize } from '../MediaFileSize';
 import { FileText, Image as ImageIcon, Info, Link as LinkIcon, Music2, Pause, Play, Video, Volume2, VolumeX } from 'lucide-react';
 
-const lazyMediaLoadCallbacks = new Map<Element, () => void>();
+const lazyMediaVisibleCallbacks = new Map<Element, (inside: boolean) => void>();
+const lazyMediaPreloadCallbacks = new Map<Element, (inside: boolean) => void>();
+const lazyMediaRetentionCallbacks = new Map<Element, (inside: boolean) => void>();
 const lazyMediaResizeCallbacks = new Map<Element, (entry: ResizeObserverEntry) => void>();
-let sharedLazyMediaObserver: IntersectionObserver | null = null;
+const lazyMediaObserverPairs = new WeakMap<Element, LazyMediaObserverPair>();
+let viewportLazyMediaObserverPair: LazyMediaObserverPair | null = null;
 let sharedLazyMediaResizeObserver: ResizeObserver | null = null;
+const MEDIA_PRELOAD_MARGIN_PX = 2_000;
+const MEDIA_RETENTION_MARGIN_PX = 5_000;
+const MEDIA_PRIORITY_VISIBLE = 0;
+const MEDIA_PRIORITY_PRELOAD = 1;
+const MEDIA_PRIORITY_RETENTION = 2;
 
-function getSharedLazyMediaObserver() {
-  if (!sharedLazyMediaObserver) {
-    sharedLazyMediaObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (!entry.isIntersecting) return;
+interface LazyMediaObserverPair {
+  visible: IntersectionObserver;
+  preload: IntersectionObserver;
+  retention: IntersectionObserver;
+}
 
-        const callback = lazyMediaLoadCallbacks.get(entry.target);
-        if (callback) callback();
-        sharedLazyMediaObserver?.unobserve(entry.target);
-        lazyMediaLoadCallbacks.delete(entry.target);
-      });
-    }, { rootMargin: '500px' });
+function createRangeObserver(
+  root: Element | null,
+  margin: number,
+  callbacks: Map<Element, (inside: boolean) => void>,
+): IntersectionObserver {
+  return new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      callbacks.get(entry.target)?.(entry.isIntersecting);
+    });
+  }, { root, rootMargin: `${margin}px 0px` });
+}
+
+function createLazyMediaObserverPair(root: Element | null): LazyMediaObserverPair {
+  return {
+    visible: createRangeObserver(root, 0, lazyMediaVisibleCallbacks),
+    preload: createRangeObserver(root, MEDIA_PRELOAD_MARGIN_PX, lazyMediaPreloadCallbacks),
+    retention: createRangeObserver(root, MEDIA_RETENTION_MARGIN_PX, lazyMediaRetentionCallbacks),
+  };
+}
+
+function getSharedLazyMediaObservers(root: Element | null): LazyMediaObserverPair {
+  if (!root) {
+    if (!viewportLazyMediaObserverPair) viewportLazyMediaObserverPair = createLazyMediaObserverPair(null);
+    return viewportLazyMediaObserverPair;
   }
-  return sharedLazyMediaObserver;
+
+  let observers = lazyMediaObserverPairs.get(root);
+  if (!observers) {
+    observers = createLazyMediaObserverPair(root);
+    lazyMediaObserverPairs.set(root, observers);
+  }
+  return observers;
 }
 
 function getSharedLazyMediaResizeObserver() {
@@ -239,14 +272,24 @@ function InlineAudioPlayer({ src }: { src: string }) {
   );
 }
 
-type MediaLoadState = 'loading' | 'ready' | 'failed';
+type MediaLoadState = 'dormant' | 'loading' | 'ready' | 'failed';
 
-function MediaLoadingPlaceholder({ label, icon, audio = false }: { label: string; icon: React.ReactNode; audio?: boolean }) {
+function MediaLoadingPlaceholder({
+  label,
+  icon,
+  audio = false,
+  active = true,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  audio?: boolean;
+  active?: boolean;
+}) {
   return (
     <span
       className={`placeholder media-loading-placeholder${audio ? ' audio-placeholder' : ''}`}
-      role="status"
-      aria-label={label}
+      role={active ? 'status' : undefined}
+      aria-label={active ? label : undefined}
     >
       {icon}
     </span>
@@ -271,8 +314,8 @@ function ChatImageAttachment({
   onFailed: () => void;
 }) {
   if (!url) {
-    return state === 'loading'
-      ? <MediaLoadingPlaceholder label={isSticker ? 'Loading sticker' : 'Loading image'} icon={<ImageIcon aria-hidden="true" size={24} />} />
+    return state !== 'failed'
+      ? <MediaLoadingPlaceholder active={state === 'loading'} label={isSticker ? 'Loading sticker' : 'Loading image'} icon={<ImageIcon aria-hidden="true" size={24} />} />
       : <span className="placeholder">[ Image not found ]</span>;
   }
 
@@ -308,8 +351,8 @@ function ChatVideoAttachment({
   onFailed: () => void;
 }) {
   if (!url) {
-    return state === 'loading'
-      ? <MediaLoadingPlaceholder label="Loading video" icon={<Video aria-hidden="true" size={24} />} />
+    return state !== 'failed'
+      ? <MediaLoadingPlaceholder active={state === 'loading'} label="Loading video" icon={<Video aria-hidden="true" size={24} />} />
       : <button type="button" className="placeholder chat-video-fallback" onClick={onActivate}>
           <Video aria-hidden="true" size={24} />
           <span>Open video</span>
@@ -346,8 +389,8 @@ function ChatVideoAttachment({
 
 function ChatAudioAttachment({ url, state, onOpenViewer }: { url: string | null; state: MediaLoadState; onOpenViewer?: () => void }) {
   if (!url) {
-    return state === 'loading'
-      ? <MediaLoadingPlaceholder label="Loading audio" icon={<Music2 aria-hidden="true" size={20} />} audio />
+    return state !== 'failed'
+      ? <MediaLoadingPlaceholder active={state === 'loading'} label="Loading audio" icon={<Music2 aria-hidden="true" size={20} />} audio />
       : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
   }
 
@@ -403,23 +446,29 @@ function LazyMedia({
   const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
   const mediaType = preferredType || (ext === 'mp4' || ext === 'webm' ? 'video' : (mediaFile?.type || getMediaType(mediaPath)));
   const usesGeneratedPreview = mediaType === 'image' && !isSticker && ext !== 'gif';
-  const [fileURL, setFileURL] = useState<string | null>(() => {
-    if (!mediaFile || usesGeneratedPreview || mediaType === 'video') return null;
-    return blobCache.get(mediaFile) || mediaFile.url || null;
-  });
+  const [fileURL, setFileURL] = useState<string | null>(null);
   const [previewDimensions, setPreviewDimensions] = useState<Pick<ChatImagePreview, 'sourceWidth' | 'sourceHeight'> | null>(null);
   const [loadState, setLoadState] = useState<MediaLoadState>(() => {
     if (!mediaFile) return 'failed';
-    return 'loading';
+    return 'dormant';
   });
+  const [reservedSize, setReservedSize] = useState<{ width: number; height: number } | null>(null);
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
   const activateVideo = onMediaClick || (() => openMediaEntryInNewTab(mediaFile));
 
-  // Sharing observers keeps message-heavy chats from allocating one per attachment.
+  // Preload near the viewport, then dehydrate media only after it leaves the
+  // larger retention range. The gap between both ranges prevents scroll churn.
   useEffect(() => {
     let isMounted = true;
-    let unsubscribePreview = () => {};
+    let retained = true;
+    let inVisibleRange = false;
+    let inPreloadRange = false;
+    let hydrated = false;
+    let loadingStarted = false;
+    let requestGeneration = 0;
+    let loadPriority = MEDIA_PRIORITY_RETENTION;
+    let loadSubscription: TaskSubscription | null = null;
     if (!mediaFile) {
       setFileURL(null);
       setPreviewDimensions(null);
@@ -430,54 +479,83 @@ function LazyMedia({
     setPreviewDimensions(null);
     const el = mediaRef.current;
     if (!el) return;
+    if (mediaType !== 'image' && mediaType !== 'video' && mediaType !== 'audio') {
+      setLoadState('ready');
+      return;
+    }
 
-    const loadOriginal = () => {
+    const canApply = (generation: number) => (
+      isMounted && retained && generation === requestGeneration
+    );
+    const finishLoad = (generation: number) => {
+      if (generation === requestGeneration) loadingStarted = false;
+    };
+    const showUrl = (url: string, generation: number) => {
+      if (!canApply(generation)) return;
+      hydrated = true;
+      finishLoad(generation);
+      setFileURL(url);
+      setLoadState('loading');
+    };
+    const loadOriginal = (generation: number) => {
       const cached = blobCache.get(mediaFile);
       if (cached) {
-        setFileURL(cached);
-        setLoadState('loading');
+        showUrl(cached, generation);
         return;
       }
       if (mediaFile.url) {
         blobCache.put(mediaFile, mediaFile.url);
-        setFileURL(mediaFile.url);
-        setLoadState('loading');
+        showUrl(mediaFile.url, generation);
         return;
       }
       if (!mediaFile.handle) {
+        finishLoad(generation);
         setFileURL(null);
         setLoadState('failed');
         return;
       }
       void blobCache.getOrCreate(mediaFile).then(url => {
-        if (!isMounted) return;
-        setFileURL(url);
-        setLoadState(url ? 'loading' : 'failed');
+        if (!canApply(generation)) return;
+        finishLoad(generation);
+        if (url) {
+          hydrated = true;
+          setFileURL(url);
+          setLoadState('loading');
+        } else {
+          setFileURL(null);
+          setLoadState('failed');
+        }
       });
     };
 
-    const observer = getSharedLazyMediaObserver();
-    lazyMediaLoadCallbacks.set(el, () => {
+    const startLoad = () => {
+      if (!isMounted || !retained || loadingStarted || hydrated) return;
+      loadingStarted = true;
+      setLoadState('loading');
+      const generation = ++requestGeneration;
+
       if (mediaType === 'video') {
-        unsubscribePreview = chatVideoPosterCache.subscribe(mediaFile, poster => {
-          if (!isMounted) return;
+        loadSubscription = chatVideoPosterCache.subscribe(mediaFile, poster => {
+          if (!canApply(generation)) return;
+          finishLoad(generation);
           if (!poster) {
             setFileURL(null);
             setLoadState('failed');
             return;
           }
+          hydrated = true;
           setPreviewDimensions(poster.sourceWidth && poster.sourceHeight ? {
             sourceWidth: poster.sourceWidth,
             sourceHeight: poster.sourceHeight,
           } : null);
           setFileURL(poster.url);
           setLoadState('loading');
-        });
+        }, loadPriority);
         return;
       }
 
       if (!usesGeneratedPreview) {
-        loadOriginal();
+        loadOriginal(generation);
         return;
       }
 
@@ -492,11 +570,11 @@ function LazyMedia({
         fit: isGrid ? 'cover' as const : 'contain' as const,
       };
 
-      unsubscribePreview = chatImagePreviewCache.subscribe(mediaFile, options, preview => {
-        if (!isMounted) return;
+      loadSubscription = chatImagePreviewCache.subscribe(mediaFile, options, preview => {
+        if (!canApply(generation)) return;
         if (!preview) {
           // Unsupported image formats still remain viewable through the original path.
-          loadOriginal();
+          loadOriginal(generation);
           return;
         }
 
@@ -504,28 +582,87 @@ function LazyMedia({
         decoded.decoding = 'async';
         decoded.src = preview.url;
         void decoded.decode().then(() => {
-          if (!isMounted) return;
+          if (!canApply(generation)) return;
+          hydrated = true;
+          finishLoad(generation);
           setPreviewDimensions(preview);
           setFileURL(preview.url);
           setLoadState('ready');
         }, () => {
-          if (!isMounted) return;
+          if (!canApply(generation)) return;
+          hydrated = true;
+          finishLoad(generation);
           // Let the mounted image's load event be the compatibility fallback.
           setPreviewDimensions(preview);
           setFileURL(preview.url);
           setLoadState('loading');
         });
-      });
+      }, loadPriority);
+    };
+
+    const reprioritizeLoad = (priority: number) => {
+      loadPriority = priority;
+      loadSubscription?.setPriority(priority);
+    };
+    const cancelLoad = () => {
+      requestGeneration++;
+      loadingStarted = false;
+      loadSubscription?.();
+      loadSubscription = null;
+    };
+    const dehydrate = () => {
+      retained = false;
+      cancelLoad();
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setReservedSize({ width: rect.width, height: rect.height });
+      }
+      hydrated = false;
+      setFileURL(null);
+      setLoadState('dormant');
+    };
+
+    const observers = getSharedLazyMediaObservers(el.closest('#chat'));
+    lazyMediaVisibleCallbacks.set(el, inside => {
+      inVisibleRange = inside;
+      if (inside) {
+        retained = true;
+        reprioritizeLoad(MEDIA_PRIORITY_VISIBLE);
+        startLoad();
+      } else {
+        reprioritizeLoad(inPreloadRange ? MEDIA_PRIORITY_PRELOAD : MEDIA_PRIORITY_RETENTION);
+      }
+    });
+    lazyMediaPreloadCallbacks.set(el, inside => {
+      inPreloadRange = inside;
+      if (inside) {
+        retained = true;
+        reprioritizeLoad(inVisibleRange ? MEDIA_PRIORITY_VISIBLE : MEDIA_PRIORITY_PRELOAD);
+        startLoad();
+      } else if (!inVisibleRange) {
+        reprioritizeLoad(MEDIA_PRIORITY_RETENTION);
+      }
+    });
+    lazyMediaRetentionCallbacks.set(el, inside => {
+      retained = inside;
+      if (!inside) dehydrate();
+      else if (inPreloadRange) startLoad();
     });
     setFileURL(null);
-    setLoadState('loading');
-    observer.observe(el);
+    setLoadState('dormant');
+    observers.visible.observe(el);
+    observers.preload.observe(el);
+    observers.retention.observe(el);
 
     return () => {
       isMounted = false;
-      unsubscribePreview();
-      observer.unobserve(el);
-      lazyMediaLoadCallbacks.delete(el);
+      cancelLoad();
+      observers.visible.unobserve(el);
+      observers.preload.unobserve(el);
+      observers.retention.unobserve(el);
+      lazyMediaVisibleCallbacks.delete(el);
+      lazyMediaPreloadCallbacks.delete(el);
+      lazyMediaRetentionCallbacks.delete(el);
     };
   }, [isGrid, mediaFile, mediaType, usesGeneratedPreview]);
 
@@ -587,7 +724,15 @@ function LazyMedia({
   }
 
   return (
-    <div ref={mediaRef as React.RefObject<HTMLDivElement>} className="lazy-media-wrapper">
+    <div
+      ref={mediaRef as React.RefObject<HTMLDivElement>}
+      className={`lazy-media-wrapper${loadState === 'dormant' ? ' media-dehydrated' : ''}`}
+      style={!isGrid && !fileURL && reservedSize ? {
+        width: reservedSize.width,
+        maxWidth: '100%',
+        aspectRatio: `${reservedSize.width} / ${reservedSize.height}`,
+      } : undefined}
+    >
       {content}
     </div>
   );

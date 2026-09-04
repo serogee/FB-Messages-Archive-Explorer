@@ -1,6 +1,6 @@
 import type { MediaEntry } from '../types/messenger';
 import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
-import { SubscribableTaskQueue } from './subscribableTaskQueue';
+import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
 
 export const IMAGE_THUMBNAIL_SIZE = MEDIA_THUMBNAIL_SIZE;
 const DEFAULT_MAX_THUMBNAILS = 300;
@@ -59,7 +59,7 @@ export class ImageThumbnailCache {
     return task;
   }
 
-  subscribe(entry: MediaEntry, subscriber: ThumbnailSubscriber): () => void {
+  subscribe(entry: MediaEntry, subscriber: ThumbnailSubscriber, priority = 0): TaskSubscription {
     const cached = this.get(entry);
     if (cached) {
       try {
@@ -67,12 +67,12 @@ export class ImageThumbnailCache {
       } catch {
         // Keep cache reads isolated from consumer callback failures.
       }
-      return () => {};
+      return createNoopTaskSubscription();
     }
 
     return this.scheduler.subscribe(entry, completion => {
       subscriber(completion.status === 'completed' ? completion.value : null);
-    });
+    }, priority);
   }
 
   clear(): void {

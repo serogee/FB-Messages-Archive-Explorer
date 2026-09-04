@@ -1,5 +1,5 @@
 import type { MediaEntry } from '../types/messenger';
-import { SubscribableTaskQueue } from './subscribableTaskQueue';
+import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
 
 export type ChatImagePreviewFit = 'contain' | 'cover';
 
@@ -96,12 +96,17 @@ export class ChatImagePreviewCache {
     this.scheduler = new SubscribableTaskQueue(maxConcurrentJobs, creator);
   }
 
-  subscribe(entry: MediaEntry, options: ChatImagePreviewOptions, subscriber: PreviewSubscriber): () => void {
+  subscribe(
+    entry: MediaEntry,
+    options: ChatImagePreviewOptions,
+    subscriber: PreviewSubscriber,
+    priority = 0,
+  ): TaskSubscription {
     const request = this.getRequest(entry, options);
     const cached = this.get(request);
     if (cached) {
       subscriber(cached);
-      return () => {};
+      return createNoopTaskSubscription();
     }
 
     const requestGeneration = this.generation;
@@ -120,7 +125,7 @@ export class ChatImagePreviewCache {
 
       this.put(request, preview);
       subscriber(preview);
-    });
+    }, priority);
   }
 
   clear(): void {

@@ -1,7 +1,7 @@
 import type { MediaEntry } from '../types/messenger';
 import { blobCache } from './blobCache';
 import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
-import { SubscribableTaskQueue } from './subscribableTaskQueue';
+import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
 
 interface PosterCacheEntry {
   url: string;
@@ -91,7 +91,7 @@ export class VideoPosterCache {
     return task;
   }
 
-  subscribe(entry: MediaEntry, subscriber: PosterSubscriber): () => void {
+  subscribe(entry: MediaEntry, subscriber: PosterSubscriber, priority = 0): TaskSubscription {
     const cached = this.getDetails(entry);
     if (cached || this.failed.has(entry)) {
       try {
@@ -99,12 +99,12 @@ export class VideoPosterCache {
       } catch {
         // Keep cache reads isolated from consumer callback failures.
       }
-      return () => {};
+      return createNoopTaskSubscription();
     }
 
     return this.scheduler.subscribe(entry, completion => {
       subscriber(completion.status === 'completed' ? completion.value : null);
-    });
+    }, priority);
   }
 
   clear(): void {

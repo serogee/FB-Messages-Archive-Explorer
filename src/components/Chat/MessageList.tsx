@@ -12,6 +12,7 @@ const CHUNK_SIZE = 50;
 const CHUNK_ESTIMATED_MESSAGE_HEIGHT = 58;
 const CHUNK_ESTIMATED_MEDIA_HEIGHT = 150;
 const CHUNK_ESTIMATED_SEPARATOR_HEIGHT = 34;
+const CHUNK_PRELOAD_MARGIN_PX = 2_000;
 const TIME_GAP_MS = 10 * 60 * 1000;
 const JUMP_HIGHLIGHT_SCROLL_THRESHOLD = 24;
 
@@ -142,7 +143,7 @@ const MessageChunk = React.memo(function MessageChunk({
           }
         });
       },
-      { root: container, threshold: 0.01, rootMargin: '200px' }
+      { root: container, threshold: 0.01, rootMargin: `${CHUNK_PRELOAD_MARGIN_PX}px 0px` }
     );
 
     observer.observe(el);
