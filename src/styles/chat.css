@@ -277,6 +277,7 @@
 }
 .message.media-only .message-content {
     line-height: 0;
+    border-radius: inherit;
 }
 .from-me .message-content {
     color: var(--me-text);
@@ -597,6 +598,7 @@
     background: var(--panel-bg);
     border: 1px solid var(--border);
     border-radius: 12px;
+    line-height: 1.4;
     width: 400px;
     max-width: 90vw;
     max-height: 80vh;
@@ -687,6 +689,9 @@
     max-width: 100%;
     min-width: 0;
     overflow: hidden;
+}
+.message.media-only:not(.has-media-grid) .lazy-media-wrapper {
+    border-radius: inherit;
 }
 .lazy-media-wrapper.media-dehydrated > .placeholder {
     width: 100%;
