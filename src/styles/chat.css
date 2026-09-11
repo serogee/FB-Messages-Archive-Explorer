@@ -598,6 +598,7 @@
     background: var(--panel-bg);
     border: 1px solid var(--border);
     border-radius: 12px;
+    line-height: 1.4;
     width: 400px;
     max-width: 90vw;
     max-height: 80vh;
