@@ -159,8 +159,9 @@ export default function App() {
     prepareDeleteTarget(target);
   }, [prepareDeleteTarget]);
 
-  const handleDeleteConfirm = useCallback(async (jsonOnly = false) => {
+  const handleDeleteConfirm = useCallback(async (mode: 'normal' | 'json-only') => {
     if (!deleteTarget || deleteOperationRef.current) return;
+    const jsonOnly = mode === 'json-only';
     const operationToken = Symbol('delete-confirm');
     deleteOperationRef.current = operationToken;
     deleteInfoAbortRef.current?.abort();
@@ -472,8 +473,8 @@ export default function App() {
       {deleteTarget && (
         <DeleteConfirmModal
           entry={deleteTarget}
-          onConfirm={handleDeleteConfirm}
-          onDeleteJsonOnly={() => handleDeleteConfirm(true)}
+          onConfirm={() => handleDeleteConfirm('normal')}
+          onDeleteJsonOnly={() => handleDeleteConfirm('json-only')}
           onRetryCalculation={() => prepareDeleteTarget(deleteTarget, true)}
           onSkipCalculation={() => {
             deleteInfoAbortRef.current?.abort();
