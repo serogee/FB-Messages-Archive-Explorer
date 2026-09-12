@@ -149,8 +149,15 @@
 
 .deletion-warning { color:#e53e3e; font-size:12px; margin-top:4px; line-height:1.4; }
 
-.folder-picker { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px 16px; text-align:center; flex:1; }
+.folder-picker { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px 16px; text-align:center; flex:1; container:folder-select / inline-size; }
 .folder-picker p { color:var(--muted); font-size:14px; line-height:1.5; margin:0; }
+.messages-folder-settings { container:folder-select / inline-size; }
+.folder-select-button { max-width:100%; white-space:nowrap; }
+.folder-select-label-short { display:none; }
+@container folder-select (max-width:180px) {
+  .folder-select-label-long { display:none; }
+  .folder-select-label-short { display:inline; }
+}
 
 .sidebar-action-bar {
   box-sizing: border-box;

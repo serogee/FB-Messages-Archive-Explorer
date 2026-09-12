@@ -13,8 +13,9 @@ export function FolderPicker({ onOpenFolder }: FolderPickerProps) {
         Select your Facebook archive's <strong>messages</strong> folder to get started.<br />
         No data leaves your device.
       </p>
-      <button className="btn btn-primary" id="openFolderBtn" onClick={onOpenFolder}>
-        Select messages folder
+      <button className="btn btn-primary folder-select-button" id="openFolderBtn" onClick={onOpenFolder}>
+        <span className="folder-select-label-long">Select messages folder</span>
+        <span className="folder-select-label-short">Select folder</span>
       </button>
       <p style={{ fontSize: '12px', marginBottom: fsSupported ? 0 : 12 }}>
         e.g. <code>your_facebook_activity/messages</code>

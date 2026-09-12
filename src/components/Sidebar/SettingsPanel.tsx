@@ -195,7 +195,7 @@ export function SettingsPanel({
 
   return (
     <div className="sidebar-scroll-region settings-scroll-region">
-      <div className="settings-section">
+      <div className="settings-section messages-folder-settings">
         <strong>Messages Folder</strong>
         {rootHandle ? (
           <div className="folder-display-container">
@@ -208,8 +208,9 @@ export function SettingsPanel({
             </button>
           </div>
         ) : (
-          <button className="btn btn-primary" onClick={onOpenFolder} style={{ marginTop: 4 }}>
-            Select messages folder
+          <button className="btn btn-primary folder-select-button" onClick={onOpenFolder} style={{ marginTop: 4 }}>
+            <span className="folder-select-label-long">Select messages folder</span>
+            <span className="folder-select-label-short">Select folder</span>
           </button>
         )}
       </div>
