@@ -6,7 +6,7 @@ import { useSearch } from './hooks/useSearch';
 import { useResizable } from './hooks/useResizable';
 import { sortSelectableItemsNewestFirst, useSelection } from './hooks/useSelection';
 import { useAttachments, useSharedLinks } from './hooks/useAttachments';
-import { useAttachmentBookmarks } from './hooks/useAttachmentBookmarks';
+import { useBookmarks } from './hooks/useBookmarks';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatView, type ChatViewHandle } from './components/Chat/ChatView';
 import { InfoPanel } from './components/InfoPanel/InfoPanel';
@@ -19,6 +19,7 @@ import type { ChatListEntry, SelectableItem } from './types/messenger';
 import type { GalleryCategory } from './hooks/useAttachments';
 import type { MessengerExportDeletionInfo } from './services/messengerExport';
 import { isFileSystemAccessSupported } from './services/fileSystem';
+import { getBookmarkChatId } from './services/bookmarks';
 import { requestDirectoryWritePermission } from './types/fileSystem';
 
 export default function App() {
@@ -33,7 +34,8 @@ export default function App() {
   const selection = useSelection();
   const attachments = useAttachments(chat.chatData, chat.mediaState);
   const sharedLinks = useSharedLinks(chat.chatData);
-  const bookmarks = useAttachmentBookmarks(archive.rootHandle);
+  const bookmarkingEnabled = settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported();
+  const bookmarks = useBookmarks(archive.rootHandle, bookmarkingEnabled);
 
   const [sidebarView, setSidebarView] = useState<'chats' | 'settings' | 'archived' | 'requests'>('chats');
   const [activeTab, setActiveTab] = useState<'chats' | 'settings'>('chats');
@@ -97,10 +99,10 @@ export default function App() {
           await bookmarks.removeForChats(deletedEntries);
         } catch (error) {
           bookmarkCleanupFailed = true;
-          console.error('Chats were deleted, but their attachment bookmarks could not be removed:', error);
+          console.error('Chats were deleted, but their bookmarks could not be removed:', error);
         }
         
-        if (chat.activeEntry && deleteTarget.some(e => e.folderName === chat.activeEntry!.folderName)) {
+        if (chat.activeEntry && deleteTarget.some(e => getBookmarkChatId(e) === getBookmarkChatId(chat.activeEntry!))) {
           chat.clearChat();
           selection.deselectAll();
         }
@@ -110,9 +112,9 @@ export default function App() {
           await bookmarks.removeForChats([deleteTarget]);
         } catch (error) {
           bookmarkCleanupFailed = true;
-          console.error('Chat was deleted, but its attachment bookmarks could not be removed:', error);
+          console.error('Chat was deleted, but its bookmarks could not be removed:', error);
         }
-        if (chat.activeEntry?.folderName === deleteTarget.folderName) {
+        if (chat.activeEntry && getBookmarkChatId(chat.activeEntry) === getBookmarkChatId(deleteTarget)) {
           chat.clearChat();
           selection.deselectAll();
         }
@@ -312,6 +314,12 @@ export default function App() {
         setSelectedPerspective={chat.setSelectedPerspective}
         onJumpToMessage={handleJumpToMessage}
         onAttachmentBookmarkingChange={handleAttachmentBookmarkingChange}
+        bookmarkingEnabled={bookmarkingEnabled}
+        pinnedChats={bookmarks.pinnedChats}
+        bookmarkBusy={bookmarks.busy}
+        isChatPinned={bookmarks.isChatPinned}
+        onToggleChatPin={bookmarks.toggleChatPin}
+        onSetChatsPinned={bookmarks.setChatsPinned}
       />
 
       <div
@@ -345,7 +353,7 @@ export default function App() {
         onOpenGallery={handleOpenGallery}
         onCloseGallery={() => setGalleryOpen(false)}
         selection={selection}
-        attachmentBookmarkingEnabled={settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()}
+        attachmentBookmarkingEnabled={bookmarkingEnabled}
         bookmarks={bookmarks}
       />
 
@@ -372,7 +380,7 @@ export default function App() {
             useDateFilenames={settings.dateAttachmentFilenames}
             filenameTemplate={settings.attachmentFilenameTemplate}
             allowLongFilenames={settings.longAttachmentFilenames}
-            attachmentBookmarkingEnabled={settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()}
+            attachmentBookmarkingEnabled={bookmarkingEnabled}
             bookmarks={bookmarks}
           />
         ) : (
@@ -393,7 +401,7 @@ export default function App() {
                 useDateFilenames={settings.dateAttachmentFilenames}
                 filenameTemplate={settings.attachmentFilenameTemplate}
                 allowLongFilenames={settings.longAttachmentFilenames}
-                attachmentBookmarkingEnabled={settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()}
+                attachmentBookmarkingEnabled={bookmarkingEnabled}
                 bookmarks={bookmarks}
               />
             ) : undefined}
@@ -452,10 +460,10 @@ export default function App() {
           chatTitle={chat.chatData?.title}
           filenameTemplate={settings.attachmentFilenameTemplate}
           allowLongFilenames={settings.longAttachmentFilenames}
-          attachmentBookmarkingEnabled={settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()}
-          isBookmarked={item => !!chat.activeEntry && bookmarks.isBookmarked(chat.activeEntry, item)}
+          attachmentBookmarkingEnabled={bookmarkingEnabled}
+          isBookmarked={item => !!chat.activeEntry && bookmarks.isItemBookmarked(chat.activeEntry, item)}
           onToggleBookmark={item => chat.activeEntry
-            ? bookmarks.toggle(chat.activeEntry, item)
+            ? bookmarks.toggleItemBookmark(chat.activeEntry, item)
             : Promise.resolve()}
           bookmarkBusy={bookmarks.busy}
         />

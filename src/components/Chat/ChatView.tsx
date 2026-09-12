@@ -12,7 +12,7 @@ import { AttachmentGallery } from '../AttachmentGallery/AttachmentGallery';
 import type { AttachmentJumpTarget } from '../AttachmentGallery/AttachmentGallery';
 import { getAttachmentJumpTab } from '../AttachmentGallery/attachmentJump';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
-import type { AttachmentBookmarksController } from '../../hooks/useAttachmentBookmarks';
+import type { BookmarksController } from '../../hooks/useBookmarks';
 
 interface ChatViewProps {
   chatData: MessengerThread | null;
@@ -35,7 +35,7 @@ interface ChatViewProps {
   onCloseGallery: () => void;
   selection: ReturnType<typeof useSelection>;
   attachmentBookmarkingEnabled: boolean;
-  bookmarks: AttachmentBookmarksController;
+  bookmarks: BookmarksController;
 }
 
 export interface ChatViewHandle {
@@ -91,9 +91,9 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   const [attachmentJumpTarget, setAttachmentJumpTarget] = useState<AttachmentJumpTarget | null>(null);
   const attachments = useAttachments(chatData, mediaState);
   const links = useSharedLinks(chatData);
-  const bookmarkRecords = bookmarks.bookmarks;
-  const bookmarkLookup = bookmarks.isBookmarked;
-  const toggleBookmark = bookmarks.toggle;
+  const bookmarkRecords = bookmarks.attachmentBookmarks;
+  const bookmarkLookup = bookmarks.isItemBookmarked;
+  const toggleBookmark = bookmarks.toggleItemBookmark;
   const isAttachmentBookmarked = useCallback(
     (item: SelectableItem) => {
       // Capture the records snapshot so memoized consumers refresh when bookmark membership changes.

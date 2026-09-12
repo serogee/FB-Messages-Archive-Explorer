@@ -14,7 +14,11 @@ interface ArchivedListProps {
   sizeProgress?: { done: number; total: number } | null;
   selectionMode?: boolean;
   selectedChats?: Set<string>;
-  onToggleSelectChat?: (folderName: string, select: boolean) => void;
+  onToggleSelectChat?: (chatId: string, select: boolean) => void;
+  bookmarkingEnabled?: boolean;
+  pinnedChatIds?: readonly string[];
+  bookmarkBusy?: boolean;
+  onToggleChatPin?: (entry: ChatListEntry) => Promise<void>;
 }
 
 export function ArchivedList({
@@ -29,7 +33,11 @@ export function ArchivedList({
   sizeProgress,
   selectionMode,
   selectedChats,
-  onToggleSelectChat
+  onToggleSelectChat,
+  bookmarkingEnabled,
+  pinnedChatIds,
+  bookmarkBusy,
+  onToggleChatPin,
 }: ArchivedListProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -50,6 +58,10 @@ export function ArchivedList({
           selectionMode={selectionMode}
           selectedChats={selectedChats}
           onToggleSelectChat={onToggleSelectChat}
+          bookmarkingEnabled={bookmarkingEnabled}
+          pinnedChatIds={pinnedChatIds}
+          bookmarkBusy={bookmarkBusy}
+          onToggleChatPin={onToggleChatPin}
         />
       )}
     </div>
