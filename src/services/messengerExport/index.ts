@@ -36,10 +36,23 @@ export {
 } from './messengerExportIndex';
 export {
   buildMessengerExportReferenceIndex,
+  buildMessengerExportDeletionPlan,
   deleteMessengerExportChat,
+  deleteMessengerExportJsonOnly,
+  executeMessengerExportDeletionPlan,
   getMessengerExportBatchDeletionInfo,
   getMessengerExportDeletionInfo,
   MessengerExportIndexIncompleteError,
+  MessengerExportDeletionPartialError,
+  removeMediaFiles,
+  type MessengerExportChatDeletionPlan,
+  type MessengerExportChatDeletionResult,
+  type MessengerExportDeletionPlan,
+  type MessengerExportDeletionProgress,
+  type MessengerExportDeletionResult,
   type MessengerExportDeletionInfo,
+  type MessengerExportMediaDeletionTarget,
+  type MessengerExportMediaRemovalFailure,
+  type MessengerExportMediaRemovalResult,
   type MessengerExportReferenceIndex,
 } from './messengerExportDeletion';

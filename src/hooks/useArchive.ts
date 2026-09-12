@@ -12,12 +12,15 @@ import {
 } from '../services/fileSystem';
 import {
   buildMessengerExportMediaSizeIndex,
+  buildMessengerExportDeletionPlan,
   buildMessengerExportReferenceIndex,
   computeMessengerExportChatSize,
   computeMessengerExportChatSizeFromIndex,
-  deleteMessengerExportChat,
+  deleteMessengerExportJsonOnly,
+  executeMessengerExportDeletionPlan,
   getMessengerExportBatchDeletionInfo,
   getMessengerExportDeletionInfo,
+  getMessengerMediaBasename,
   isMessengerExport,
   listMessengerExportChatsIndexed,
   MessengerExportIndexIncompleteError,
@@ -26,6 +29,8 @@ import {
   type MessengerExportReferenceIndex,
 } from '../services/messengerExport';
 import { SizeWorkLifecycle } from '../services/sizeWorkLifecycle';
+import { mapWithConcurrency } from '../services/concurrency';
+import type { BatchDeleteResult, DeleteProgress } from '../types/deletion';
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -99,8 +104,17 @@ async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: Abo
   };
 }
 
-async function computeFacebookDeleteInfo(entries: ChatListEntry[], signal?: AbortSignal): Promise<MessengerExportDeletionInfo> {
-  const infos = await Promise.all(entries.map(entry => computeFacebookEntryDeleteInfo(entry, signal)));
+export async function computeFacebookDeleteInfo(
+  entries: ChatListEntry[],
+  signal?: AbortSignal,
+  concurrency = 4
+): Promise<MessengerExportDeletionInfo> {
+  const infos = await mapWithConcurrency(
+    entries,
+    concurrency,
+    entry => computeFacebookEntryDeleteInfo(entry, signal),
+    signal
+  );
   throwIfAborted(signal);
   return infos.reduce<MessengerExportDeletionInfo>((acc, info) => ({
     jsonSize: acc.jsonSize + info.jsonSize,
@@ -152,7 +166,8 @@ export function useArchive(): {
   suspendSizeWork: () => Promise<void>;
   resumeSizeWork: () => void;
   deleteChat: (entry: ChatListEntry) => Promise<void>;
-  deleteChats: (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => Promise<ChatListEntry[]>;
+  deleteChats: (entries: ChatListEntry[], onProgress?: (progress: DeleteProgress) => void) => Promise<BatchDeleteResult>;
+  deleteMessengerChatsJsonOnly: (entries: ChatListEntry[], onProgress?: (progress: DeleteProgress) => void) => Promise<BatchDeleteResult>;
   updateFolderSize: (entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => void;
 } {
   const [rootHandle, setRootHandle] = useState<ReadableDirectoryHandle | null>(null);
@@ -196,6 +211,7 @@ export function useArchive(): {
   const sizeWorkLifecycleRef = useRef(new SizeWorkLifecycle());
   const sizeWorkPlanRef = useRef<SizeWorkPlan | null>(null);
   const deletedSizeEntryKeysRef = useRef<Set<string>>(new Set());
+  const deletionOperationRef = useRef<symbol | null>(null);
 
   const inboxListRef = useRef<ChatListEntry[]>([]);
   const archivedListRef = useRef<ChatListEntry[]>([]);
@@ -691,110 +707,162 @@ export function useArchive(): {
     return getMessengerExportBatchDeletionInfo(rootHandle, messengerEntries, deletionIndex, signal, mediaSizeIndex);
   }, [getMessengerMediaSizeIndex, getMessengerReferenceIndex, rootHandle]);
 
-  const deleteChat = useCallback(async (entry: ChatListEntry) => {
-    if (!rootHandle) throw new Error('No folder open');
-    if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
-    const generation = archiveGenerationRef.current;
-    if (entry._messengerExport) {
-      const { index: referenceIndex, chatIndex } = await getMessengerReferenceIndex();
-      const jsonFileName = entry._jsonFileName!;
-      const removedMedia = Array.from(referenceIndex.chatMedia.get(jsonFileName) || [])
-        .filter(identity => (referenceIndex.mediaOwners.get(identity)?.size || 0) <= 1);
-      await deleteMessengerExportChat(rootHandle, entry, chatIndex || referenceIndex);
-      const mediaSizeCache = messengerMediaSizeIndexRef.current;
-      const mediaSizeIndex = mediaSizeCache
-        && mediaSizeCache.rootHandle === rootHandle
-        && mediaSizeCache.generation === generation
-        && archiveGenerationRef.current === generation
-        ? mediaSizeCache.mediaSizeIndex
-        : undefined;
-      for (const identity of removedMedia) mediaSizeIndex?.delete(identity);
-      if (archiveGenerationRef.current !== generation) return;
-      deletedSizeEntryKeysRef.current.add(getSizeEntryKey(entry));
-      setInboxList(prev => prev.filter(e => e.folderName !== entry.folderName));
-      return;
-    }
+  const beginDeletionOperation = useCallback((): symbol => {
+    if (deletionOperationRef.current) throw new Error('A deletion operation is already in progress.');
+    const token = Symbol('deletion-operation');
+    deletionOperationRef.current = token;
+    return token;
+  }, []);
 
-    const subfolderName =
-      entry.source === 'inbox'    ? 'inbox' :
-      entry.source === 'requests' ? 'message_requests' :
-      entry.source === 'e2ee'     ? 'e2ee_cutover' :
-      'archived_threads';
-    await deleteChatFs(rootHandle, subfolderName, entry.folderName);
-    if (archiveGenerationRef.current !== generation) return;
-    deletedSizeEntryKeysRef.current.add(getSizeEntryKey(entry));
-    if (entry.source === 'inbox' || entry.source === 'e2ee') {
-      setInboxList(prev => prev.filter(e => e.folderName !== entry.folderName));
-    } else if (entry.source === 'requests') {
-      setRequestsList(prev => prev.filter(e => e.folderName !== entry.folderName));
-    } else {
-      setArchivedList(prev => prev.filter(e => e.folderName !== entry.folderName));
-    }
-  }, [getMessengerReferenceIndex, getSizeEntryKey, rootHandle]);
+  const finishDeletionOperation = useCallback((token: symbol) => {
+    if (deletionOperationRef.current === token) deletionOperationRef.current = null;
+  }, []);
 
-  const deleteChats = useCallback(async (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => {
-    if (!rootHandle) throw new Error('No folder open');
-    if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
-    const generation = archiveGenerationRef.current;
-    
-    const deletedEntries: ChatListEntry[] = [];
-    const messengerIndexes = entries.some(entry => entry._messengerExport)
-      ? await getMessengerReferenceIndex()
-      : null;
-    
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      if (entry._messengerExport) {
-        try {
-          const referenceIndex = messengerIndexes!.index;
-          const jsonFileName = entry._jsonFileName!;
-          const removedMedia = Array.from(referenceIndex.chatMedia.get(jsonFileName) || [])
-            .filter(identity => (referenceIndex.mediaOwners.get(identity)?.size || 0) <= 1);
-          await deleteMessengerExportChat(
-            rootHandle,
-            entry,
-            messengerIndexes!.chatIndex || referenceIndex
-          );
-          const mediaSizeCache = messengerMediaSizeIndexRef.current;
-          const mediaSizeIndex = mediaSizeCache
-            && mediaSizeCache.rootHandle === rootHandle
-            && mediaSizeCache.generation === generation
-            && archiveGenerationRef.current === generation
-            ? mediaSizeCache.mediaSizeIndex
-            : undefined;
-          for (const identity of removedMedia) mediaSizeIndex?.delete(identity);
-          deletedEntries.push(entry);
-          deletedSizeEntryKeysRef.current.add(getSizeEntryKey(entry));
-        } catch (err) {
-          console.error(`Failed to delete ${entry.folderName}`, err);
+  const removeDeletedEntriesFromLists = useCallback((entries: readonly ChatListEntry[]) => {
+    const deletedKeys = new Set(entries.map(getSizeEntryKey));
+    const wasDeleted = (entry: ChatListEntry) => deletedKeys.has(getSizeEntryKey(entry));
+    for (const entry of entries) deletedSizeEntryKeysRef.current.add(getSizeEntryKey(entry));
+    setInboxList(prev => prev.filter(entry => !wasDeleted(entry)));
+    setRequestsList(prev => prev.filter(entry => !wasDeleted(entry)));
+    setArchivedList(prev => prev.filter(entry => !wasDeleted(entry)));
+  }, [getSizeEntryKey]);
+
+  const deleteChats = useCallback(async (
+    entries: ChatListEntry[],
+    onProgress?: (progress: DeleteProgress) => void
+  ): Promise<BatchDeleteResult> => {
+    const operationToken = beginDeletionOperation();
+    try {
+      if (!rootHandle) throw new Error('No folder open');
+      if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
+      const generation = archiveGenerationRef.current;
+      const result: BatchDeleteResult = { requested: entries.length, deleted: [], failed: [] };
+      const messengerEntries = entries.filter(entry => entry._messengerExport);
+
+      if (messengerEntries.length > 0) {
+        if (messengerEntries.length !== entries.length) {
+          throw new Error('Facebook and Messenger chats cannot be deleted in one operation.');
         }
-        if (onProgress) onProgress(i + 1, entries.length);
-        continue;
+        const { index: referenceIndex, chatIndex } = await getMessengerReferenceIndex();
+        const deletionIndex = chatIndex || referenceIndex;
+        const mediaSizeCache = messengerMediaSizeIndexRef.current;
+        const mediaSizeIndex = mediaSizeCache
+          && mediaSizeCache.rootHandle === rootHandle
+          && mediaSizeCache.generation === generation
+          ? mediaSizeCache.mediaSizeIndex
+          : undefined;
+        const plan = buildMessengerExportDeletionPlan(entries, deletionIndex, mediaSizeIndex);
+        const deletionResult = await executeMessengerExportDeletionPlan(
+          rootHandle,
+          plan,
+          deletionIndex,
+          progress => onProgress?.({
+            stage: progress.stage,
+            done: progress.done,
+            total: progress.total,
+          })
+        );
+
+        for (const chatResult of deletionResult.chats) {
+          for (const media of chatResult.completedMedia) {
+            mediaSizeIndex?.delete(media.identity);
+            mediaSizeIndex?.delete(getMessengerMediaBasename(media.identity));
+          }
+          if (chatResult.deleted) {
+            result.deleted.push(chatResult.entry);
+          } else {
+            result.failed.push({
+              entry: chatResult.entry,
+              error: chatResult.error || new Error('Messenger chat deletion failed.'),
+              partial: chatResult.partial,
+            });
+          }
+        }
+      } else {
+        for (let index = 0; index < entries.length; index++) {
+          const entry = entries[index];
+          const subfolderName =
+            entry.source === 'inbox'    ? 'inbox' :
+            entry.source === 'requests' ? 'message_requests' :
+            entry.source === 'e2ee'     ? 'e2ee_cutover' :
+            'archived_threads';
+          try {
+            await deleteChatFs(rootHandle, subfolderName, entry.folderName);
+            result.deleted.push(entry);
+          } catch (error) {
+            console.error(`Failed to delete ${entry.folderName}`, error);
+            result.failed.push({ entry, error, partial: false });
+          }
+          onProgress?.({ stage: 'chat', done: index + 1, total: entries.length });
+        }
       }
 
-      const subfolderName =
-        entry.source === 'inbox'    ? 'inbox' :
-        entry.source === 'requests' ? 'message_requests' :
-        entry.source === 'e2ee'     ? 'e2ee_cutover' :
-        'archived_threads';
-      try {
-        await deleteChatFs(rootHandle, subfolderName, entry.folderName);
-        deletedEntries.push(entry);
-        deletedSizeEntryKeysRef.current.add(getSizeEntryKey(entry));
-      } catch (err) {
-        console.error(`Failed to delete ${entry.folderName}`, err);
+      if (archiveGenerationRef.current === generation) {
+        removeDeletedEntriesFromLists(result.deleted);
       }
-      if (onProgress) onProgress(i + 1, entries.length);
+      return result;
+    } finally {
+      finishDeletionOperation(operationToken);
     }
+  }, [
+    beginDeletionOperation,
+    finishDeletionOperation,
+    getMessengerReferenceIndex,
+    removeDeletedEntriesFromLists,
+    rootHandle,
+  ]);
 
-    if (archiveGenerationRef.current !== generation) return deletedEntries;
-    const deletedKeys = new Set(deletedEntries.map(entry => `${entry.source}:${entry.folderName}`));
-    const wasDeleted = (entry: ChatListEntry) => deletedKeys.has(`${entry.source}:${entry.folderName}`);
-    setInboxList(prev => prev.filter(e => !wasDeleted(e)));
-    setRequestsList(prev => prev.filter(e => !wasDeleted(e)));
-    setArchivedList(prev => prev.filter(e => !wasDeleted(e)));
-    return deletedEntries;
-  }, [getMessengerReferenceIndex, getSizeEntryKey, rootHandle]);
+  const deleteChat = useCallback(async (entry: ChatListEntry): Promise<void> => {
+    const result = await deleteChats([entry]);
+    const failure = result.failed[0];
+    if (failure) throw failure.error;
+  }, [deleteChats]);
+
+  const deleteMessengerChatsJsonOnly = useCallback(async (
+    entries: ChatListEntry[],
+    onProgress?: (progress: DeleteProgress) => void
+  ): Promise<BatchDeleteResult> => {
+    const operationToken = beginDeletionOperation();
+    try {
+      if (!rootHandle) throw new Error('No folder open');
+      if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
+      if (entries.some(entry => !entry._messengerExport)) {
+        throw new Error('JSON-only deletion is available only for Messenger exports.');
+      }
+      const generation = archiveGenerationRef.current;
+      const { index: referenceIndex, chatIndex } = await getMessengerReferenceIndex();
+      const deletionIndex = chatIndex || referenceIndex;
+      const chatResults = await deleteMessengerExportJsonOnly(
+        rootHandle,
+        entries,
+        deletionIndex,
+        (done, total) => onProgress?.({ stage: 'chat', done, total })
+      );
+      const result: BatchDeleteResult = {
+        requested: entries.length,
+        deleted: chatResults.filter(chat => chat.deleted).map(chat => chat.entry),
+        failed: chatResults
+          .filter(chat => !chat.deleted)
+          .map(chat => ({
+            entry: chat.entry,
+            error: chat.error || new Error('Messenger chat JSON deletion failed.'),
+            partial: false,
+          })),
+      };
+      if (archiveGenerationRef.current === generation) {
+        removeDeletedEntriesFromLists(result.deleted);
+      }
+      return result;
+    } finally {
+      finishDeletionOperation(operationToken);
+    }
+  }, [
+    beginDeletionOperation,
+    finishDeletionOperation,
+    getMessengerReferenceIndex,
+    removeDeletedEntriesFromLists,
+    rootHandle,
+  ]);
 
   const updateFolderSize = useCallback((entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => {
     const applySize = (e: ChatListEntry) => e.folderName === entry.folderName
@@ -880,6 +948,6 @@ export function useArchive(): {
 
   return {
     rootHandle, originalRootHandle, inboxList, archivedList, requestsList,    loading, loadProgress, sizeProgress, error,
-    openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, suspendSizeWork, resumeSizeWork, deleteChat, deleteChats, updateFolderSize,
+    openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, suspendSizeWork, resumeSizeWork, deleteChat, deleteChats, deleteMessengerChatsJsonOnly, updateFolderSize,
   };
 }

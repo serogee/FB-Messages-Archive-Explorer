@@ -16,8 +16,12 @@ import { TrustModal } from './components/Modals/TrustModal';
 import { ReloadPrompt } from './components/ReloadPrompt';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
 import type { ChatListEntry, SelectableItem } from './types/messenger';
+import type { DeleteProgress } from './types/deletion';
 import type { GalleryCategory } from './hooks/useAttachments';
-import type { MessengerExportDeletionInfo } from './services/messengerExport';
+import {
+  MessengerExportIndexIncompleteError,
+  type MessengerExportDeletionInfo,
+} from './services/messengerExport';
 import { isFileSystemAccessSupported } from './services/fileSystem';
 import { getBookmarkChatId } from './services/bookmarks';
 import { requestDirectoryWritePermission } from './types/fileSystem';
@@ -40,16 +44,18 @@ export default function App() {
   const [sidebarView, setSidebarView] = useState<'chats' | 'settings' | 'archived' | 'requests'>('chats');
   const [activeTab, setActiveTab] = useState<'chats' | 'settings'>('chats');
   const [deleteTarget, setDeleteTarget] = useState<ChatListEntry | ChatListEntry[] | null>(null);
-  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
+  const [deleteProgress, setDeleteProgress] = useState<DeleteProgress | null>(null);
   const [deleteInfo, setDeleteInfo] = useState<MessengerExportDeletionInfo | null>(null);
   const [deleteInfoLoading, setDeleteInfoLoading] = useState(false);
   const [deleteInfoSkipped, setDeleteInfoSkipped] = useState(false);
+  const [deleteMediaSafetyUnavailable, setDeleteMediaSafetyUnavailable] = useState(false);
   const [deletePreparing, setDeletePreparing] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteToast, setDeleteToast] = useState<string | null>(null);
   const deleteInfoRequestRef = useRef(0);
   const deleteInfoAbortRef = useRef<AbortController | null>(null);
   const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deleteOperationRef = useRef<symbol | null>(null);
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryDefaultTab, setGalleryDefaultTab] = useState<GalleryCategory>('all');
@@ -79,16 +85,17 @@ export default function App() {
     side: 'right',
   });
 
-  const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteTarget) return;
+  const handleDeleteConfirm = useCallback(async (jsonOnly = false) => {
+    if (!deleteTarget || deleteOperationRef.current) return;
+    const operationToken = Symbol('delete-confirm');
+    deleteOperationRef.current = operationToken;
     deleteInfoAbortRef.current?.abort();
     deleteInfoAbortRef.current = null;
     setDeletePreparing(true);
+    setDeleteProgress({ stage: 'preparing', done: 0, total: 0 });
     setDeleteInfoLoading(false);
     deleteInfoRequestRef.current++;
-    const deletedName = Array.isArray(deleteTarget)
-      ? `${deleteTarget.length} Chats`
-      : deleteTarget.title;
+    const targets = Array.isArray(deleteTarget) ? deleteTarget : [deleteTarget];
     let bookmarkCleanupFailed = false;
     let sizeWorkSuspended = false;
     try {
@@ -96,44 +103,51 @@ export default function App() {
       await archive.suspendSizeWork();
       setDeletePreparing(false);
       setDeleteBusy(true);
-      if (Array.isArray(deleteTarget)) {
-        setDeleteProgress({ done: 0, total: deleteTarget.length });
-        const deletedEntries = await archive.deleteChats(deleteTarget, (done, total) => {
-          setDeleteProgress({ done, total });
-        });
+      setDeleteProgress(null);
+      const result = jsonOnly
+        ? await archive.deleteMessengerChatsJsonOnly(targets, setDeleteProgress)
+        : await archive.deleteChats(targets, setDeleteProgress);
+
+      if (result.deleted.length > 0) {
+        setDeleteProgress({ stage: 'bookmarks', done: 0, total: 1 });
         try {
-          await bookmarks.removeForChats(deletedEntries);
+          await bookmarks.removeForChats(result.deleted);
         } catch (error) {
           bookmarkCleanupFailed = true;
           console.error('Chats were deleted, but their bookmarks could not be removed:', error);
-        }
-        
-        if (chat.activeEntry && deleteTarget.some(e => getBookmarkChatId(e) === getBookmarkChatId(chat.activeEntry!))) {
-          chat.clearChat();
-          selection.deselectAll();
-        }
-      } else {
-        await archive.deleteChat(deleteTarget);
-        try {
-          await bookmarks.removeForChats([deleteTarget]);
-        } catch (error) {
-          bookmarkCleanupFailed = true;
-          console.error('Chat was deleted, but its bookmarks could not be removed:', error);
-        }
-        if (chat.activeEntry && getBookmarkChatId(chat.activeEntry) === getBookmarkChatId(deleteTarget)) {
-          chat.clearChat();
-          selection.deselectAll();
+        } finally {
+          setDeleteProgress({ stage: 'bookmarks', done: 1, total: 1 });
         }
       }
-      setDeleteToast(bookmarkCleanupFailed
-        ? `${deletedName} deleted; bookmark cleanup failed`
-        : `${deletedName} Deleted`);
+
+      if (chat.activeEntry && result.deleted.some(
+        entry => getBookmarkChatId(entry) === getBookmarkChatId(chat.activeEntry!)
+      )) {
+        chat.clearChat();
+        selection.deselectAll();
+      }
+
+      for (const failure of result.failed) {
+        console.error(`Failed to delete ${failure.entry.folderName}`, failure.error);
+      }
+      const deletedCount = result.deleted.length;
+      const failureCount = result.failed.length;
+      let resultMessage = jsonOnly
+        ? failureCount > 0
+          ? `${deletedCount} of ${result.requested} chat JSON files deleted; media retained; ${failureCount} failed`
+          : `${deletedCount} chat ${deletedCount === 1 ? 'JSON' : 'JSON files'} deleted; media retained`
+        : failureCount > 0
+          ? `${deletedCount} of ${result.requested} chats deleted; ${failureCount} failed`
+          : `${deletedCount} ${deletedCount === 1 ? 'chat' : 'chats'} deleted`;
+      if (bookmarkCleanupFailed) resultMessage += '; bookmark cleanup failed';
+      setDeleteToast(resultMessage);
       if (deleteToastTimerRef.current) clearTimeout(deleteToastTimerRef.current);
       deleteToastTimerRef.current = setTimeout(() => setDeleteToast(null), 3200);
     } catch (e) {
       console.error('Delete failed:', e);
     } finally {
       if (sizeWorkSuspended) archive.resumeSizeWork();
+      if (deleteOperationRef.current === operationToken) deleteOperationRef.current = null;
     }
     setDeletePreparing(false);
     setDeleteBusy(false);
@@ -142,6 +156,7 @@ export default function App() {
     setDeleteInfo(null);
     setDeleteInfoLoading(false);
     setDeleteInfoSkipped(false);
+    setDeleteMediaSafetyUnavailable(false);
     deleteInfoRequestRef.current++;
   }, [deleteTarget, archive, bookmarks, chat, selection]);
 
@@ -154,6 +169,7 @@ export default function App() {
     setDeleteTarget(target);
     setDeleteInfo(null);
     setDeleteInfoSkipped(false);
+    setDeleteMediaSafetyUnavailable(false);
     setDeletePreparing(false);
     setDeleteBusy(false);
 
@@ -169,6 +185,9 @@ export default function App() {
       .catch(error => {
         if (deleteInfoRequestRef.current !== requestId) return;
         if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (error instanceof MessengerExportIndexIncompleteError) {
+          setDeleteMediaSafetyUnavailable(true);
+        }
         console.error('Failed to prepare delete details:', error);
       })
       .finally(() => {
@@ -219,6 +238,7 @@ export default function App() {
       setDeleteInfo(null);
       setDeleteInfoLoading(false);
       setDeleteInfoSkipped(false);
+      setDeleteMediaSafetyUnavailable(false);
       setDeletePreparing(false);
       setDeleteBusy(false);
       setDeleteProgress(null);
@@ -410,12 +430,14 @@ export default function App() {
         <DeleteConfirmModal
           entry={deleteTarget}
           onConfirm={handleDeleteConfirm}
+          onDeleteJsonOnly={() => handleDeleteConfirm(true)}
           onSkipCalculation={() => {
             deleteInfoAbortRef.current?.abort();
             deleteInfoAbortRef.current = null;
             deleteInfoRequestRef.current++;
             setDeleteInfoLoading(false);
             setDeleteInfoSkipped(true);
+            setDeleteMediaSafetyUnavailable(false);
           }}
           onCancel={() => {
             if (!deleteProgress && !deleteBusy) {
@@ -425,6 +447,7 @@ export default function App() {
               setDeleteInfo(null);
               setDeleteInfoLoading(false);
               setDeleteInfoSkipped(false);
+              setDeleteMediaSafetyUnavailable(false);
               deleteInfoRequestRef.current++;
             }
           }}
@@ -432,6 +455,7 @@ export default function App() {
           messengerDeletionInfo={deleteInfo}
           deletionInfoLoading={deleteInfoLoading}
           deletionInfoSkipped={deleteInfoSkipped}
+          mediaSafetyUnavailable={deleteMediaSafetyUnavailable}
           preparingDeletion={deletePreparing}
           deleting={deleteBusy}
         />

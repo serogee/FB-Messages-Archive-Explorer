@@ -1,16 +1,19 @@
 import type { ChatListEntry } from '../../types/messenger';
+import type { DeleteProgress } from '../../types/deletion';
 import { formatFileSize } from '../../services/storage';
 import type { MessengerExportDeletionInfo } from '../../services/messengerExport';
 
 interface DeleteConfirmModalProps {
   entry: ChatListEntry | ChatListEntry[];
   onConfirm: () => void;
+  onDeleteJsonOnly?: () => void;
   onSkipCalculation?: () => void;
   onCancel: () => void;
-  progress?: { done: number; total: number } | null;
+  progress?: DeleteProgress | null;
   messengerDeletionInfo?: MessengerExportDeletionInfo | null;
   deletionInfoLoading?: boolean;
   deletionInfoSkipped?: boolean;
+  mediaSafetyUnavailable?: boolean;
   preparingDeletion?: boolean;
   deleting?: boolean;
 }
@@ -18,12 +21,14 @@ interface DeleteConfirmModalProps {
 export function DeleteConfirmModal({
   entry,
   onConfirm,
+  onDeleteJsonOnly,
   onSkipCalculation,
   onCancel,
   progress,
   messengerDeletionInfo,
   deletionInfoLoading,
   deletionInfoSkipped,
+  mediaSafetyUnavailable,
   preparingDeletion,
   deleting,
 }: DeleteConfirmModalProps) {
@@ -35,7 +40,17 @@ export function DeleteConfirmModal({
   const isBusy = !!preparingDeletion || isDeleting;
   const canSkipCalculation = !!deletionInfoLoading && !isMessenger && !deletionInfoSkipped && !messengerDeletionInfo && !isBusy;
   const canConfirm = !isBusy && (!!messengerDeletionInfo || !!deletionInfoSkipped);
-  const pendingDetailText = deletionInfoSkipped ? 'Skipped' : 'Calculating...';
+  const canDeleteJsonOnly = !!mediaSafetyUnavailable && !!onDeleteJsonOnly && !isBusy;
+  const pendingDetailText = mediaSafetyUnavailable
+    ? 'Unavailable'
+    : deletionInfoSkipped ? 'Skipped' : 'Calculating...';
+  const progressLabel = progress?.stage === 'preparing'
+    ? 'Preparing deletion...'
+    : progress?.stage === 'media'
+      ? 'Deleting media...'
+      : progress?.stage === 'bookmarks'
+        ? 'Cleaning bookmarks...'
+        : 'Deleting chats...';
   const targetName = isMultiple
     ? `${entry.length} chats selected`
     : (entry._jsonFileName || entry.folderName);
@@ -102,15 +117,25 @@ export function DeleteConfirmModal({
           </p>
         )}
 
+        {mediaSafetyUnavailable && (
+          <p className="delete-meta">
+            <span style={{ color: 'var(--muted)', fontSize: '12px' }}>
+              Media ownership could not be verified. You can delete only the chat JSON and keep all media.
+            </span>
+          </p>
+        )}
+
         {progress && (
           <div style={{ marginTop: '16px', marginBottom: '8px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px' }}>
-              <span>Deleting...</span>
-              <span>{progress.done} / {progress.total}</span>
+              <span>{progressLabel}</span>
+              {progress.total > 0 && <span>{progress.done} / {progress.total}</span>}
             </div>
-            <div style={{ width: '100%', height: '6px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', background: 'var(--accent)', width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
-            </div>
+            {progress.total > 0 && (
+              <div style={{ width: '100%', height: '6px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: 'var(--accent)', width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+              </div>
+            )}
           </div>
         )}
         <div className="delete-actions">
@@ -120,10 +145,14 @@ export function DeleteConfirmModal({
             </button>
           )}
           <button
-            className={canSkipCalculation ? 'btn-warning' : 'btn-danger'}
-            onClick={canSkipCalculation ? onSkipCalculation : onConfirm}
+            className={canSkipCalculation || canDeleteJsonOnly ? 'btn-warning' : 'btn-danger'}
+            onClick={canSkipCalculation
+              ? onSkipCalculation
+              : canDeleteJsonOnly ? onDeleteJsonOnly : onConfirm}
             id="deleteConfirmBtn"
-            disabled={canSkipCalculation ? !onSkipCalculation : !canConfirm}
+            disabled={canSkipCalculation
+              ? !onSkipCalculation
+              : canDeleteJsonOnly ? !onDeleteJsonOnly : !canConfirm}
           >
             {preparingDeletion
               ? 'Preparing deletion...'
@@ -131,6 +160,8 @@ export function DeleteConfirmModal({
                 ? 'Deleting...'
                 : canSkipCalculation
                   ? 'Skip calculation'
+                  : canDeleteJsonOnly
+                    ? 'Delete chat data only'
                   : deletionInfoLoading && !messengerDeletionInfo
                     ? 'Calculating...'
                     : 'Delete permanently'}
