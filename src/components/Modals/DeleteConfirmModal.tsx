@@ -111,6 +111,7 @@ export function DeleteConfirmModal({
   const showWarning = !resultNotice && preparation.status !== 'error';
   const showBreakdown = !resultNotice && (preparation.status !== 'error' || !!info);
   const partialFailures = resultNotice?.failures.filter(failure => failure.partial) || [];
+  const retryableFailures = resultNotice?.failures.filter(failure => !failure.partial) || [];
   const removedMediaCount = partialFailures.reduce(
     (total, failure) => total + (failure.removedMediaCount || 0),
     0
@@ -206,6 +207,13 @@ export function DeleteConfirmModal({
                   : '. Some attachments may already be missing.'}
               </div>
             ))}
+            {retryableFailures.length > 0 && (
+              <div>
+                {retryableFailures.length === 1
+                  ? 'The chat could not be deleted and remains available for retry.'
+                  : `${retryableFailures.length} chats could not be deleted and remain available for retry.`}
+              </div>
+            )}
             {resultNotice.bookmarkCleanupError && <div>{resultNotice.bookmarkCleanupError}</div>}
           </div>
         )}

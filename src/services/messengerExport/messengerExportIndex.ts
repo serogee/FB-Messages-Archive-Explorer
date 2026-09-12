@@ -100,7 +100,6 @@ export function addConversationToChatIndex(
   removeConversationFromChatIndex(index, jsonFileName);
 
   const mediaIdentities = new Set<string>();
-  const mediaPaths = new Set<string>();
   for (const message of thread.messages || []) {
     for (const { path, shared } of getMessageAttachmentReferences(message)) {
       if (shared) continue;
@@ -108,7 +107,6 @@ export function addConversationToChatIndex(
       const filePath = getMessengerMediaFilePath(path);
       if (!identity || !filePath) continue;
       mediaIdentities.add(identity);
-      mediaPaths.add(identity);
       const existingPath = index.referenceIndex.mediaFiles.get(identity);
       if (existingPath && existingPath !== filePath) {
         markMessengerExportIndexIncomplete(index, {
@@ -122,7 +120,9 @@ export function addConversationToChatIndex(
   }
 
   index.referenceIndex.chatMedia.set(jsonFileName, mediaIdentities);
-  index.chatMediaPaths.set(jsonFileName, mediaPaths);
+  // Both APIs currently consume the same normalized identities. Share the set so
+  // attachment-heavy archives do not retain every per-chat reference twice.
+  index.chatMediaPaths.set(jsonFileName, mediaIdentities);
   index.jsonSizes.set(jsonFileName, fileSize);
 
   for (const identity of mediaIdentities) {

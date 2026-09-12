@@ -1,4 +1,13 @@
 import type { BatchDeleteResult } from '../types/deletion';
+import type { ChatListEntry } from '../types/messenger';
+
+export function getDeleteRetryEntries(result: BatchDeleteResult): ChatListEntry[] {
+  return result.failed.map(failure => failure.entry);
+}
+
+export function getBookmarkCleanupEntries(result: BatchDeleteResult): ChatListEntry[] {
+  return result.deleted;
+}
 
 export function formatBatchDeleteResult(result: BatchDeleteResult, jsonOnly: boolean): string {
   const deletedCount = result.deleted.length;

@@ -28,7 +28,13 @@ import {
 } from './services/messengerExport';
 import { isFileSystemAccessSupported } from './services/fileSystem';
 import { getBookmarkChatId } from './services/bookmarks';
-import { formatBatchDeleteResult } from './services/deletionResults';
+import {
+  formatBatchDeleteResult,
+  getBookmarkCleanupEntries,
+  getDeleteRetryEntries,
+} from './services/deletionResults';
+import { createProgressThrottle } from './services/progressThrottle';
+import { SingleFlightGuard } from './services/singleFlight';
 import { requestDirectoryWritePermission } from './types/fileSystem';
 
 function getErrorMessage(error: unknown): string {
@@ -65,7 +71,7 @@ export default function App() {
   const deleteInfoRequestRef = useRef(0);
   const deleteInfoAbortRef = useRef<AbortController | null>(null);
   const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deleteOperationRef = useRef<symbol | null>(null);
+  const deleteOperationGuardRef = useRef(new SingleFlightGuard());
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryDefaultTab, setGalleryDefaultTab] = useState<GalleryCategory>('all');
@@ -160,10 +166,15 @@ export default function App() {
   }, [prepareDeleteTarget]);
 
   const handleDeleteConfirm = useCallback(async (mode: 'normal' | 'json-only') => {
-    if (!deleteTarget || deleteOperationRef.current) return;
+    if (!deleteTarget) return;
     const jsonOnly = mode === 'json-only';
-    const operationToken = Symbol('delete-confirm');
-    deleteOperationRef.current = operationToken;
+    const operationToken = deleteOperationGuardRef.current.tryBegin();
+    if (!operationToken) return;
+    const progressReporter = createProgressThrottle<DeleteProgress>(
+      setDeleteProgress,
+      75,
+      progress => progress.stage
+    );
     deleteInfoAbortRef.current?.abort();
     deleteInfoAbortRef.current = null;
     setDeleteResultNotice(null);
@@ -184,14 +195,20 @@ export default function App() {
       setDeleteBusy(true);
       setDeleteProgress(null);
       const result = jsonOnly
-        ? await archive.deleteMessengerChatsJsonOnly(targets, setDeleteProgress)
-        : await archive.deleteChats(targets, setDeleteProgress);
+        ? await archive.deleteMessengerChatsJsonOnly(targets, progress => {
+            progressReporter.report(progress, progress.total > 0 && progress.done >= progress.total);
+          })
+        : await archive.deleteChats(targets, progress => {
+            progressReporter.report(progress, progress.total > 0 && progress.done >= progress.total);
+          });
+      progressReporter.flush();
 
       let bookmarkCleanupError: string | undefined;
-      if (result.deleted.length > 0) {
+      const bookmarkCleanupEntries = getBookmarkCleanupEntries(result);
+      if (bookmarkCleanupEntries.length > 0) {
         setDeleteProgress({ stage: 'bookmarks', done: 0, total: 1 });
         try {
-          await bookmarks.removeForChats(result.deleted);
+          await bookmarks.removeForChats(bookmarkCleanupEntries);
         } catch (error) {
           bookmarkCleanupError = 'Chats were deleted, but their bookmarks could not be removed.';
           console.error(bookmarkCleanupError, error);
@@ -211,12 +228,15 @@ export default function App() {
         console.error(`Failed to delete ${failure.entry.folderName}`, failure.error);
       }
       const resultMessage = formatBatchDeleteResult(result, jsonOnly);
-      setDeleteToast(resultMessage);
+      setDeleteToast(bookmarkCleanupError
+        ? `${resultMessage}; bookmark cleanup failed`
+        : resultMessage);
       if (deleteToastTimerRef.current) clearTimeout(deleteToastTimerRef.current);
       deleteToastTimerRef.current = setTimeout(() => setDeleteToast(null), 3200);
 
-      if (result.failed.some(failure => failure.partial)) {
-        retryTargets = result.failed.map(failure => failure.entry);
+      const failedEntries = getDeleteRetryEntries(result);
+      if (failedEntries.length > 0) {
+        retryTargets = failedEntries;
         setDeleteResultNotice({
           message: resultMessage,
           failures: result.failed,
@@ -233,7 +253,8 @@ export default function App() {
       setDeleteResultNotice({ message, failures: [] });
     } finally {
       if (sizeWorkSuspended) archive.resumeSizeWork();
-      if (deleteOperationRef.current === operationToken) deleteOperationRef.current = null;
+      progressReporter.cancel();
+      deleteOperationGuardRef.current.finish(operationToken);
       setDeletePreparing(false);
       setDeleteBusy(false);
       setDeleteProgress(null);

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { formatBatchDeleteResult } from '../src/services/deletionResults';
+import {
+  formatBatchDeleteResult,
+  getBookmarkCleanupEntries,
+  getDeleteRetryEntries,
+} from '../src/services/deletionResults';
 import type { BatchDeleteResult } from '../src/types/deletion';
 import type { ChatListEntry } from '../src/types/messenger';
 import { createMockDirectoryHandle } from './helpers/mockFileSystem';
@@ -38,5 +42,21 @@ describe('deletion result messages', () => {
       failed: [],
     };
     expect(formatBatchDeleteResult(result, true)).toBe('Chat JSON deleted; media retained');
+  });
+
+  it('keeps every failed entry retryable even when no files were removed', () => {
+    const unchanged = entry('unchanged');
+    const partial = entry('partial');
+    const result: BatchDeleteResult = {
+      requested: 3,
+      deleted: [entry('deleted')],
+      failed: [
+        { entry: unchanged, error: new Error('permission denied'), partial: false },
+        { entry: partial, error: new Error('one media removal failed'), partial: true },
+      ],
+    };
+
+    expect(getDeleteRetryEntries(result)).toEqual([unchanged, partial]);
+    expect(getBookmarkCleanupEntries(result)).toEqual(result.deleted);
   });
 });

@@ -103,6 +103,9 @@ describe('Messenger export filesystem services', () => {
     expect(chatIndex.referenceIndex.chatMedia.get('chat_alice.json')).toEqual(
       new Set(['media/photo1.jpg', 'media/shared.jpg'])
     );
+    expect(chatIndex.chatMediaPaths.get('chat_alice.json')).toBe(
+      chatIndex.referenceIndex.chatMedia.get('chat_alice.json')
+    );
     expect(chatIndex.chatMediaPaths.get('chat_group.json')).toEqual(
       new Set(['media/shared.jpg', 'media/video1.mp4'])
     );
@@ -114,11 +117,34 @@ describe('Messenger export filesystem services', () => {
     )?.folderSize);
   });
 
+  it('reads and parses each root JSON exactly once during indexed listing', async () => {
+    const root = messengerRoot();
+    const getFileSpies: Array<ReturnType<typeof vi.fn>> = [];
+    const textSpies: Array<ReturnType<typeof vi.fn>> = [];
+    for await (const [name, handle] of root.entries()) {
+      if (handle.kind !== 'file' || !name.endsWith('.json')) continue;
+      const file = await handle.getFile();
+      const text = file.text.bind(file);
+      const textSpy = vi.fn(text);
+      const getFileSpy = vi.fn(async () => {
+        Object.defineProperty(file, 'text', { configurable: true, value: textSpy });
+        return file;
+      });
+      handle.getFile = getFileSpy;
+      getFileSpies.push(getFileSpy);
+      textSpies.push(textSpy);
+    }
+
+    await listMessengerExportChatsIndexed(root);
+
+    expect(getFileSpies.every(spy => spy.mock.calls.length === 1)).toBe(true);
+    expect(textSpies.every(spy => spy.mock.calls.length === 1)).toBe(true);
+  });
+
   it('computes indexed sizes and deletion details without reopening conversation JSON', async () => {
     const root = messengerRoot();
     const { entries, chatIndex } = await listMessengerExportChatsIndexed(root);
     const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(root);
-    const getFileHandle = vi.spyOn(root, 'getFileHandle');
     const alice = entries.find(item => item._jsonFileName === 'chat_alice.json')!;
 
     const size = computeMessengerExportChatSizeFromIndex(
@@ -126,6 +152,12 @@ describe('Messenger export filesystem services', () => {
       chatIndex,
       mediaSizeIndex
     );
+    const fallbackSize = await computeMessengerExportChatSize(
+      root,
+      'chat_alice.json',
+      mediaSizeIndex
+    );
+    const getFileHandle = vi.spyOn(root, 'getFileHandle');
     const info = await getMessengerExportDeletionInfo(
       root,
       alice,
@@ -135,6 +167,7 @@ describe('Messenger export filesystem services', () => {
     );
 
     expect(size).toBe(chatIndex.jsonSizes.get('chat_alice.json')! + 7);
+    expect(size).toBe(fallbackSize);
     expect(info.jsonSize).toBe(chatIndex.jsonSizes.get('chat_alice.json'));
     expect(getFileHandle).not.toHaveBeenCalled();
   });
@@ -435,6 +468,57 @@ describe('Messenger export filesystem services', () => {
     await expect(root.getFileHandle('chat.json')).resolves.toMatchObject({ kind: 'file' });
     await expect(media.getFileHandle('blocked.jpg')).resolves.toMatchObject({ kind: 'file' });
     await expect(media.getFileHandle('removed.jpg')).rejects.toMatchObject({ name: 'NotFoundError' });
+    expect(chatIndex.referenceIndex.chatMedia.has('chat.json')).toBe(true);
+  });
+
+  it('keeps the chat retryable when every media removal fails before JSON deletion', async () => {
+    const root = createMockDirectoryHandle('messenger', {
+      'chat.json': JSON.stringify({
+        threadName: 'Chat',
+        participants: ['Alice'],
+        messages: [{ senderName: 'Alice', timestamp: 1, media: [{ uri: 'media/blocked.jpg' }] }],
+      }),
+      media: { 'blocked.jpg': new Uint8Array([1]) },
+    });
+    const { entries, chatIndex } = await listMessengerExportChatsIndexed(root);
+    const media = await root.getDirectoryHandle('media');
+    vi.spyOn(media, 'removeEntry').mockRejectedValue(
+      new DOMException('Media deletion denied', 'NotAllowedError')
+    );
+
+    const result = await executeMessengerExportDeletionPlan(
+      root,
+      buildMessengerExportDeletionPlan(entries, chatIndex),
+      chatIndex
+    );
+
+    expect(result.chats[0]).toMatchObject({ deleted: false, partial: false, removedMediaCount: 0 });
+    await expect(root.getFileHandle('chat.json')).resolves.toMatchObject({ kind: 'file' });
+    expect(chatIndex.referenceIndex.chatMedia.has('chat.json')).toBe(true);
+  });
+
+  it('reports text-only and JSON-only removal failures without mutating the index', async () => {
+    const root = createMockDirectoryHandle('messenger', {
+      'chat.json': JSON.stringify({
+        threadName: 'Text only',
+        participants: ['Alice'],
+        messages: [{ senderName: 'Alice', timestamp: 1, text: 'hello' }],
+      }),
+    });
+    const { entries, chatIndex } = await listMessengerExportChatsIndexed(root);
+    vi.spyOn(root, 'removeEntry').mockRejectedValue(
+      new DOMException('JSON deletion denied', 'NotAllowedError')
+    );
+
+    const normalResult = await executeMessengerExportDeletionPlan(
+      root,
+      buildMessengerExportDeletionPlan(entries, chatIndex),
+      chatIndex
+    );
+    const jsonOnlyResult = await deleteMessengerExportJsonOnly(root, entries, chatIndex);
+
+    expect(normalResult.chats[0]).toMatchObject({ deleted: false, partial: false });
+    expect(jsonOnlyResult[0]).toMatchObject({ deleted: false, partial: false });
     expect(chatIndex.referenceIndex.chatMedia.has('chat.json')).toBe(true);
   });
 

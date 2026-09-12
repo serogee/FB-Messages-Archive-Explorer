@@ -2,12 +2,18 @@ import { bench, describe } from 'vitest';
 import { listChatFolders } from '../../src/services/fileSystem';
 import { computeFacebookDeleteInfo } from '../../src/hooks/useArchive';
 import {
+  addConversationToChatIndex,
   buildMessengerExportReferenceIndex,
+  buildMessengerExportMediaSizeIndex,
+  computeMessengerExportChatSize,
+  computeMessengerExportChatSizeFromIndex,
+  createMessengerExportChatIndex,
+  listMessengerExportChatsIndexed,
   removeMediaFiles,
   type MessengerExportMediaDeletionTarget,
-} from '../../src/services/messengerExport/messengerExportDeletion';
+} from '../../src/services/messengerExport';
 import type { WritableDirectoryHandle } from '../../src/types/fileSystem';
-import type { ChatListEntry } from '../../src/types/messenger';
+import type { ChatListEntry, MessengerThread } from '../../src/types/messenger';
 import {
   generateFacebookMessagesRoot,
   generateMessengerReferenceRoot,
@@ -17,6 +23,29 @@ const benchOptions = { time: 500, warmupTime: 100 };
 const facebook500Root = generateFacebookMessagesRoot(500);
 const messenger50Root = generateMessengerReferenceRoot(50);
 const messenger250Root = generateMessengerReferenceRoot(250);
+const messengerIndexedListing = await listMessengerExportChatsIndexed(messenger250Root);
+const messengerMediaSizeIndex = await buildMessengerExportMediaSizeIndex(messenger250Root);
+const listingTimeThreads = Array.from({ length: 250 }, (_, index): MessengerThread => ({
+  title: `Chat ${index}`,
+  participants: [{ name: 'Alice' }, { name: `Person ${index}` }],
+  messages: [{
+    sender_name: 'Alice',
+    timestamp_ms: index,
+    media: [
+      { uri: `media/exclusive_${index}.jpg` },
+      { uri: `media/shared_${index % 25}.jpg` },
+    ],
+  }],
+}));
+const attachmentHeavyThread: MessengerThread = {
+  title: 'Attachment heavy',
+  participants: [{ name: 'Alice' }],
+  messages: Array.from({ length: 10_000 }, (_, index) => ({
+    sender_name: 'Alice',
+    timestamp_ms: index,
+    media: [{ uri: `media/file_${index}.jpg` }],
+  })),
+};
 const deletionEntries = Array.from({ length: 100 }, (_, index) => {
   const dirHandle = {
     kind: 'directory' as const,
@@ -61,6 +90,34 @@ describe('filesystem performance', () => {
 
   bench('build Messenger reference index for 250 chats', async () => {
     await buildMessengerExportReferenceIndex(messenger250Root);
+  }, benchOptions);
+
+  bench('build listing-time Messenger index for 250 already-parsed chats', () => {
+    const index = createMessengerExportChatIndex();
+    listingTimeThreads.forEach((thread, position) => {
+      addConversationToChatIndex(index, `chat_${position}.json`, 1024, thread);
+    });
+  }, benchOptions);
+
+  bench('build listing-time index for one chat with 10k attachments', () => {
+    const index = createMessengerExportChatIndex();
+    addConversationToChatIndex(index, 'attachment_heavy.json', 1024, attachmentHeavyThread);
+  }, benchOptions);
+
+  bench('calculate indexed Messenger chat size', () => {
+    computeMessengerExportChatSizeFromIndex(
+      'chat_0.json',
+      messengerIndexedListing.chatIndex,
+      messengerMediaSizeIndex
+    );
+  }, benchOptions);
+
+  bench('calculate Messenger chat size by rereading JSON', async () => {
+    await computeMessengerExportChatSize(
+      messenger250Root,
+      'chat_0.json',
+      messengerMediaSizeIndex
+    );
   }, benchOptions);
 
   bench('calculate Facebook deletion details with one worker', async () => {
