@@ -22,6 +22,11 @@ interface RawMessengerExportThread {
   messages?: RawMessengerExportMessage[];
 }
 
+export type MessengerExportJsonClassification =
+  | { kind: 'conversation'; thread: MessengerThread }
+  | { kind: 'metadata' }
+  | { kind: 'malformed-conversation' };
+
 function isRawMessengerExportThread(raw: unknown): raw is RawMessengerExportThread {
   return (
     !!raw &&
@@ -127,6 +132,24 @@ export function tryParseMessengerExportJson(content: string): MessengerThread | 
   } catch {
     return null;
   }
+}
+
+export function classifyMessengerExportJson(content: string): MessengerExportJsonClassification {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content);
+  } catch {
+    return { kind: 'malformed-conversation' };
+  }
+
+  if (isRawMessengerExportThread(raw)) {
+    return { kind: 'conversation', thread: parseMessengerExportRaw(raw) };
+  }
+
+  const looksLikeConversation = !!raw
+    && typeof raw === 'object'
+    && ('threadName' in raw || 'participants' in raw || 'messages' in raw);
+  return { kind: looksLikeConversation ? 'malformed-conversation' : 'metadata' };
 }
 
 export function getMessengerExportLastMessage(thread: MessengerThread): MessengerMessage | null {

@@ -55,6 +55,11 @@ export interface LoadedBookmarks extends BookmarkData {
   fileExists: boolean;
 }
 
+const bookmarkDirectoryPreparations = new WeakMap<
+  WritableDirectoryHandle,
+  Promise<WritableDirectoryHandle>
+>();
+
 function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
 }
@@ -300,18 +305,30 @@ export async function migrateLegacyBookmarksDirectory(
   }
 }
 
-async function getWritableBookmarksDirectory(
+export function prepareBookmarksDirectory(
   messagesRoot: WritableDirectoryHandle
 ): Promise<WritableDirectoryHandle> {
-  await migrateLegacyBookmarksDirectory(messagesRoot);
-  return messagesRoot.getDirectoryHandle(BOOKMARKS_DIRECTORY, { create: true });
+  const cached = bookmarkDirectoryPreparations.get(messagesRoot);
+  if (cached) return cached;
+
+  const preparation = (async () => {
+    await migrateLegacyBookmarksDirectory(messagesRoot);
+    return messagesRoot.getDirectoryHandle(BOOKMARKS_DIRECTORY, { create: true });
+  })();
+  bookmarkDirectoryPreparations.set(messagesRoot, preparation);
+  return preparation;
 }
 
-export async function saveBookmarks(
-  messagesRoot: WritableDirectoryHandle,
+export function invalidateBookmarksDirectoryPreparation(
+  messagesRoot: WritableDirectoryHandle
+): void {
+  bookmarkDirectoryPreparations.delete(messagesRoot);
+}
+
+export async function saveBookmarksToDirectory(
+  directory: WritableDirectoryHandle,
   data: BookmarkData
 ): Promise<void> {
-  const directory = await getWritableBookmarksDirectory(messagesRoot);
   const fileHandle = await directory.getFileHandle(BOOKMARKS_FILE, { create: true });
   const writable = await fileHandle.createWritable();
   const payload: BookmarkFile = {
@@ -322,6 +339,14 @@ export async function saveBookmarks(
   };
   await writable.write(JSON.stringify(payload, null, 2) + '\n');
   await writable.close();
+}
+
+export async function saveBookmarks(
+  messagesRoot: WritableDirectoryHandle,
+  data: BookmarkData
+): Promise<void> {
+  const directory = await prepareBookmarksDirectory(messagesRoot);
+  await saveBookmarksToDirectory(directory, data);
 }
 
 export function setChatPins(

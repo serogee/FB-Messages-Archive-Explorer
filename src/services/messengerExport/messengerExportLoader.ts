@@ -1,7 +1,16 @@
 import type { ChatListEntry, MessengerThread } from '../../types/messenger';
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../../types/fileSystem';
 import { getMessageTimestamp } from '../parser';
-import { getMessengerExportLastMessage, tryParseMessengerExportJson } from './messengerExportParser';
+import {
+  classifyMessengerExportJson,
+  getMessengerExportLastMessage,
+} from './messengerExportParser';
+import {
+  addConversationToChatIndex,
+  createMessengerExportChatIndex,
+  markMessengerExportIndexIncomplete,
+  type MessengerExportChatIndex,
+} from './messengerExportIndex';
 
 function jsonStem(fileName: string): string {
   return fileName.replace(/\.json$/i, '');
@@ -38,50 +47,66 @@ function describeLastMessage(thread: MessengerThread): { lastMessage?: string; l
   };
 }
 
-export async function listMessengerExportChats(
+export interface MessengerExportListingResult {
+  entries: ChatListEntry[];
+  chatIndex: MessengerExportChatIndex;
+}
+
+export async function listMessengerExportChatsIndexed(
   handle: ReadableDirectoryHandle,
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal
-): Promise<ChatListEntry[]> {
+): Promise<MessengerExportListingResult> {
   const fileHandles: Array<{ name: string; handle: ReadableFileHandle }> = [];
 
   for await (const [name, entry] of handle.entries()) {
-    if (signal?.aborted) return [];
+    if (signal?.aborted) return { entries: [], chatIndex: createMessengerExportChatIndex() };
     if (entry.kind === 'file' && /\.json$/i.test(name)) {
       fileHandles.push({ name, handle: entry });
     }
   }
 
   const entries: ChatListEntry[] = [];
+  const chatIndex = createMessengerExportChatIndex();
   onProgress?.(0, fileHandles.length);
 
   for (let i = 0; i < fileHandles.length; i++) {
-    if (signal?.aborted) return entries;
+    if (signal?.aborted) return { entries, chatIndex };
     const { name, handle: fileHandle } = fileHandles[i];
 
     try {
       const file = await fileHandle.getFile();
       const content = await file.text();
-      const thread = tryParseMessengerExportJson(content);
-      if (!thread) continue;
-      const { lastMessage, lastTimestamp } = describeLastMessage(thread);
+      if (signal?.aborted) return { entries, chatIndex };
+      const classification = classifyMessengerExportJson(content);
+      if (classification.kind === 'malformed-conversation') {
+        markMessengerExportIndexIncomplete(chatIndex, {
+          jsonFileName: name,
+          reason: 'malformed-conversation',
+        });
+      } else if (classification.kind === 'conversation') {
+        const thread = classification.thread;
+        const { lastMessage, lastTimestamp } = describeLastMessage(thread);
+        addConversationToChatIndex(chatIndex, name, file.size, thread);
 
-      entries.push({
-        folderName: jsonStem(name),
-        title: thread.title || jsonStem(name),
-        participants: (thread.participants || []).map(participant => participant.name).filter(Boolean),
-        lastMessage,
-        lastTimestamp,
-        messageCount: thread.messages?.length || 0,
-        folderSize: file.size,
-        dirHandle: handle,
-        jsonFileCount: 1,
-        source: 'inbox',
-        _messengerExport: true,
-        _jsonFileName: name,
-        _sizeIncludesMedia: false,
-      });
+        entries.push({
+          folderName: jsonStem(name),
+          title: thread.title || jsonStem(name),
+          participants: (thread.participants || []).map(participant => participant.name).filter(Boolean),
+          lastMessage,
+          lastTimestamp,
+          messageCount: thread.messages?.length || 0,
+          folderSize: file.size,
+          dirHandle: handle,
+          jsonFileCount: 1,
+          source: 'inbox',
+          _messengerExport: true,
+          _jsonFileName: name,
+          _sizeIncludesMedia: false,
+        });
+      }
     } catch {
+      markMessengerExportIndexIncomplete(chatIndex, { jsonFileName: name, reason: 'unreadable' });
       // One malformed conversation must not hide other chats in the export.
     }
 
@@ -98,7 +123,15 @@ export async function listMessengerExportChats(
     return b.lastTimestamp - a.lastTimestamp;
   });
 
-  return entries;
+  return { entries, chatIndex };
+}
+
+export async function listMessengerExportChats(
+  handle: ReadableDirectoryHandle,
+  onProgress?: (done: number, total: number) => void,
+  signal?: AbortSignal
+): Promise<ChatListEntry[]> {
+  return (await listMessengerExportChatsIndexed(handle, onProgress, signal)).entries;
 }
 
 export async function loadMessengerExportChat(

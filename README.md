@@ -112,6 +112,8 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 > [!WARNING]
 > Deleting a conversation permanently removes its files from your computer. There is no undo, no recycle bin, and no way to recover the files. Keep your original `.zip` download as a backup before you delete anything.
 
+For standalone Messenger exports, the app removes media used only by the selected conversation before removing its JSON file. If storage access fails or the operation is interrupted, the JSON is kept so you can retry, but media already removed during that attempt may appear as missing attachments. Reopen the archive if necessary, retry the failed deletion, and keep the original export as your recovery copy. When media ownership cannot be verified, the separate **Delete JSON only; keep media** option deliberately leaves all media files in place.
+
 <a name="31-offline-use"></a>
 
 ### 3.1. Offline Use
