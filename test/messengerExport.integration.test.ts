@@ -8,6 +8,7 @@ import {
   executeMessengerExportDeletionPlan,
   getMessengerExportBatchDeletionInfo,
   getMessengerExportDeletionInfo,
+  getMessengerExportDeletionOwnershipInfo,
   MessengerExportIndexIncompleteError,
   MessengerExportDeletionPartialError,
 } from '../src/services/messengerExport/messengerExportDeletion';
@@ -295,6 +296,21 @@ describe('Messenger export filesystem services', () => {
     expect(info.mediaSize).toBe(3);
   });
 
+  it('reports ownership counts before media byte sizing completes', async () => {
+    const root = messengerRoot();
+    const { entries, chatIndex } = await listMessengerExportChatsIndexed(root);
+    const alice = entries.find(item => item._jsonFileName === 'chat_alice.json')!;
+
+    const info = getMessengerExportDeletionOwnershipInfo([alice], chatIndex);
+
+    expect(info.jsonSize).toBeGreaterThan(0);
+    expect(info.exclusiveMediaFiles).toEqual(['photo1.jpg']);
+    expect(info.exclusiveMediaCount).toBe(1);
+    expect(info.sharedMediaCount).toBe(1);
+    expect(info.mediaSize).toBe(0);
+    expect(info.totalSize).toBe(info.jsonSize);
+  });
+
   it('accepts a Messenger export without a media directory', async () => {
     const root = createMockDirectoryHandle('messenger', {
       'chat.json': JSON.stringify({
@@ -414,7 +430,7 @@ describe('Messenger export filesystem services', () => {
 
     const result = await executeMessengerExportDeletionPlan(root, plan, chatIndex);
 
-    expect(result.chats[0]).toMatchObject({ deleted: false, partial: true });
+    expect(result.chats[0]).toMatchObject({ deleted: false, partial: true, removedMediaCount: 1 });
     expect((result.chats[0].error as MessengerExportDeletionPartialError).mediaFailures).toHaveLength(1);
     await expect(root.getFileHandle('chat.json')).resolves.toMatchObject({ kind: 'file' });
     await expect(media.getFileHandle('blocked.jpg')).resolves.toMatchObject({ kind: 'file' });

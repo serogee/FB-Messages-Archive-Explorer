@@ -62,6 +62,7 @@ export interface MessengerExportChatDeletionResult {
   deleted: boolean;
   partial: boolean;
   completedMedia: MessengerExportMediaDeletionTarget[];
+  removedMediaCount: number;
   error?: unknown;
 }
 
@@ -81,6 +82,18 @@ export class MessengerExportIndexIncompleteError extends Error {
   constructor() {
     super('Messenger media ownership could not be verified for every conversation.');
     this.name = 'MessengerExportIndexIncompleteError';
+  }
+}
+
+export class MessengerExportMediaSizeUnavailableError extends Error {
+  readonly safeInfo: MessengerExportDeletionInfo;
+  readonly cause: unknown;
+
+  constructor(safeInfo: MessengerExportDeletionInfo, cause: unknown) {
+    super('Messenger media ownership is known, but media byte totals could not be calculated.');
+    this.name = 'MessengerExportMediaSizeUnavailableError';
+    this.safeInfo = safeInfo;
+    this.cause = cause;
   }
 }
 
@@ -196,6 +209,32 @@ export function buildMessengerExportDeletionPlan(
     totalJsonBytes,
     totalMediaBytes,
     totalOperations: chats.length + mediaOperationCount,
+  };
+}
+
+export function getMessengerExportDeletionOwnershipInfo(
+  entries: readonly ChatListEntry[],
+  index: MessengerExportChatIndex | MessengerExportReferenceIndex
+): MessengerExportDeletionInfo {
+  const referenceIndex = getReferenceIndex(index);
+  assertCompleteReferenceIndex(referenceIndex);
+  const plan = buildMessengerExportDeletionPlan(entries, index);
+  const selectedJsonNames = new Set(plan.chats.map(chat => chat.jsonFileName));
+  const referencedMedia = new Set<string>();
+  for (const jsonFileName of selectedJsonNames) {
+    for (const identity of referenceIndex.chatMedia.get(jsonFileName) || []) {
+      referencedMedia.add(identity);
+    }
+  }
+  const exclusiveMediaFiles = plan.chats.flatMap(chat => chat.mediaFiles.map(file => file.path));
+  return {
+    jsonSize: plan.totalJsonBytes,
+    chatFileCount: plan.chats.length,
+    mediaSize: 0,
+    totalSize: plan.totalJsonBytes,
+    exclusiveMediaFiles,
+    exclusiveMediaCount: exclusiveMediaFiles.length,
+    sharedMediaCount: Math.max(0, referencedMedia.size - exclusiveMediaFiles.length),
   };
 }
 
@@ -475,6 +514,7 @@ export async function executeMessengerExportDeletionPlan(
         deleted: false,
         partial,
         completedMedia: mediaResult.completed,
+        removedMediaCount: mediaResult.removed.length,
         error: new MessengerExportDeletionPartialError(
           'Some Messenger media files could not be removed. The chat was kept for retry.',
           partial,
@@ -495,6 +535,7 @@ export async function executeMessengerExportDeletionPlan(
           deleted: false,
           partial,
           completedMedia: mediaResult.completed,
+          removedMediaCount: mediaResult.removed.length,
           error: new MessengerExportDeletionPartialError(
             'Messenger media was removed, but the chat JSON could not be removed.',
             partial,
@@ -513,6 +554,7 @@ export async function executeMessengerExportDeletionPlan(
       deleted: true,
       partial: false,
       completedMedia: mediaResult.completed,
+      removedMediaCount: mediaResult.removed.length,
     });
     reportProgress('chat', chat.entry);
   }
@@ -544,13 +586,13 @@ export async function deleteMessengerExportJsonOnly(
     try {
       await rootHandle.removeEntry(jsonFileName);
       if (index) removeConversationFromIndex(index, jsonFileName);
-      results.push({ entry, deleted: true, partial: false, completedMedia: [] });
+      results.push({ entry, deleted: true, partial: false, completedMedia: [], removedMediaCount: 0 });
     } catch (error) {
       if (isNotFoundError(error)) {
         if (index) removeConversationFromIndex(index, jsonFileName);
-        results.push({ entry, deleted: true, partial: false, completedMedia: [] });
+        results.push({ entry, deleted: true, partial: false, completedMedia: [], removedMediaCount: 0 });
       } else {
-        results.push({ entry, deleted: false, partial: false, completedMedia: [], error });
+        results.push({ entry, deleted: false, partial: false, completedMedia: [], removedMediaCount: 0, error });
       }
     }
     onProgress?.(results.length, entries.length, entry);

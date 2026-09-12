@@ -6,8 +6,10 @@ import {
   getAttachmentBookmarkId,
   getBookmarkChatId,
   getBookmarkItemId,
+  invalidateBookmarksDirectoryPreparation,
   loadBookmarks,
   migrateLegacyBookmarksDirectory,
+  prepareBookmarksDirectory,
   removeBookmarkDataForChats,
   saveBookmarks,
   setChatPins,
@@ -193,6 +195,48 @@ describe('bookmarks', () => {
       pinnedChats: [],
       fileExists: true,
     });
+  });
+
+  it('shares bookmark directory preparation across writes for the same root', async () => {
+    const root = createMockDirectoryHandle('messages', {});
+    const originalGetDirectoryHandle = root.getDirectoryHandle.bind(root);
+    let directoryLookups = 0;
+    root.getDirectoryHandle = async (name, options) => {
+      directoryLookups++;
+      return originalGetDirectoryHandle(name, options);
+    };
+
+    const firstPreparation = prepareBookmarksDirectory(root);
+    const secondPreparation = prepareBookmarksDirectory(root);
+    expect(secondPreparation).toBe(firstPreparation);
+    await firstPreparation;
+    const lookupsAfterPreparation = directoryLookups;
+
+    await saveBookmarks(root, { bookmarks: [], pinnedChats: [] });
+    await saveBookmarks(root, { bookmarks: [], pinnedChats: [] });
+    expect(directoryLookups).toBe(lookupsAfterPreparation);
+  });
+
+  it('keeps a failed preparation cached until explicit invalidation', async () => {
+    const root = createMockDirectoryHandle('messages', {});
+    const originalGetDirectoryHandle = root.getDirectoryHandle.bind(root);
+    let failPreparation = true;
+    let directoryLookups = 0;
+    root.getDirectoryHandle = async (name, options) => {
+      directoryLookups++;
+      if (failPreparation) throw new DOMException('Permission expired', 'NotAllowedError');
+      return originalGetDirectoryHandle(name, options);
+    };
+
+    const firstPreparation = prepareBookmarksDirectory(root);
+    await expect(firstPreparation).rejects.toMatchObject({ name: 'NotAllowedError' });
+    await expect(prepareBookmarksDirectory(root)).rejects.toMatchObject({ name: 'NotAllowedError' });
+    expect(directoryLookups).toBe(1);
+
+    failPreparation = false;
+    invalidateBookmarksDirectoryPreparation(root);
+    await expect(prepareBookmarksDirectory(root)).resolves.toMatchObject({ name: 'fb-mae' });
+    expect(directoryLookups).toBeGreaterThan(1);
   });
 
   it('ignores malformed records independently and retains the first duplicate pin position', async () => {

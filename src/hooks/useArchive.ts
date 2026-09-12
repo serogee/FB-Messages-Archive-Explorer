@@ -20,10 +20,12 @@ import {
   executeMessengerExportDeletionPlan,
   getMessengerExportBatchDeletionInfo,
   getMessengerExportDeletionInfo,
+  getMessengerExportDeletionOwnershipInfo,
   getMessengerMediaBasename,
   isMessengerExport,
   listMessengerExportChatsIndexed,
   MessengerExportIndexIncompleteError,
+  MessengerExportMediaSizeUnavailableError,
   type MessengerExportChatIndex,
   type MessengerExportDeletionInfo,
   type MessengerExportReferenceIndex,
@@ -161,7 +163,11 @@ export function useArchive(): {
   error: string | null;
   openFolder: (requestWrite?: boolean, onFolderPicked?: () => void) => Promise<boolean>;
   openFolderWithWriteAccess: () => Promise<void>;
-  getDeleteInfo: (entry: ChatListEntry | ChatListEntry[], signal?: AbortSignal) => Promise<MessengerExportDeletionInfo>;
+  getDeleteInfo: (
+    entry: ChatListEntry | ChatListEntry[],
+    signal?: AbortSignal,
+    onOwnershipReady?: (info: MessengerExportDeletionInfo) => void
+  ) => Promise<MessengerExportDeletionInfo>;
   computeAndUpdateFolderSize: (entry: ChatListEntry) => Promise<number>;
   suspendSizeWork: () => Promise<void>;
   resumeSizeWork: () => void;
@@ -685,7 +691,8 @@ export function useArchive(): {
 
   const getDeleteInfo = useCallback(async (
     entry: ChatListEntry | ChatListEntry[],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onOwnershipReady?: (info: MessengerExportDeletionInfo) => void
   ): Promise<MessengerExportDeletionInfo> => {
     if (!rootHandle) throw new Error('No folder open');
     throwIfAborted(signal);
@@ -698,8 +705,16 @@ export function useArchive(): {
     const referenceResult = await getMessengerReferenceIndex(signal);
     const { index: referenceIndex, chatIndex } = referenceResult;
     if (!referenceIndex.complete) throw new MessengerExportIndexIncompleteError();
-    const mediaSizeIndex = await getMessengerMediaSizeIndex(signal);
     const deletionIndex = chatIndex || referenceIndex;
+    const ownershipInfo = getMessengerExportDeletionOwnershipInfo(messengerEntries, deletionIndex);
+    onOwnershipReady?.(ownershipInfo);
+    let mediaSizeIndex: Map<string, number>;
+    try {
+      mediaSizeIndex = await getMessengerMediaSizeIndex(signal);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      throw new MessengerExportMediaSizeUnavailableError(ownershipInfo, error);
+    }
     if (messengerEntries.length === 1 && !Array.isArray(entry)) {
       return getMessengerExportDeletionInfo(rootHandle, messengerEntries[0], deletionIndex, signal, mediaSizeIndex);
     }
@@ -775,6 +790,8 @@ export function useArchive(): {
               entry: chatResult.entry,
               error: chatResult.error || new Error('Messenger chat deletion failed.'),
               partial: chatResult.partial,
+              removedMediaCount: chatResult.removedMediaCount,
+              jsonRetained: true,
             });
           }
         }

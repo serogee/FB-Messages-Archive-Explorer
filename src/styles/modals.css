@@ -81,11 +81,12 @@
 .delete-warning { color:var(--muted); font-size:14px; line-height:1.5; margin-bottom:16px; }
 .delete-warning strong { color:#e53e3e; }
 .delete-meta { color:var(--muted); font-size:13px; margin-bottom:20px; }
+.delete-result-notice { display:flex; flex-direction:column; gap:6px; margin:12px 0 16px; padding:10px 12px; border:1px solid #d69e2e; border-radius:8px; background:color-mix(in srgb, #d69e2e 12%, var(--panel-bg)); color:var(--text); font-size:13px; line-height:1.4; }
 .delete-breakdown { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
 .delete-breakdown-row { display:grid; grid-template-columns:96px minmax(0,1fr); gap:10px; align-items:baseline; font-size:13px; }
 .delete-breakdown-row span { color:var(--muted); }
 .delete-breakdown-row strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-size:13px; }
-.delete-actions { display:flex; justify-content:flex-end; gap:8px; }
+.delete-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
 .btn-danger { background:#e53e3e; color:white; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; font:inherit; }
 .btn-danger:hover { background:#c53030; }
 .btn-warning { background:#d69e2e; color:#141414; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; font:inherit; }
@@ -111,3 +112,5 @@
     font-size: 14px;
     font-weight: 600;
 }
+.bookmark-error-toast { display:flex; align-items:center; gap:12px; }
+.bookmark-error-toast .btn { flex-shrink:0; }

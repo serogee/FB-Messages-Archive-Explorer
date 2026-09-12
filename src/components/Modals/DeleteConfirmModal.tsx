@@ -1,19 +1,17 @@
 import type { ChatListEntry } from '../../types/messenger';
-import type { DeleteProgress } from '../../types/deletion';
+import type { DeletePreparationState, DeleteProgress, DeleteResultNotice } from '../../types/deletion';
 import { formatFileSize } from '../../services/storage';
-import type { MessengerExportDeletionInfo } from '../../services/messengerExport';
 
 interface DeleteConfirmModalProps {
   entry: ChatListEntry | ChatListEntry[];
   onConfirm: () => void;
   onDeleteJsonOnly?: () => void;
+  onRetryCalculation?: () => void;
   onSkipCalculation?: () => void;
   onCancel: () => void;
   progress?: DeleteProgress | null;
-  messengerDeletionInfo?: MessengerExportDeletionInfo | null;
-  deletionInfoLoading?: boolean;
-  deletionInfoSkipped?: boolean;
-  mediaSafetyUnavailable?: boolean;
+  preparation: DeletePreparationState;
+  resultNotice?: DeleteResultNotice | null;
   preparingDeletion?: boolean;
   deleting?: boolean;
 }
@@ -22,28 +20,43 @@ export function DeleteConfirmModal({
   entry,
   onConfirm,
   onDeleteJsonOnly,
+  onRetryCalculation,
   onSkipCalculation,
   onCancel,
   progress,
-  messengerDeletionInfo,
-  deletionInfoLoading,
-  deletionInfoSkipped,
-  mediaSafetyUnavailable,
+  preparation,
+  resultNotice,
   preparingDeletion,
   deleting,
 }: DeleteConfirmModalProps) {
   const isMultiple = Array.isArray(entry);
   const title = isMultiple ? `Delete ${entry.length} Chats` : 'Delete Chat';
   const entries = isMultiple ? entry : [entry];
-  const isMessenger = entries.some(e => e._messengerExport);
+  const isMessenger = entries.some(item => item._messengerExport);
   const isDeleting = !!deleting || !!progress;
   const isBusy = !!preparingDeletion || isDeleting;
-  const canSkipCalculation = !!deletionInfoLoading && !isMessenger && !deletionInfoSkipped && !messengerDeletionInfo && !isBusy;
-  const canConfirm = !isBusy && (!!messengerDeletionInfo || !!deletionInfoSkipped);
-  const canDeleteJsonOnly = !!mediaSafetyUnavailable && !!onDeleteJsonOnly && !isBusy;
-  const pendingDetailText = mediaSafetyUnavailable
+  const info = preparation.status === 'ready'
+    ? preparation.info
+    : preparation.status === 'loading' || preparation.status === 'error'
+      ? preparation.info
+      : undefined;
+  const canSkipCalculation = preparation.status === 'loading' && !isMessenger && !isBusy;
+  const canConfirm = !isBusy && (
+    preparation.status === 'ready'
+    || preparation.status === 'skipped'
+    || (preparation.status === 'error' && (!isMessenger || (!preparation.mediaSafetyUnavailable && !!info)))
+  );
+  const canDeleteJsonOnly = preparation.status === 'error'
+    && preparation.mediaSafetyUnavailable
+    && !!onDeleteJsonOnly
+    && !isBusy;
+  const pendingDetailText = preparation.status === 'error' && preparation.mediaSafetyUnavailable
     ? 'Unavailable'
-    : deletionInfoSkipped ? 'Skipped' : 'Calculating...';
+    : preparation.status === 'skipped'
+      ? 'Skipped'
+      : preparation.status === 'error'
+        ? 'Unknown'
+        : 'Calculating...';
   const progressLabel = progress?.stage === 'preparing'
     ? 'Preparing deletion...'
     : progress?.stage === 'media'
@@ -54,6 +67,20 @@ export function DeleteConfirmModal({
   const targetName = isMultiple
     ? `${entry.length} chats selected`
     : (entry._jsonFileName || entry.folderName);
+  const mediaDetails = info
+    ? preparation.status === 'ready'
+      ? `${formatFileSize(info.mediaSize)} (${info.exclusiveMediaCount} files)`
+      : `${pendingDetailText} (${info.exclusiveMediaCount} files)`
+    : pendingDetailText;
+  const confirmLabel = preparingDeletion
+    ? 'Preparing deletion...'
+    : isDeleting
+      ? 'Deleting...'
+      : resultNotice
+        ? 'Retry deletion'
+        : preparation.status === 'error' && !isMessenger
+          ? 'Delete without size details'
+          : 'Delete permanently';
 
   return (
     <div className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
@@ -71,31 +98,27 @@ export function DeleteConfirmModal({
           <div className="delete-breakdown-row">
             <span>Chat Data:</span>
             <strong>
-              {messengerDeletionInfo
-                ? `${formatFileSize(messengerDeletionInfo.jsonSize)}${!isMessenger ? ` (${messengerDeletionInfo.chatFileCount} files)` : ''}`
+              {info
+                ? `${formatFileSize(info.jsonSize)}${!isMessenger ? ` (${info.chatFileCount} files)` : ''}`
                 : pendingDetailText}
             </strong>
           </div>
           <div className="delete-breakdown-row">
             <span>Media:</span>
-            <strong>
-              {messengerDeletionInfo
-                ? `${formatFileSize(messengerDeletionInfo.mediaSize)} (${messengerDeletionInfo.exclusiveMediaCount} files)`
-                : pendingDetailText}
-            </strong>
+            <strong>{mediaDetails}</strong>
           </div>
         </div>
 
         {isMultiple ? (
           <div className="delete-multiple-list">
             <div style={{ maxHeight: '150px', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '6px', padding: '8px', marginBottom: '12px', background: 'var(--bg)' }}>
-              {entry.map((e, idx) => (
-                <div key={e.folderName} style={{ padding: '4px 0', borderBottom: idx < entry.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              {entry.map((item, index) => (
+                <div key={`${item.source}:${item._jsonFileName || item.folderName}`} style={{ padding: '4px 0', borderBottom: index < entry.length - 1 ? '1px solid var(--border)' : 'none' }}>
                   <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {e.title}
+                    {item.title}
                   </div>
                   <div style={{ color: 'var(--muted)', fontSize: '12px' }}>
-                    Folder: {e.folderName}
+                    Folder: {item.folderName}
                   </div>
                 </div>
               ))}
@@ -103,26 +126,41 @@ export function DeleteConfirmModal({
           </div>
         ) : null}
 
-        {deletionInfoLoading && (
+        {preparation.status === 'loading' && (
           <p className="delete-meta">
-            <span style={{ color: 'var(--muted)', fontSize: '12px' }}>Calculating deletion details...</span>
+            {preparation.calculatingSizes ? 'Calculating sizes...' : 'Preparing deletion details...'}
           </p>
         )}
 
-        {messengerDeletionInfo && messengerDeletionInfo.sharedMediaCount > 0 && (
+        {info && info.sharedMediaCount > 0 && (
           <p className="delete-meta">
-            <span style={{ color: 'var(--muted)', fontSize: '12px' }}>
-              {messengerDeletionInfo.sharedMediaCount} media files shared with other chats will be kept.
-            </span>
+            {info.sharedMediaCount} media files shared with other chats will be kept.
           </p>
         )}
 
-        {mediaSafetyUnavailable && (
-          <p className="delete-meta">
-            <span style={{ color: 'var(--muted)', fontSize: '12px' }}>
-              Media ownership could not be verified. You can delete only the chat JSON and keep all media.
-            </span>
-          </p>
+        {preparation.status === 'error' && (
+          <div className="delete-result-notice" role="alert">
+            <strong>Could not calculate all deletion details.</strong>
+            <div>{preparation.error}</div>
+            {preparation.mediaSafetyUnavailable && (
+              <div>Normal media deletion is blocked. You can keep all media and delete only the chat JSON.</div>
+            )}
+          </div>
+        )}
+
+        {resultNotice && (
+          <div className="delete-result-notice" role="alert">
+            <strong>{resultNotice.message}</strong>
+            {resultNotice.failures.filter(failure => failure.partial).map(failure => (
+              <div key={`${failure.entry.source}:${failure.entry._jsonFileName || failure.entry.folderName}`}>
+                {failure.entry.title}: Chat JSON remains
+                {failure.removedMediaCount
+                  ? `, but ${failure.removedMediaCount} media ${failure.removedMediaCount === 1 ? 'file was' : 'files were'} removed. Some attachments may be missing.`
+                  : '. Some attachments may already be missing.'}
+              </div>
+            ))}
+            {resultNotice.bookmarkCleanupError && <div>{resultNotice.bookmarkCleanupError}</div>}
+          </div>
         )}
 
         {progress && (
@@ -139,33 +177,29 @@ export function DeleteConfirmModal({
           </div>
         )}
         <div className="delete-actions">
-          {!isBusy && (
-            <button className="btn btn-secondary" onClick={onCancel}>
-              Cancel
+          {!isBusy && <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>}
+          {preparation.status === 'error' && !isBusy && (
+            <button className="btn btn-secondary" onClick={onRetryCalculation} disabled={!onRetryCalculation}>
+              Retry calculation
             </button>
           )}
-          <button
-            className={canSkipCalculation || canDeleteJsonOnly ? 'btn-warning' : 'btn-danger'}
-            onClick={canSkipCalculation
-              ? onSkipCalculation
-              : canDeleteJsonOnly ? onDeleteJsonOnly : onConfirm}
-            id="deleteConfirmBtn"
-            disabled={canSkipCalculation
-              ? !onSkipCalculation
-              : canDeleteJsonOnly ? !onDeleteJsonOnly : !canConfirm}
-          >
-            {preparingDeletion
-              ? 'Preparing deletion...'
-              : isDeleting
-                ? 'Deleting...'
-                : canSkipCalculation
-                  ? 'Skip calculation'
-                  : canDeleteJsonOnly
-                    ? 'Delete chat data only'
-                  : deletionInfoLoading && !messengerDeletionInfo
-                    ? 'Calculating...'
-                    : 'Delete permanently'}
-          </button>
+          {canSkipCalculation && (
+            <button className="btn-warning" onClick={onSkipCalculation} disabled={!onSkipCalculation}>
+              Skip calculation
+            </button>
+          )}
+          {canDeleteJsonOnly && (
+            <button className="btn-warning" onClick={onDeleteJsonOnly}>
+              Delete chat JSON only; keep all media
+            </button>
+          )}
+          {!canDeleteJsonOnly && (
+            <button className="btn-danger" onClick={onConfirm} id="deleteConfirmBtn" disabled={!canConfirm}>
+              {preparation.status === 'loading' && !isBusy
+                ? preparation.calculatingSizes ? 'Calculating sizes...' : 'Preparing...'
+                : confirmLabel}
+            </button>
+          )}
         </div>
       </div>
     </div>
