@@ -7,6 +7,8 @@ import type {
 } from '../../types/messenger';
 import type { ReadableDirectoryHandle } from '../../types/fileSystem';
 import type { useSearch } from '../../hooks/useSearch';
+import type { PinnedChatBookmark } from '../../services/bookmarks';
+import { getBookmarkChatId } from '../../services/bookmarks';
 import { HeaderMenu } from './HeaderMenu';
 import { SearchBar } from './SearchBar';
 import { FolderPicker } from './FolderPicker';
@@ -43,6 +45,12 @@ interface SidebarProps {
     setSelectedPerspective: (name: string) => void;
     onJumpToMessage?: (index: number, folderName?: string) => void;
     onAttachmentBookmarkingChange: (enabled: boolean) => Promise<boolean>;
+    bookmarkingEnabled: boolean;
+    pinnedChats: PinnedChatBookmark[];
+    bookmarkBusy: boolean;
+    isChatPinned: (entry: ChatListEntry) => boolean;
+    onToggleChatPin: (entry: ChatListEntry) => Promise<void>;
+    onSetChatsPinned: (entries: ChatListEntry[], pinned: boolean) => Promise<void>;
 }
 
 export function Sidebar({
@@ -72,16 +80,22 @@ export function Sidebar({
     setSelectedPerspective,
     onJumpToMessage,
     onAttachmentBookmarkingChange,
+    bookmarkingEnabled,
+    pinnedChats,
+    bookmarkBusy,
+    isChatPinned,
+    onToggleChatPin,
+    onSetChatsPinned,
 }: SidebarProps) {
     const isSubView = sidebarView === 'archived' || sidebarView === 'requests';
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedChats, setSelectedChats] = useState<Set<string>>(new Set());
 
-    const handleToggleSelectChat = (folderName: string, select: boolean) => {
+    const handleToggleSelectChat = (chatId: string, select: boolean) => {
         setSelectedChats((prev: Set<string>) => {
             const next = new Set(prev);
-            if (select) next.add(folderName);
-            else next.delete(folderName);
+            if (select) next.add(chatId);
+            else next.delete(chatId);
             return next;
         });
     };
@@ -90,21 +104,52 @@ export function Sidebar({
         () => [...inboxList, ...archivedList, ...requestsList],
         [inboxList, archivedList, requestsList],
     );
+    const allChatsById = useMemo(
+        () => new Map(allChats.map(entry => [getBookmarkChatId(entry), entry])),
+        [allChats],
+    );
+    const pinnedChatIds = useMemo(
+        () => bookmarkingEnabled ? pinnedChats.map(pin => pin.id) : [],
+        [bookmarkingEnabled, pinnedChats],
+    );
+    const pinnedIdSet = useMemo(() => new Set(pinnedChatIds), [pinnedChatIds]);
+    const resolvedPinnedChats = useMemo(
+        () => pinnedChatIds
+            .map(id => allChatsById.get(id))
+            .filter((entry): entry is ChatListEntry => !!entry),
+        [allChatsById, pinnedChatIds],
+    );
+    const mainChatList = useMemo(
+        () => bookmarkingEnabled
+            ? [...resolvedPinnedChats, ...inboxList.filter(entry => !pinnedIdSet.has(getBookmarkChatId(entry)))]
+            : inboxList,
+        [bookmarkingEnabled, inboxList, pinnedIdSet, resolvedPinnedChats],
+    );
     const extraFilterLists = useMemo(
         () => [
-            { label: 'Archived Threads', list: archivedList },
-            { label: 'Message Requests', list: requestsList },
+            {
+                label: 'Archived Threads',
+                list: bookmarkingEnabled
+                    ? archivedList.filter(entry => !pinnedIdSet.has(getBookmarkChatId(entry)))
+                    : archivedList,
+            },
+            {
+                label: 'Message Requests',
+                list: bookmarkingEnabled
+                    ? requestsList.filter(entry => !pinnedIdSet.has(getBookmarkChatId(entry)))
+                    : requestsList,
+            },
         ],
-        [archivedList, requestsList],
+        [archivedList, bookmarkingEnabled, pinnedIdSet, requestsList],
     );
 
     useEffect(() => {
         if (selectionMode) {
-            const allFolderNames = new Set(allChats.map((c) => c.folderName));
+            const allChatIds = new Set(allChats.map(getBookmarkChatId));
             let changed = false;
             const nextSelected = new Set<string>();
             selectedChats.forEach((f) => {
-                if (allFolderNames.has(f)) {
+                if (allChatIds.has(f)) {
                     nextSelected.add(f);
                 } else {
                     changed = true;
@@ -129,9 +174,26 @@ export function Sidebar({
     };
 
     const handleDeleteSelected = () => {
-        const targets = allChats.filter((c) => selectedChats.has(c.folderName));
+        const targets = allChats.filter((c) => selectedChats.has(getBookmarkChatId(c)));
         if (targets.length > 0) {
             onDeleteChat(targets);
+        }
+    };
+
+    const selectedEntries = useMemo(
+        () => [...selectedChats]
+            .map(id => allChatsById.get(id))
+            .filter((entry): entry is ChatListEntry => !!entry),
+        [allChatsById, selectedChats],
+    );
+    const allSelectedPinned = selectedEntries.length > 0 && selectedEntries.every(isChatPinned);
+
+    const handleSetSelectedPinned = async () => {
+        if (selectedEntries.length === 0) return;
+        try {
+            await onSetChatsPinned(selectedEntries, !allSelectedPinned);
+        } catch {
+            // The shared bookmark toast reports the write error; retain selection for retry.
         }
     };
 
@@ -252,7 +314,7 @@ export function Sidebar({
                 )}
                 {sidebarView === 'chats' && rootHandle && !loading && (
                     <ChatList
-                        chatList={inboxList}
+                        chatList={mainChatList}
                         extraFilterLists={extraFilterLists}
                         activeEntry={activeEntry}
                         sizeProgress={sizeProgress}
@@ -262,6 +324,10 @@ export function Sidebar({
                         selectionMode={selectionMode}
                         selectedChats={selectedChats}
                         onToggleSelectChat={handleToggleSelectChat}
+                        bookmarkingEnabled={bookmarkingEnabled}
+                        pinnedChatIds={pinnedChatIds}
+                        bookmarkBusy={bookmarkBusy}
+                        onToggleChatPin={onToggleChatPin}
                     />
                 )}
 
@@ -295,6 +361,10 @@ export function Sidebar({
                         selectionMode={selectionMode}
                         selectedChats={selectedChats}
                         onToggleSelectChat={handleToggleSelectChat}
+                        bookmarkingEnabled={bookmarkingEnabled}
+                        pinnedChatIds={pinnedChatIds}
+                        bookmarkBusy={bookmarkBusy}
+                        onToggleChatPin={onToggleChatPin}
                     />
                 )}
 
@@ -315,16 +385,30 @@ export function Sidebar({
                         selectionMode={selectionMode}
                         selectedChats={selectedChats}
                         onToggleSelectChat={handleToggleSelectChat}
+                        bookmarkingEnabled={bookmarkingEnabled}
+                        pinnedChatIds={pinnedChatIds}
+                        bookmarkBusy={bookmarkBusy}
+                        onToggleChatPin={onToggleChatPin}
                     />
                 )}
             </div>
 
             {selectionMode && (
                 <div className="sidebar-action-bar">
-                    <span style={{ fontSize: '13px', fontWeight: 600 }}>
-                        {selectedChats.size} Selected
+                    <span className="sidebar-selection-summary" aria-label={`${selectedChats.size} selected`}>
+                        <span className="sidebar-selection-count">{selectedChats.size}</span>
+                        <span className="sidebar-selection-label"> Selected</span>
                     </span>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div className="sidebar-selection-actions">
+                        {bookmarkingEnabled && (
+                            <button
+                                className="sidebar-action-btn pin"
+                                onClick={() => void handleSetSelectedPinned()}
+                                disabled={selectedEntries.length === 0 || bookmarkBusy}
+                            >
+                                {allSelectedPinned ? 'Unpin' : 'Pin'}
+                            </button>
+                        )}
                         <button
                             className="sidebar-action-btn cancel"
                             onClick={handleToggleSelectMode}

@@ -24,6 +24,12 @@ const SHORTCUT_GROUPS = [
     ],
   },
   {
+    title: 'Chat selection',
+    shortcuts: [
+      { keys: ['Shift', 'Click'], description: 'Select all chats between the previously selected chat and the next chat you select' },
+    ],
+  },
+  {
     title: 'Attachment gallery',
     shortcuts: [
       { keys: ['Page Up'], description: 'Go to the previous attachment tab' },

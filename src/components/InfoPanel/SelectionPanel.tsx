@@ -10,7 +10,7 @@ import { videoPosterCache } from '../../services/videoPosterCache';
 import { blobCache } from '../../services/blobCache';
 import { getAudioMetadata, type AudioMetadata } from '../../services/audioMetadata';
 import type { Settings } from '../../hooks/useSettings';
-import type { AttachmentBookmarksController } from '../../hooks/useAttachmentBookmarks';
+import type { BookmarksController } from '../../hooks/useBookmarks';
 import { MediaFileSize } from '../MediaFileSize';
 
 interface SelectionPanelProps {
@@ -25,7 +25,7 @@ interface SelectionPanelProps {
   filenameTemplate: Settings['attachmentFilenameTemplate'];
   allowLongFilenames: Settings['longAttachmentFilenames'];
   attachmentBookmarkingEnabled: boolean;
-  bookmarks: AttachmentBookmarksController;
+  bookmarks: BookmarksController;
 }
 
 interface SelectionHeaderProps {
@@ -39,7 +39,7 @@ interface SelectionHeaderProps {
   filenameTemplate: Settings['attachmentFilenameTemplate'];
   allowLongFilenames: Settings['longAttachmentFilenames'];
   attachmentBookmarkingEnabled: boolean;
-  bookmarks: AttachmentBookmarksController;
+  bookmarks: BookmarksController;
 }
 
 interface SelectionSaveState {
@@ -235,14 +235,14 @@ export function SelectionHeader({
 
   const allBookmarked = !!activeEntry
     && selectedItems.length > 0
-    && selectedItems.every(item => bookmarks.isBookmarked(activeEntry, item));
+    && selectedItems.every(item => bookmarks.isItemBookmarked(activeEntry, item));
 
   const handleBookmarks = async () => {
     if (!activeEntry || selectedItems.length === 0) return;
     setMenuOpen(false);
     updateSaveState(true, 0, selectedItems.length);
     try {
-      await bookmarks.setMany(activeEntry, selectedItems, !allBookmarked);
+      await bookmarks.setItemBookmarks(activeEntry, selectedItems, !allBookmarked);
       updateSaveState(true, selectedItems.length, selectedItems.length);
     } catch (error) {
       console.error('Failed to update attachment bookmarks:', error);
@@ -374,7 +374,7 @@ export function SelectionPanel({
                         <span>{item.sender}</span>
                       </span>
                     </span>
-                    {attachmentBookmarkingEnabled && activeEntry && bookmarks.isBookmarked(activeEntry, item) && (
+                    {attachmentBookmarkingEnabled && activeEntry && bookmarks.isItemBookmarked(activeEntry, item) && (
                       <span className="gallery-bookmark-indicator" title="Bookmarked" aria-label="Bookmarked link">
                         <Bookmark size={15} fill="currentColor" />
                       </span>
@@ -410,7 +410,7 @@ export function SelectionPanel({
                 >
                   <div className="select-checkbox"><Check size={14} /></div>
 
-                  {attachmentBookmarkingEnabled && activeEntry && bookmarks.isBookmarked(activeEntry, att) && (
+                  {attachmentBookmarkingEnabled && activeEntry && bookmarks.isItemBookmarked(activeEntry, att) && (
                     <span className="gallery-bookmark-indicator" title="Bookmarked" aria-label="Bookmarked attachment">
                       <Bookmark size={15} fill="currentColor" />
                     </span>

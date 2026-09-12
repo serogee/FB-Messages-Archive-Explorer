@@ -315,22 +315,23 @@ export function SettingsPanel({
       </div>
 
       <div className="settings-section">
-        <strong>Attachment Bookmarking</strong>
+        <strong>Bookmarking</strong>
         {!fsSupported ? (
           <>
-            <ToggleRow id="attachmentBookmarkingEnabledToggle" label="Enable attachment bookmarking" checked={false} onChange={() => {}} disabled={true} />
+            <ToggleRow id="attachmentBookmarkingEnabledToggle" label="Enable bookmarking" checked={false} onChange={() => {}} disabled={true} />
             <p className="browser-notice">Only available in Chromium-based browsers (Chrome, Edge, Brave).</p>
           </>
         ) : (
           <>
             <ToggleRow
               id="attachmentBookmarkingEnabledToggle"
-              label="Enable attachment bookmarking"
+              label="Enable bookmarking"
               checked={settings.attachmentBookmarkingEnabled}
               onChange={handleBookmarkingToggle}
             />
             <p className="deletion-info">
-              Saves attachment bookmarks to <code>selected_messages/bookmarks.json</code> inside the messages folder.
+              Saves attachment and link bookmarks, plus pinned chats, to <code>fb-mae/bookmarks.json</code> inside the messages folder.
+              Existing <code>selected_messages</code> data is migrated automatically when the folder is opened with Bookmarking enabled.
               Existing bookmarks are kept when this feature is disabled.
               {!rootHandle && settings.attachmentBookmarkingEnabled && ' Write access will be requested when you open a folder.'}
             </p>

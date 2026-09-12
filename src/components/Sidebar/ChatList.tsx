@@ -1,9 +1,12 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { Pin } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import type { ChatListEntry } from '../../types/messenger';
 import { formatRelativeTime, formatFileSize } from '../../services/storage';
 import { getOrderedMessageFileNames } from '../../services/parser';
+import { getBookmarkChatId } from '../../services/bookmarks';
+import { filterAndOrderChats, type ChatSortOption } from '../../services/chatList';
 
 interface ChatListProps {
   chatList: ChatListEntry[];
@@ -15,7 +18,11 @@ interface ChatListProps {
   extraFilterLists?: { label: string; list: ChatListEntry[] }[];
   selectionMode?: boolean;
   selectedChats?: Set<string>;
-  onToggleSelectChat?: (folderName: string, select: boolean) => void;
+  onToggleSelectChat?: (chatId: string, select: boolean) => void;
+  bookmarkingEnabled?: boolean;
+  pinnedChatIds?: readonly string[];
+  bookmarkBusy?: boolean;
+  onToggleChatPin?: (entry: ChatListEntry) => Promise<void>;
 }
 
 interface ChatItemProps {
@@ -27,6 +34,10 @@ interface ChatItemProps {
   selectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (e: React.MouseEvent | React.KeyboardEvent, select: boolean) => void;
+  bookmarkingEnabled: boolean;
+  isPinned: boolean;
+  bookmarkBusy: boolean;
+  onTogglePin: () => Promise<void>;
 }
 
 function getAvatarChar(title: string): string {
@@ -115,7 +126,20 @@ async function openChatJson(entry: ChatListEntry, jsonFileName?: string) {
   }
 }
 
-function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, selectionMode, isSelected, onToggleSelect }: ChatItemProps) {
+function ChatItem({
+  entry,
+  isActive,
+  onSelect,
+  onDelete,
+  deletionEnabled,
+  selectionMode,
+  isSelected,
+  onToggleSelect,
+  bookmarkingEnabled,
+  isPinned,
+  bookmarkBusy,
+  onTogglePin,
+}: ChatItemProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [dropUp, setDropUp] = useState(false);
   const [jsonFileNames, setJsonFileNames] = useState<string[] | null>(null);
@@ -224,6 +248,19 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
       style={menuPosition}
       onClick={e => e.stopPropagation()}
     >
+      {bookmarkingEnabled && (
+        <button
+          aria-pressed={isPinned}
+          disabled={bookmarkBusy}
+          onClick={e => {
+            e.stopPropagation();
+            closeDropdown();
+            void onTogglePin().catch(() => {});
+          }}
+        >
+          {isPinned ? 'Unpin' : 'Pin to top'}
+        </button>
+      )}
       {jsonFileNames && jsonFileNames.length > 1 ? (
         <div className="chat-item-submenu-wrap">
           <button className="chat-item-submenu-trigger" onClick={e => e.stopPropagation()}>
@@ -273,7 +310,7 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
 
   return (
     <div
-      className={`chat-list-item ${isActive && !selectionMode ? 'active' : ''} ${isSelected ? 'selected' : ''} ${selectionMode ? 'selection-mode' : ''}`}
+      className={`chat-list-item ${isActive && !selectionMode ? 'active' : ''} ${isSelected ? 'selected' : ''} ${selectionMode ? 'selection-mode' : ''} ${isPinned ? 'pinned' : ''}`}
       onClick={handleClick}
       role="button"
       tabIndex={0}
@@ -297,7 +334,12 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
       </div>
       <div className="chat-item-body">
         <div className="chat-item-info">
-          <div className="chat-item-title" title={entry.title}>{entry.title}</div>
+          <div className="chat-item-title-row">
+            {isPinned && (
+              <Pin className="chat-item-pin-indicator" size={13} fill="currentColor" aria-label="Pinned chat" />
+            )}
+            <div className="chat-item-title" title={entry.title}>{entry.title}</div>
+          </div>
           <div className="chat-item-preview">
             {entry.lastMessage || <em style={{ opacity: 0.5 }}>No messages</em>}
           </div>
@@ -329,46 +371,39 @@ function ChatItem({ entry, isActive, onSelect, onDelete, deletionEnabled, select
   );
 }
 
-export function ChatList({ chatList, activeEntry, onSelectChat, onDeleteChat, deletionEnabled, sizeProgress, extraFilterLists, selectionMode, selectedChats, onToggleSelectChat }: ChatListProps) {
+export function ChatList({
+  chatList,
+  activeEntry,
+  onSelectChat,
+  onDeleteChat,
+  deletionEnabled,
+  sizeProgress,
+  extraFilterLists,
+  selectionMode,
+  selectedChats,
+  onToggleSelectChat,
+  bookmarkingEnabled = false,
+  pinnedChatIds = [],
+  bookmarkBusy = false,
+  onToggleChatPin,
+}: ChatListProps) {
   const [filter, setFilter] = useState('');
-  const [sortBy, setSortBy] = useState('recent');
+  const [sortBy, setSortBy] = useState<ChatSortOption>('recent');
   const lastSelectedRef = useRef<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const retainedScrollTopRef = useRef(0);
 
   const normalizedFilter = useMemo(() => filter.trim().toLowerCase(), [filter]);
+  const pinOrderKey = bookmarkingEnabled ? pinnedChatIds.join('\u0000') : '';
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (list) list.scrollTop = retainedScrollTopRef.current;
+  }, [pinOrderKey]);
 
   const applyFilterAndSort = useCallback((list: ChatListEntry[]) => {
-    const filtered = filter.trim()
-      ? list.filter(e => 
-          e.title.toLowerCase().includes(normalizedFilter) ||
-          e.folderName.toLowerCase().includes(normalizedFilter)
-        )
-      : [...list];
-
-    filtered.sort((a, b) => {
-      switch (sortBy) {
-        case 'oldest':
-          if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
-          if (a.lastTimestamp == null) return 1;
-          if (b.lastTimestamp == null) return -1;
-          return a.lastTimestamp - b.lastTimestamp;
-        case 'most_msgs':
-          return (b.messageCount || b.jsonFileCount) - (a.messageCount || a.jsonFileCount);
-        case 'least_msgs':
-          return (a.messageCount || a.jsonFileCount) - (b.messageCount || b.jsonFileCount);
-        case 'biggest_size':
-          return b.folderSize - a.folderSize;
-        case 'smallest_size':
-          return a.folderSize - b.folderSize;
-        case 'recent':
-        default:
-          if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
-          if (a.lastTimestamp == null) return 1;
-          if (b.lastTimestamp == null) return -1;
-          return b.lastTimestamp - a.lastTimestamp;
-      }
-    });
-    return filtered;
-  }, [filter, normalizedFilter, sortBy]);
+    return filterAndOrderChats(list, normalizedFilter, sortBy, bookmarkingEnabled ? pinnedChatIds : []);
+  }, [bookmarkingEnabled, normalizedFilter, pinnedChatIds, sortBy]);
 
   const mainFiltered = useMemo(
     () => applyFilterAndSort(chatList),
@@ -396,24 +431,25 @@ export function ChatList({ chatList, activeEntry, onSelectChat, onDeleteChat, de
         ...extras.flatMap(extra => extra.items)
       ];
       
-      const currentIndex = allDisplayed.findIndex(x => x.folderName === entry.folderName);
-      const lastIndex = allDisplayed.findIndex(x => x.folderName === lastSelectedRef.current);
+      const entryId = getBookmarkChatId(entry);
+      const currentIndex = allDisplayed.findIndex(x => getBookmarkChatId(x) === entryId);
+      const lastIndex = allDisplayed.findIndex(x => getBookmarkChatId(x) === lastSelectedRef.current);
       
       if (currentIndex !== -1 && lastIndex !== -1) {
         const start = Math.min(currentIndex, lastIndex);
         const end = Math.max(currentIndex, lastIndex);
         
         for (let i = start; i <= end; i++) {
-          onToggleSelectChat(allDisplayed[i].folderName, select);
+          onToggleSelectChat(getBookmarkChatId(allDisplayed[i]), select);
         }
       } else {
-        onToggleSelectChat(entry.folderName, select);
+        onToggleSelectChat(entryId, select);
       }
     } else {
-      onToggleSelectChat(entry.folderName, select);
+      onToggleSelectChat(getBookmarkChatId(entry), select);
     }
     
-    lastSelectedRef.current = entry.folderName;
+    lastSelectedRef.current = getBookmarkChatId(entry);
   };
 
   return (
@@ -442,7 +478,7 @@ export function ChatList({ chatList, activeEntry, onSelectChat, onDeleteChat, de
         </div>
         <select
           value={sortBy}
-          onChange={e => setSortBy(e.target.value)}
+          onChange={e => setSortBy(e.target.value as ChatSortOption)}
           className="chat-list-sort"
           aria-label="Sort chats"
           style={{
@@ -463,41 +499,64 @@ export function ChatList({ chatList, activeEntry, onSelectChat, onDeleteChat, de
           <option value="smallest_size" disabled={sizeDisabled} title={sizeDisabled ? sizeTitle : ''}>Smallest Size</option>
         </select>
       </div>
-      <div className="chat-list sidebar-scroll-region" role="list">
+      <div
+        ref={listRef}
+        className="chat-list sidebar-scroll-region"
+        role="list"
+        onScroll={event => {
+          retainedScrollTopRef.current = event.currentTarget.scrollTop;
+        }}
+      >
         {mainFiltered.length === 0 && extras.length === 0 && (
           <div className="chat-list-empty">
             {filter ? 'No chats match your filter.' : 'No chats found.'}
           </div>
         )}
-        {mainFiltered.map(entry => (
-          <ChatItem
-            key={entry.folderName}
-            entry={entry}
-            isActive={activeEntry?.folderName === entry.folderName}
-            onSelect={() => onSelectChat(entry)}
-            onDelete={() => onDeleteChat(entry)}
-            deletionEnabled={deletionEnabled}
-            selectionMode={selectionMode}
-            isSelected={selectedChats?.has(entry.folderName)}
-            onToggleSelect={(e, select) => handleToggleSelect(e, entry, select)}
-          />
-        ))}
+        {mainFiltered.map(entry => {
+          const chatId = getBookmarkChatId(entry);
+          const isPinned = bookmarkingEnabled && pinnedChatIds.includes(chatId);
+          return (
+            <ChatItem
+              key={chatId}
+              entry={entry}
+              isActive={!!activeEntry && getBookmarkChatId(activeEntry) === chatId}
+              onSelect={() => onSelectChat(entry)}
+              onDelete={() => onDeleteChat(entry)}
+              deletionEnabled={deletionEnabled}
+              selectionMode={selectionMode}
+              isSelected={selectedChats?.has(chatId)}
+              onToggleSelect={(e, select) => handleToggleSelect(e, entry, select)}
+              bookmarkingEnabled={bookmarkingEnabled}
+              isPinned={isPinned}
+              bookmarkBusy={bookmarkBusy}
+              onTogglePin={() => onToggleChatPin?.(entry) ?? Promise.resolve()}
+            />
+          );
+        })}
         {extras.map(extra => (
           <div key={extra.label}>
             <div className="chat-list-separator">{extra.label}</div>
-            {extra.items.map(entry => (
-              <ChatItem
-                key={entry.folderName}
-                entry={entry}
-                isActive={activeEntry?.folderName === entry.folderName}
-                onSelect={() => onSelectChat(entry)}
-                onDelete={() => onDeleteChat(entry)}
-                deletionEnabled={deletionEnabled}
-                selectionMode={selectionMode}
-                isSelected={selectedChats?.has(entry.folderName)}
-                onToggleSelect={(e, select) => handleToggleSelect(e, entry, select)}
-              />
-            ))}
+            {extra.items.map(entry => {
+              const chatId = getBookmarkChatId(entry);
+              const isPinned = bookmarkingEnabled && pinnedChatIds.includes(chatId);
+              return (
+                <ChatItem
+                  key={chatId}
+                  entry={entry}
+                  isActive={!!activeEntry && getBookmarkChatId(activeEntry) === chatId}
+                  onSelect={() => onSelectChat(entry)}
+                  onDelete={() => onDeleteChat(entry)}
+                  deletionEnabled={deletionEnabled}
+                  selectionMode={selectionMode}
+                  isSelected={selectedChats?.has(chatId)}
+                  onToggleSelect={(e, select) => handleToggleSelect(e, entry, select)}
+                  bookmarkingEnabled={bookmarkingEnabled}
+                  isPinned={isPinned}
+                  bookmarkBusy={bookmarkBusy}
+                  onTogglePin={() => onToggleChatPin?.(entry) ?? Promise.resolve()}
+                />
+              );
+            })}
           </div>
         ))}
       </div>
