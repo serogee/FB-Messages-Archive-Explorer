@@ -567,10 +567,18 @@ describe('Messenger export filesystem services', () => {
     const removeEntry = media.removeEntry.bind(media);
     let active = 0;
     let peak = 0;
+    let started = 0;
+    const releases = Array.from({ length: 9 }, () => {
+      let release = () => {};
+      const promise = new Promise<void>(resolve => { release = resolve; });
+      return { promise, release };
+    });
     vi.spyOn(media, 'removeEntry').mockImplementation(async name => {
+      const index = Number(name.match(/\d+/)?.[0]);
+      started++;
       active++;
       peak = Math.max(peak, active);
-      await new Promise(resolve => setTimeout(resolve, 2));
+      await releases[index].promise;
       try {
         await removeEntry(name);
       } finally {
@@ -578,9 +586,24 @@ describe('Messenger export filesystem services', () => {
       }
     });
 
-    await deleteMessengerExportChat(root, entries[0], chatIndex);
+    const deletion = deleteMessengerExportChat(root, entries[0], chatIndex);
+    for (let turn = 0; turn < 10 && started < 4; turn++) await Promise.resolve();
+
+    expect(started).toBe(4);
+    expect(active).toBe(4);
+    releases[0].release();
+    for (let turn = 0; turn < 10 && started < 5; turn++) await Promise.resolve();
+    expect(started).toBe(5);
+
+    releases.forEach(gate => gate.release());
+    await deletion;
 
     expect(peak).toBe(4);
+    expect(started).toBe(9);
+    await expect(root.getFileHandle('chat.json')).rejects.toMatchObject({ name: 'NotFoundError' });
+    for (const name of Object.keys(mediaEntries)) {
+      await expect(media.getFileHandle(name)).rejects.toMatchObject({ name: 'NotFoundError' });
+    }
   });
 
   it('keeps media owned by a selected chat that fails to commit', async () => {

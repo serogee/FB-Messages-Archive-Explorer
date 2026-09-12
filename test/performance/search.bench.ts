@@ -4,6 +4,7 @@ import { generateMessages } from './generatedData';
 
 let search: typeof searchModule;
 const messages = generateMessages(10_000);
+let index: ReturnType<typeof searchModule.buildSearchIndex>;
 const benchOptions = { time: 500, warmupTime: 100 };
 
 beforeAll(async () => {
@@ -12,6 +13,7 @@ beforeAll(async () => {
     configurable: true,
   });
   search = await import('../../src/services/search');
+  index = search.buildSearchIndex(messages);
 });
 
 describe('search performance', () => {
@@ -20,7 +22,6 @@ describe('search performance', () => {
   }, benchOptions);
 
   bench('perform search over 10k indexed messages', async () => {
-    const index = search.buildSearchIndex(messages);
     await search.performSearch('archive search', index);
   }, benchOptions);
 });

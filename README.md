@@ -288,6 +288,7 @@ npm run preview
 | Command              | Description                |
 | -------------------- | -------------------------- |
 | `npm test`           | Run all tests once         |
+| `npm run test:e2e`   | Run browser workflow tests |
 | `npm run test:watch` | Run tests in watch mode    |
 | `npm run test:perf`  | Run performance benchmarks |
 | `npm run lint`       | Lint with oxlint           |

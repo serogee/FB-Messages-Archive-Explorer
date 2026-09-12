@@ -82,4 +82,8 @@ describe('parser service', () => {
     expect(sanitizeFileName('')).toBe('conversation');
     expect(sanitizeFileName('a'.repeat(200))).toHaveLength(140);
   });
+
+  it('rejects truncated Facebook JSON instead of returning partial conversation data', () => {
+    expect(() => parseMessengerJsonContent('{"title":"Partial"')).toThrow(SyntaxError);
+  });
 });
