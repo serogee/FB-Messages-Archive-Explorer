@@ -5,11 +5,19 @@ import {
   deleteMessengerExportChat,
   getMessengerExportBatchDeletionInfo,
   getMessengerExportDeletionInfo,
+  MessengerExportIndexIncompleteError,
 } from '../src/services/messengerExport/messengerExportDeletion';
 import { isMessengerExport } from '../src/services/messengerExport/messengerExportDetector';
-import { listMessengerExportChats } from '../src/services/messengerExport/messengerExportLoader';
+import {
+  listMessengerExportChats,
+  listMessengerExportChatsIndexed,
+} from '../src/services/messengerExport/messengerExportLoader';
 import { processMessengerExportMedia } from '../src/services/messengerExport/messengerExportMedia';
-import { buildMessengerExportMediaSizeIndex } from '../src/services/messengerExport/messengerExportSize';
+import { buildReferenceIndexFromChatMedia } from '../src/services/messengerExport/messengerExportIndex';
+import {
+  buildMessengerExportMediaSizeIndex,
+  computeMessengerExportChatSizeFromIndex,
+} from '../src/services/messengerExport/messengerExportSize';
 import type { ChatListEntry } from '../src/types/messenger';
 import { createMockDirectoryHandle } from './helpers/mockFileSystem';
 
@@ -75,6 +83,152 @@ describe('Messenger export filesystem services', () => {
     expect(entries.map(item => item.title)).toEqual(['Group', 'Alice']);
     expect(entries.every(item => item._messengerExport)).toBe(true);
     expect(entries.map(item => item._jsonFileName)).toEqual(['chat_group.json', 'chat_alice.json']);
+  });
+
+  it('builds ownership, paths, and JSON sizes during the listing pass', async () => {
+    const root = messengerRoot();
+    const { entries, chatIndex } = await listMessengerExportChatsIndexed(root);
+
+    expect(chatIndex.complete).toBe(true);
+    expect(chatIndex.warnings).toEqual([]);
+    expect(chatIndex.referenceIndex.mediaOwners.get('media/shared.jpg')).toEqual(
+      new Set(['chat_alice.json', 'chat_group.json'])
+    );
+    expect(chatIndex.referenceIndex.chatMedia.get('chat_alice.json')).toEqual(
+      new Set(['media/photo1.jpg', 'media/shared.jpg'])
+    );
+    expect(chatIndex.chatMediaPaths.get('chat_group.json')).toEqual(
+      new Set(['media/shared.jpg', 'media/video1.mp4'])
+    );
+    const rebuiltReferenceIndex = buildReferenceIndexFromChatMedia(chatIndex.chatMediaPaths);
+    expect(rebuiltReferenceIndex.mediaOwners).toEqual(chatIndex.referenceIndex.mediaOwners);
+    expect(rebuiltReferenceIndex.chatMedia).toEqual(chatIndex.referenceIndex.chatMedia);
+    expect(chatIndex.jsonSizes.get('chat_alice.json')).toBe(entries.find(
+      item => item._jsonFileName === 'chat_alice.json'
+    )?.folderSize);
+  });
+
+  it('computes indexed sizes and deletion details without reopening conversation JSON', async () => {
+    const root = messengerRoot();
+    const { entries, chatIndex } = await listMessengerExportChatsIndexed(root);
+    const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(root);
+    const getFileHandle = vi.spyOn(root, 'getFileHandle');
+    const alice = entries.find(item => item._jsonFileName === 'chat_alice.json')!;
+
+    const size = computeMessengerExportChatSizeFromIndex(
+      'chat_alice.json',
+      chatIndex,
+      mediaSizeIndex
+    );
+    const info = await getMessengerExportDeletionInfo(
+      root,
+      alice,
+      chatIndex,
+      undefined,
+      mediaSizeIndex
+    );
+
+    expect(size).toBe(chatIndex.jsonSizes.get('chat_alice.json')! + 7);
+    expect(info.jsonSize).toBe(chatIndex.jsonSizes.get('chat_alice.json'));
+    expect(getFileHandle).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a possible conversation cannot be indexed', async () => {
+    const root = createMockDirectoryHandle('messenger', {
+      'chat.json': JSON.stringify({
+        threadName: 'Chat',
+        participants: ['Alice'],
+        messages: [{ senderName: 'Alice', timestamp: 1 }],
+      }),
+      'broken.json': '{not-json',
+      media: {},
+    });
+    const { entries, chatIndex } = await listMessengerExportChatsIndexed(root);
+
+    expect(chatIndex.complete).toBe(false);
+    expect(chatIndex.warnings).toEqual([
+      { jsonFileName: 'broken.json', reason: 'malformed-conversation' },
+    ]);
+    await expect(getMessengerExportDeletionInfo(
+      root,
+      entries[0],
+      chatIndex,
+      undefined,
+      new Map()
+    )).rejects.toBeInstanceOf(MessengerExportIndexIncompleteError);
+  });
+
+  it('keeps nested files with duplicate basenames as separate media identities', async () => {
+    const root = createMockDirectoryHandle('messenger', {
+      'one.json': JSON.stringify({
+        threadName: 'One',
+        participants: ['Alice'],
+        messages: [{ senderName: 'Alice', timestamp: 1, media: [{ uri: 'media/one/photo.jpg' }] }],
+      }),
+      'two.json': JSON.stringify({
+        threadName: 'Two',
+        participants: ['Bob'],
+        messages: [{ senderName: 'Bob', timestamp: 2, media: [{ uri: 'media/two/photo.jpg' }] }],
+      }),
+      media: {
+        one: { 'photo.jpg': new Uint8Array([1]) },
+        two: { 'photo.jpg': new Uint8Array([1, 2]) },
+      },
+    });
+    const { entries, chatIndex } = await listMessengerExportChatsIndexed(root);
+    const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(root);
+    const info = await getMessengerExportBatchDeletionInfo(
+      root,
+      entries,
+      chatIndex,
+      undefined,
+      mediaSizeIndex
+    );
+
+    expect(chatIndex.referenceIndex.mediaOwners.has('media/one/photo.jpg')).toBe(true);
+    expect(chatIndex.referenceIndex.mediaOwners.has('media/two/photo.jpg')).toBe(true);
+    expect(info.exclusiveMediaFiles.sort()).toEqual(['one/photo.jpg', 'two/photo.jpg']);
+    expect(info.mediaSize).toBe(3);
+
+    const one = entries.find(item => item._jsonFileName === 'one.json')!;
+    await deleteMessengerExportChat(root, one, chatIndex);
+    const media = await root.getDirectoryHandle('media');
+    const oneDirectory = await media.getDirectoryHandle('one');
+    const twoDirectory = await media.getDirectoryHandle('two');
+    await expect(oneDirectory.getFileHandle('photo.jpg')).rejects.toMatchObject({ name: 'NotFoundError' });
+    await expect(twoDirectory.getFileHandle('photo.jpg')).resolves.toMatchObject({ kind: 'file' });
+    expect(chatIndex.jsonSizes.has('one.json')).toBe(false);
+    expect(chatIndex.chatMediaPaths.has('one.json')).toBe(false);
+    expect(chatIndex.referenceIndex.chatMedia.has('one.json')).toBe(false);
+  });
+
+  it('fails closed when case-normalized media identities are ambiguous', async () => {
+    const root = createMockDirectoryHandle('messenger', {
+      'upper.json': JSON.stringify({
+        threadName: 'Upper',
+        participants: ['Alice'],
+        messages: [{ senderName: 'Alice', timestamp: 1, media: [{ uri: 'media/Photo.jpg' }] }],
+      }),
+      'lower.json': JSON.stringify({
+        threadName: 'Lower',
+        participants: ['Bob'],
+        messages: [{ senderName: 'Bob', timestamp: 2, media: [{ uri: 'media/photo.jpg' }] }],
+      }),
+      media: {
+        'Photo.jpg': new Uint8Array([1]),
+        'photo.jpg': new Uint8Array([2]),
+      },
+    });
+
+    const { chatIndex } = await listMessengerExportChatsIndexed(root);
+    const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(root);
+
+    expect(chatIndex.complete).toBe(false);
+    expect(chatIndex.warnings).toContainEqual({
+      jsonFileName: 'lower.json',
+      reason: 'ambiguous-media-path',
+    });
+    expect(mediaSizeIndex.has('photo.jpg')).toBe(false);
   });
 
   it('indexes Messenger export media', async () => {
@@ -163,7 +317,7 @@ describe('Messenger export filesystem services', () => {
     await expect(media.getFileHandle('photo1.jpg')).rejects.toMatchObject({ name: 'NotFoundError' });
     await expect(media.getFileHandle('shared.jpg')).resolves.toMatchObject({ kind: 'file' });
     expect(referenceIndex.chatMedia.has('chat_alice.json')).toBe(false);
-    expect(referenceIndex.mediaOwners.get('shared.jpg')).toEqual(new Set(['chat_group.json']));
+    expect(referenceIndex.mediaOwners.get('media/shared.jpg')).toEqual(new Set(['chat_group.json']));
   });
 
   it('continues deletion when exclusive media is already missing', async () => {

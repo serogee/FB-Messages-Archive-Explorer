@@ -14,11 +14,14 @@ import {
   buildMessengerExportMediaSizeIndex,
   buildMessengerExportReferenceIndex,
   computeMessengerExportChatSize,
+  computeMessengerExportChatSizeFromIndex,
   deleteMessengerExportChat,
   getMessengerExportBatchDeletionInfo,
   getMessengerExportDeletionInfo,
   isMessengerExport,
-  listMessengerExportChats,
+  listMessengerExportChatsIndexed,
+  MessengerExportIndexIncompleteError,
+  type MessengerExportChatIndex,
   type MessengerExportDeletionInfo,
   type MessengerExportReferenceIndex,
 } from '../services/messengerExport';
@@ -27,6 +30,28 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw new DOMException('Aborted', 'AbortError');
   }
+}
+
+function waitForPromiseWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener('abort', abort);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(
+      value => {
+        signal.removeEventListener('abort', abort);
+        resolve(value);
+      },
+      error => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      }
+    );
+  });
 }
 
 async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: AbortSignal): Promise<MessengerExportDeletionInfo> {
@@ -125,15 +150,32 @@ export function useArchive(): {
   const [sizeProgress, setSizeProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const archiveGenerationRef = useRef(0);
   const isMessengerExportRef = useRef(false);
+  const messengerChatIndexRef = useRef<{
+    rootHandle: ReadableDirectoryHandle;
+    generation: number;
+    chatIndex: MessengerExportChatIndex;
+  } | null>(null);
   const messengerReferenceIndexRef = useRef<{
     rootHandle: ReadableDirectoryHandle;
+    generation: number;
     index: MessengerExportReferenceIndex;
-    mediaSizeIndex: Map<string, number>;
+  } | null>(null);
+  const messengerReferenceIndexPromiseRef = useRef<{
+    rootHandle: ReadableDirectoryHandle;
+    generation: number;
+    promise: Promise<MessengerExportReferenceIndex>;
   } | null>(null);
   const messengerMediaSizeIndexRef = useRef<{
     rootHandle: ReadableDirectoryHandle;
+    generation: number;
     mediaSizeIndex: Map<string, number>;
+  } | null>(null);
+  const messengerMediaSizeIndexPromiseRef = useRef<{
+    rootHandle: ReadableDirectoryHandle;
+    generation: number;
+    promise: Promise<Map<string, number>>;
   } | null>(null);
   const sizeComputationPromisesRef = useRef<Map<string, Promise<number>>>(new Map());
   const sizeQueuePausedRef = useRef(false);
@@ -146,6 +188,40 @@ export function useArchive(): {
   inboxListRef.current = inboxList;
   archivedListRef.current = archivedList;
   requestsListRef.current = requestsList;
+
+  const getMessengerMediaSizeIndexForRoot = useCallback((
+    handle: ReadableDirectoryHandle,
+    generation: number,
+    buildSignal?: AbortSignal,
+    waitSignal?: AbortSignal
+  ): Promise<Map<string, number>> => {
+    const cached = messengerMediaSizeIndexRef.current;
+    if (cached && cached.rootHandle === handle && cached.generation === generation) {
+      return waitForPromiseWithAbort(Promise.resolve(cached.mediaSizeIndex), waitSignal);
+    }
+
+    const pending = messengerMediaSizeIndexPromiseRef.current;
+    if (pending && pending.rootHandle === handle && pending.generation === generation) {
+      return waitForPromiseWithAbort(pending.promise, waitSignal);
+    }
+
+    const promise = (async () => {
+      const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(handle, buildSignal);
+      throwIfAborted(buildSignal);
+      if (archiveGenerationRef.current === generation) {
+        messengerMediaSizeIndexRef.current = { rootHandle: handle, generation, mediaSizeIndex };
+      }
+      return mediaSizeIndex;
+    })();
+    const record = { rootHandle: handle, generation, promise };
+    messengerMediaSizeIndexPromiseRef.current = record;
+    void promise.finally(() => {
+      if (messengerMediaSizeIndexPromiseRef.current === record) {
+        messengerMediaSizeIndexPromiseRef.current = null;
+      }
+    }).catch(() => {});
+    return waitForPromiseWithAbort(promise, waitSignal);
+  }, []);
 
   const getSizeEntryKey = useCallback((entry: ChatListEntry): string => {
     return `${entry.source}:${entry.folderName}:${entry._jsonFileName || ''}`;
@@ -297,6 +373,7 @@ export function useArchive(): {
     try {
       const handle = requestWrite ? await pickFolderWithWriteAccess() : await pickMessagesFolder();
       onFolderPicked?.();
+      const generation = ++archiveGenerationRef.current;
       
       setError(null);
       setLoading(true);
@@ -312,8 +389,11 @@ export function useArchive(): {
       setRootHandle(null);
       setOriginalRootHandle(null);
       isMessengerExportRef.current = false;
+      messengerChatIndexRef.current = null;
       messengerReferenceIndexRef.current = null;
+      messengerReferenceIndexPromiseRef.current = null;
       messengerMediaSizeIndexRef.current = null;
+      messengerMediaSizeIndexPromiseRef.current = null;
       sizeComputationPromisesRef.current.clear();
       sizeQueuePauseCountRef.current = 0;
       resumeSizeQueue();
@@ -329,12 +409,19 @@ export function useArchive(): {
         setOriginalRootHandle(handle);
         setRootHandle(handle);
 
-        const inbox = await listMessengerExportChats(
+        const { entries: inbox, chatIndex } = await listMessengerExportChatsIndexed(
           handle,
           (done, total) => setLoadProgress({ done, total }),
           abortCtrl.signal
         );
         if (abortCtrl.signal.aborted) return false;
+
+        messengerChatIndexRef.current = { rootHandle: handle, generation, chatIndex };
+        messengerReferenceIndexRef.current = {
+          rootHandle: handle,
+          generation,
+          index: chatIndex.referenceIndex,
+        };
 
         setInboxList(inbox);
         setArchivedList([]);
@@ -344,9 +431,12 @@ export function useArchive(): {
           setSizeProgress({ done: 0, total: inbox.length });
           const signal = abortCtrl.signal;
           void (async () => {
-            const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(handle, signal);
+            const mediaSizeIndex = await getMessengerMediaSizeIndexForRoot(
+              handle,
+              generation,
+              signal
+            );
             if (signal.aborted) return;
-            messengerMediaSizeIndexRef.current = { rootHandle: handle, mediaSizeIndex };
 
             startLazySizeComputation(
               inbox,
@@ -359,14 +449,18 @@ export function useArchive(): {
                 }
               },
               signal,
-              entry => computeMessengerExportChatSize(
-                entry.dirHandle,
+              async entry => computeMessengerExportChatSizeFromIndex(
                 entry._jsonFileName!,
-                mediaSizeIndex,
-                signal
+                chatIndex,
+                mediaSizeIndex
               )
             );
-          })();
+          })().catch(error => {
+            if (!(error instanceof DOMException && error.name === 'AbortError')) {
+              console.error('Failed to build Messenger media size index:', error);
+              if (archiveGenerationRef.current === generation) setSizeProgress(null);
+            }
+          });
         } else {
           setSizeProgress(null);
         }
@@ -451,7 +545,7 @@ export function useArchive(): {
         setLoadProgress(null);
       }
     }
-  }, [resumeSizeQueue, startLazySizeComputation]);
+  }, [getMessengerMediaSizeIndexForRoot, resumeSizeQueue, startLazySizeComputation]);
 
   const openFolderWithWriteAccess = useCallback(async () => {
     setError(null);
@@ -467,46 +561,60 @@ export function useArchive(): {
 
   const getMessengerMediaSizeIndex = useCallback(async (signal?: AbortSignal): Promise<Map<string, number>> => {
     if (!rootHandle) throw new Error('No folder open');
-    const cached = messengerMediaSizeIndexRef.current;
-    if (cached && cached.rootHandle === rootHandle) {
-      return cached.mediaSizeIndex;
-    }
-
-    const referenceCached = messengerReferenceIndexRef.current;
-    if (referenceCached && referenceCached.rootHandle === rootHandle) {
-      messengerMediaSizeIndexRef.current = {
-        rootHandle,
-        mediaSizeIndex: referenceCached.mediaSizeIndex,
-      };
-      return referenceCached.mediaSizeIndex;
-    }
-
-    const mediaSizeIndex = await buildMessengerExportMediaSizeIndex(rootHandle, signal);
-    throwIfAborted(signal);
-    messengerMediaSizeIndexRef.current = { rootHandle, mediaSizeIndex };
-    return mediaSizeIndex;
-  }, [rootHandle]);
+    return getMessengerMediaSizeIndexForRoot(
+      rootHandle,
+      archiveGenerationRef.current,
+      abortControllerRef.current?.signal,
+      signal
+    );
+  }, [getMessengerMediaSizeIndexForRoot, rootHandle]);
 
   const getMessengerReferenceIndex = useCallback(async (signal?: AbortSignal): Promise<{
     index: MessengerExportReferenceIndex;
-    mediaSizeIndex: Map<string, number>;
+    chatIndex?: MessengerExportChatIndex;
   }> => {
     if (!rootHandle) throw new Error('No folder open');
-    const cached = messengerReferenceIndexRef.current;
-    if (cached && cached.rootHandle === rootHandle) {
+    const generation = archiveGenerationRef.current;
+    const chatCached = messengerChatIndexRef.current;
+    if (chatCached && chatCached.rootHandle === rootHandle && chatCached.generation === generation) {
       return {
-        index: cached.index,
-        mediaSizeIndex: cached.mediaSizeIndex,
+        index: chatCached.chatIndex.referenceIndex,
+        chatIndex: chatCached.chatIndex,
       };
     }
 
-    const index = await buildMessengerExportReferenceIndex(rootHandle, signal);
-    throwIfAborted(signal);
-    const mediaSizeIndex = await getMessengerMediaSizeIndex(signal);
-    throwIfAborted(signal);
-    messengerReferenceIndexRef.current = { rootHandle, index, mediaSizeIndex };
-    return { index, mediaSizeIndex };
-  }, [getMessengerMediaSizeIndex, rootHandle]);
+    const cached = messengerReferenceIndexRef.current;
+    let index: MessengerExportReferenceIndex;
+    if (cached && cached.rootHandle === rootHandle && cached.generation === generation) {
+      index = cached.index;
+    } else {
+      const pending = messengerReferenceIndexPromiseRef.current;
+      let promise: Promise<MessengerExportReferenceIndex>;
+      if (pending && pending.rootHandle === rootHandle && pending.generation === generation) {
+        promise = pending.promise;
+      } else {
+        const buildSignal = abortControllerRef.current?.signal;
+        promise = (async () => {
+          const builtIndex = await buildMessengerExportReferenceIndex(rootHandle, buildSignal);
+          throwIfAborted(buildSignal);
+          if (archiveGenerationRef.current === generation) {
+            messengerReferenceIndexRef.current = { rootHandle, generation, index: builtIndex };
+          }
+          return builtIndex;
+        })();
+        const record = { rootHandle, generation, promise };
+        messengerReferenceIndexPromiseRef.current = record;
+        void promise.finally(() => {
+          if (messengerReferenceIndexPromiseRef.current === record) {
+            messengerReferenceIndexPromiseRef.current = null;
+          }
+        }).catch(() => {});
+      }
+      index = await waitForPromiseWithAbort(promise, signal);
+    }
+
+    return { index };
+  }, [rootHandle]);
 
   const getDeleteInfo = useCallback(async (
     entry: ChatListEntry | ChatListEntry[],
@@ -520,20 +628,37 @@ export function useArchive(): {
       return computeFacebookDeleteInfo(entries, signal);
     }
 
-    const { index: referenceIndex, mediaSizeIndex } = await getMessengerReferenceIndex(signal);
+    const referenceResult = await getMessengerReferenceIndex(signal);
+    const { index: referenceIndex, chatIndex } = referenceResult;
+    if (!referenceIndex.complete) throw new MessengerExportIndexIncompleteError();
+    const mediaSizeIndex = await getMessengerMediaSizeIndex(signal);
+    const deletionIndex = chatIndex || referenceIndex;
     if (messengerEntries.length === 1 && !Array.isArray(entry)) {
-      return getMessengerExportDeletionInfo(rootHandle, messengerEntries[0], referenceIndex, signal, mediaSizeIndex);
+      return getMessengerExportDeletionInfo(rootHandle, messengerEntries[0], deletionIndex, signal, mediaSizeIndex);
     }
 
-    return getMessengerExportBatchDeletionInfo(rootHandle, messengerEntries, referenceIndex, signal, mediaSizeIndex);
-  }, [getMessengerReferenceIndex, rootHandle]);
+    return getMessengerExportBatchDeletionInfo(rootHandle, messengerEntries, deletionIndex, signal, mediaSizeIndex);
+  }, [getMessengerMediaSizeIndex, getMessengerReferenceIndex, rootHandle]);
 
   const deleteChat = useCallback(async (entry: ChatListEntry) => {
     if (!rootHandle) throw new Error('No folder open');
     if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
+    const generation = archiveGenerationRef.current;
     if (entry._messengerExport) {
-      const { index: referenceIndex } = await getMessengerReferenceIndex();
-      await deleteMessengerExportChat(rootHandle, entry, referenceIndex);
+      const { index: referenceIndex, chatIndex } = await getMessengerReferenceIndex();
+      const jsonFileName = entry._jsonFileName!;
+      const removedMedia = Array.from(referenceIndex.chatMedia.get(jsonFileName) || [])
+        .filter(identity => (referenceIndex.mediaOwners.get(identity)?.size || 0) <= 1);
+      await deleteMessengerExportChat(rootHandle, entry, chatIndex || referenceIndex);
+      const mediaSizeCache = messengerMediaSizeIndexRef.current;
+      const mediaSizeIndex = mediaSizeCache
+        && mediaSizeCache.rootHandle === rootHandle
+        && mediaSizeCache.generation === generation
+        && archiveGenerationRef.current === generation
+        ? mediaSizeCache.mediaSizeIndex
+        : undefined;
+      for (const identity of removedMedia) mediaSizeIndex?.delete(identity);
+      if (archiveGenerationRef.current !== generation) return;
       setInboxList(prev => prev.filter(e => e.folderName !== entry.folderName));
       return;
     }
@@ -544,6 +669,7 @@ export function useArchive(): {
       entry.source === 'e2ee'     ? 'e2ee_cutover' :
       'archived_threads';
     await deleteChatFs(rootHandle, subfolderName, entry.folderName);
+    if (archiveGenerationRef.current !== generation) return;
     if (entry.source === 'inbox' || entry.source === 'e2ee') {
       setInboxList(prev => prev.filter(e => e.folderName !== entry.folderName));
     } else if (entry.source === 'requests') {
@@ -556,15 +682,34 @@ export function useArchive(): {
   const deleteChats = useCallback(async (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => {
     if (!rootHandle) throw new Error('No folder open');
     if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
+    const generation = archiveGenerationRef.current;
     
     const deletedEntries: ChatListEntry[] = [];
+    const messengerIndexes = entries.some(entry => entry._messengerExport)
+      ? await getMessengerReferenceIndex()
+      : null;
     
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (entry._messengerExport) {
         try {
-          const { index: referenceIndex } = await getMessengerReferenceIndex();
-          await deleteMessengerExportChat(rootHandle, entry, referenceIndex);
+          const referenceIndex = messengerIndexes!.index;
+          const jsonFileName = entry._jsonFileName!;
+          const removedMedia = Array.from(referenceIndex.chatMedia.get(jsonFileName) || [])
+            .filter(identity => (referenceIndex.mediaOwners.get(identity)?.size || 0) <= 1);
+          await deleteMessengerExportChat(
+            rootHandle,
+            entry,
+            messengerIndexes!.chatIndex || referenceIndex
+          );
+          const mediaSizeCache = messengerMediaSizeIndexRef.current;
+          const mediaSizeIndex = mediaSizeCache
+            && mediaSizeCache.rootHandle === rootHandle
+            && mediaSizeCache.generation === generation
+            && archiveGenerationRef.current === generation
+            ? mediaSizeCache.mediaSizeIndex
+            : undefined;
+          for (const identity of removedMedia) mediaSizeIndex?.delete(identity);
           deletedEntries.push(entry);
         } catch (err) {
           console.error(`Failed to delete ${entry.folderName}`, err);
@@ -587,6 +732,7 @@ export function useArchive(): {
       if (onProgress) onProgress(i + 1, entries.length);
     }
 
+    if (archiveGenerationRef.current !== generation) return deletedEntries;
     const deletedKeys = new Set(deletedEntries.map(entry => `${entry.source}:${entry.folderName}`));
     const wasDeleted = (entry: ChatListEntry) => deletedKeys.has(`${entry.source}:${entry.folderName}`);
     setInboxList(prev => prev.filter(e => !wasDeleted(e)));
@@ -625,6 +771,17 @@ export function useArchive(): {
       sizePromise = (async () => {
         if (entry._messengerExport) {
           const mediaSizeIndex = await getMessengerMediaSizeIndex();
+          const cached = messengerChatIndexRef.current;
+          if (cached
+            && cached.rootHandle === rootHandle
+            && cached.generation === archiveGenerationRef.current
+            && cached.chatIndex.jsonSizes.has(entry._jsonFileName!)) {
+            return computeMessengerExportChatSizeFromIndex(
+              entry._jsonFileName!,
+              cached.chatIndex,
+              mediaSizeIndex
+            );
+          }
           return computeMessengerExportChatSize(entry.dirHandle, entry._jsonFileName!, mediaSizeIndex);
         }
         return computeFolderSize(entry.dirHandle);
@@ -641,7 +798,7 @@ export function useArchive(): {
         sizeComputationPromisesRef.current.delete(key);
       }
     }
-  }, [getCurrentEntry, getMessengerMediaSizeIndex, getSizeEntryKey, hasCompleteSize, updateFolderSize]);
+  }, [getCurrentEntry, getMessengerMediaSizeIndex, getSizeEntryKey, hasCompleteSize, rootHandle, updateFolderSize]);
 
   return {
     rootHandle, originalRootHandle, inboxList, archivedList, requestsList,    loading, loadProgress, sizeProgress, error,
