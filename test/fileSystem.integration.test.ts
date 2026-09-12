@@ -109,4 +109,27 @@ describe('Facebook archive filesystem services', () => {
     await deleteChat(root, 'inbox', 'alice_chat');
     await expect(inbox.getDirectoryHandle('alice_chat')).rejects.toMatchObject({ name: 'NotFoundError' });
   });
+
+  it('stops folder sizing on abort instead of returning a partial size', async () => {
+    const abortController = new AbortController();
+    const fileHandle = {
+      kind: 'file' as const,
+      name: 'message_1.json',
+      getFile: async () => {
+        abortController.abort();
+        return new File(['partial'], 'message_1.json');
+      },
+    } as FileSystemFileHandle;
+    const chat = {
+      kind: 'directory' as const,
+      name: 'chat',
+      async *entries() {
+        yield ['message_1.json', fileHandle] as [string, FileSystemFileHandle];
+      },
+    } as FileSystemDirectoryHandle;
+
+    await expect(computeFolderSize(chat, abortController.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+  });
 });

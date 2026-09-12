@@ -44,6 +44,7 @@ export default function App() {
   const [deleteInfo, setDeleteInfo] = useState<MessengerExportDeletionInfo | null>(null);
   const [deleteInfoLoading, setDeleteInfoLoading] = useState(false);
   const [deleteInfoSkipped, setDeleteInfoSkipped] = useState(false);
+  const [deletePreparing, setDeletePreparing] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteToast, setDeleteToast] = useState<string | null>(null);
   const deleteInfoRequestRef = useRef(0);
@@ -82,14 +83,19 @@ export default function App() {
     if (!deleteTarget) return;
     deleteInfoAbortRef.current?.abort();
     deleteInfoAbortRef.current = null;
-    setDeleteBusy(true);
+    setDeletePreparing(true);
     setDeleteInfoLoading(false);
     deleteInfoRequestRef.current++;
     const deletedName = Array.isArray(deleteTarget)
       ? `${deleteTarget.length} Chats`
       : deleteTarget.title;
     let bookmarkCleanupFailed = false;
+    let sizeWorkSuspended = false;
     try {
+      sizeWorkSuspended = true;
+      await archive.suspendSizeWork();
+      setDeletePreparing(false);
+      setDeleteBusy(true);
       if (Array.isArray(deleteTarget)) {
         setDeleteProgress({ done: 0, total: deleteTarget.length });
         const deletedEntries = await archive.deleteChats(deleteTarget, (done, total) => {
@@ -126,7 +132,10 @@ export default function App() {
       deleteToastTimerRef.current = setTimeout(() => setDeleteToast(null), 3200);
     } catch (e) {
       console.error('Delete failed:', e);
+    } finally {
+      if (sizeWorkSuspended) archive.resumeSizeWork();
     }
+    setDeletePreparing(false);
     setDeleteBusy(false);
     setDeleteProgress(null);
     setDeleteTarget(null);
@@ -145,6 +154,7 @@ export default function App() {
     setDeleteTarget(target);
     setDeleteInfo(null);
     setDeleteInfoSkipped(false);
+    setDeletePreparing(false);
     setDeleteBusy(false);
 
     setDeleteInfoLoading(true);
@@ -154,16 +164,7 @@ export default function App() {
         setDeleteInfo(info);
         if (!Array.isArray(target) && !target._messengerExport && target.folderSize <= 0) {
           archive.updateFolderSize(target, info.totalSize);
-          return;
         }
-
-        const entries = Array.isArray(target) ? target : [target];
-        entries.forEach(entry => {
-          if (entry.folderSize > 0 && (!entry._messengerExport || entry._sizeIncludesMedia)) return;
-          void archive.computeAndUpdateFolderSize(entry).catch(error => {
-            console.error('Failed to update chat size from delete details:', error);
-          });
-        });
       })
       .catch(error => {
         if (deleteInfoRequestRef.current !== requestId) return;
@@ -181,16 +182,11 @@ export default function App() {
 
   const handleSelectChat = useCallback(async (entry: ChatListEntry) => {
     setGalleryOpen(false);
-    if (entry.folderSize <= 0 || (entry._messengerExport && !entry._sizeIncludesMedia)) {
-      void archive.computeAndUpdateFolderSize(entry).catch(error => {
-        console.error('Failed to calculate chat size:', error);
-      });
-    }
-    archive.setSizeQueuePaused(true);
+    await archive.suspendSizeWork();
     try {
       await chat.loadChat(entry, archive.rootHandle);
     } finally {
-      archive.setSizeQueuePaused(false);
+      archive.resumeSizeWork();
     }
   }, [archive, chat]);
 
@@ -223,6 +219,7 @@ export default function App() {
       setDeleteInfo(null);
       setDeleteInfoLoading(false);
       setDeleteInfoSkipped(false);
+      setDeletePreparing(false);
       setDeleteBusy(false);
       setDeleteProgress(null);
     }
@@ -435,6 +432,7 @@ export default function App() {
           messengerDeletionInfo={deleteInfo}
           deletionInfoLoading={deleteInfoLoading}
           deletionInfoSkipped={deleteInfoSkipped}
+          preparingDeletion={deletePreparing}
           deleting={deleteBusy}
         />
       )}

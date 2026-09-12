@@ -25,6 +25,7 @@ import {
   type MessengerExportDeletionInfo,
   type MessengerExportReferenceIndex,
 } from '../services/messengerExport';
+import { SizeWorkLifecycle } from '../services/sizeWorkLifecycle';
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -120,6 +121,19 @@ async function computeFacebookDeleteInfo(entries: ChatListEntry[], signal?: Abor
   });
 }
 
+type SizeWorkPlan =
+  | {
+      kind: 'messenger';
+      rootHandle: ReadableDirectoryHandle;
+      generation: number;
+      chatIndex: MessengerExportChatIndex;
+    }
+  | {
+      kind: 'facebook';
+      rootHandle: ReadableDirectoryHandle;
+      generation: number;
+    };
+
 export function useArchive(): {
   rootHandle: ReadableDirectoryHandle | null;
   originalRootHandle: ReadableDirectoryHandle | null;
@@ -135,7 +149,8 @@ export function useArchive(): {
   openFolderWithWriteAccess: () => Promise<void>;
   getDeleteInfo: (entry: ChatListEntry | ChatListEntry[], signal?: AbortSignal) => Promise<MessengerExportDeletionInfo>;
   computeAndUpdateFolderSize: (entry: ChatListEntry) => Promise<number>;
-  setSizeQueuePaused: (paused: boolean) => void;
+  suspendSizeWork: () => Promise<void>;
+  resumeSizeWork: () => void;
   deleteChat: (entry: ChatListEntry) => Promise<void>;
   deleteChats: (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => Promise<ChatListEntry[]>;
   updateFolderSize: (entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => void;
@@ -178,9 +193,9 @@ export function useArchive(): {
     promise: Promise<Map<string, number>>;
   } | null>(null);
   const sizeComputationPromisesRef = useRef<Map<string, Promise<number>>>(new Map());
-  const sizeQueuePausedRef = useRef(false);
-  const sizeQueuePauseCountRef = useRef(0);
-  const sizeQueueResumeWaitersRef = useRef<Set<() => void>>(new Set());
+  const sizeWorkLifecycleRef = useRef(new SizeWorkLifecycle());
+  const sizeWorkPlanRef = useRef<SizeWorkPlan | null>(null);
+  const deletedSizeEntryKeysRef = useRef<Set<string>>(new Set());
 
   const inboxListRef = useRef<ChatListEntry[]>([]);
   const archivedListRef = useRef<ChatListEntry[]>([]);
@@ -237,44 +252,22 @@ export function useArchive(): {
     return entry.folderSize > 0 && (!entry._messengerExport || !!entry._sizeIncludesMedia);
   }, []);
 
-  const waitForSizeQueueResume = useCallback(async (signal?: AbortSignal): Promise<void> => {
-    while (sizeQueuePausedRef.current && !signal?.aborted) {
-      await new Promise<void>(resolve => {
-        sizeQueueResumeWaitersRef.current.add(resolve);
-      });
-    }
+  const trackActiveSizeWork = useCallback(<T,>(promise: Promise<T>): Promise<T> => {
+    return sizeWorkLifecycleRef.current.track(promise);
   }, []);
 
-  const resumeSizeQueue = useCallback(() => {
-    sizeQueuePausedRef.current = false;
-    if (sizeQueueResumeWaitersRef.current.size > 0) {
-      const waiters = Array.from(sizeQueueResumeWaitersRef.current);
-      sizeQueueResumeWaitersRef.current.clear();
-      waiters.forEach(resolve => resolve());
-    }
+  const suspendSizeWork = useCallback(async (): Promise<void> => {
+    await sizeWorkLifecycleRef.current.suspend();
+    sizeComputationPromisesRef.current.clear();
   }, []);
-
-  const setSizeQueuePaused = useCallback((paused: boolean) => {
-    if (paused) {
-      sizeQueuePauseCountRef.current++;
-    } else {
-      sizeQueuePauseCountRef.current = Math.max(0, sizeQueuePauseCountRef.current - 1);
-    }
-
-    if (sizeQueuePauseCountRef.current > 0) {
-      sizeQueuePausedRef.current = true;
-      return;
-    }
-
-    resumeSizeQueue();
-  }, [resumeSizeQueue]);
 
   const startLazySizeComputation = useCallback((
     entries: ChatListEntry[],
     setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>,
     onProgress?: (done: number) => void,
-    signal?: AbortSignal,
-    computeSize: (entry: ChatListEntry) => Promise<number> = entry => computeFolderSize(entry.dirHandle)
+    signal: AbortSignal = sizeWorkLifecycleRef.current.signal,
+    computeSize: (entry: ChatListEntry, signal: AbortSignal) => Promise<number> =
+      (entry, workSignal) => computeFolderSize(entry.dirHandle, workSignal)
   ) => {
     let done = 0;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -335,38 +328,149 @@ export function useArchive(): {
       const entry = entries[index];
       setTimeout(async () => {
         if (signal?.aborted) return;
-        await waitForSizeQueueResume(signal);
-        if (signal?.aborted) return;
         try {
           const currentEntry = getCurrentEntry(entry);
-          if (currentEntry && hasCompleteSize(currentEntry)) {
+          const key = getSizeEntryKey(entry);
+          if (!currentEntry
+            || deletedSizeEntryKeysRef.current.has(key)
+            || hasCompleteSize(currentEntry)) {
             done++;
             scheduleFlush(done >= entries.length);
             processNext(index + 1);
             return;
           }
 
-          const key = getSizeEntryKey(entry);
           let sizePromise = sizeComputationPromisesRef.current.get(key);
           if (!sizePromise) {
-            sizePromise = computeSize(entry);
+            sizePromise = trackActiveSizeWork(computeSize(currentEntry, signal));
             sizeComputationPromisesRef.current.set(key, sizePromise);
+            const ownedPromise = sizePromise;
+            void ownedPromise.finally(() => {
+              if (sizeComputationPromisesRef.current.get(key) === ownedPromise) {
+                sizeComputationPromisesRef.current.delete(key);
+              }
+            }).catch(() => {});
           }
 
           const size = await sizePromise;
-          if (signal?.aborted) return;
+          throwIfAborted(signal);
           pendingSizes.set(entry._jsonFileName || entry.folderName, size);
         } catch { /* Folder size is optional metadata; failure must not hide the conversation. */ }
-        finally {
-          sizeComputationPromisesRef.current.delete(getSizeEntryKey(entry));
-        }
+        if (signal.aborted) return;
         done++;
         scheduleFlush(done >= entries.length);
         processNext(index + 1);
       }, 0);
     };
     processNext(0);
-  }, [getCurrentEntry, getSizeEntryKey, hasCompleteSize, waitForSizeQueueResume]);
+  }, [getCurrentEntry, getSizeEntryKey, hasCompleteSize, trackActiveSizeWork]);
+
+  const startBackgroundSizeWork = useCallback(() => {
+    const plan = sizeWorkPlanRef.current;
+    const lifecycle = sizeWorkLifecycleRef.current;
+    const signal = lifecycle.signal;
+    if (!plan
+      || lifecycle.suspended
+      || signal.aborted
+      || archiveGenerationRef.current !== plan.generation) {
+      return;
+    }
+
+    const isPending = (entry: ChatListEntry) => (
+      !deletedSizeEntryKeysRef.current.has(getSizeEntryKey(entry)) && !hasCompleteSize(entry)
+    );
+
+    if (plan.kind === 'messenger') {
+      const entries = inboxListRef.current.filter(isPending);
+      if (entries.length === 0) {
+        setSizeProgress(null);
+        return;
+      }
+
+      setSizeProgress({ done: 0, total: entries.length });
+      const mediaSizePromise = trackActiveSizeWork(getMessengerMediaSizeIndexForRoot(
+        plan.rootHandle,
+        plan.generation,
+        signal
+      ));
+      void mediaSizePromise.then(mediaSizeIndex => {
+        throwIfAborted(signal);
+        if (sizeWorkLifecycleRef.current.signal !== signal
+          || archiveGenerationRef.current !== plan.generation) {
+          return;
+        }
+
+        startLazySizeComputation(
+          entries,
+          setInboxList,
+          done => {
+            if (signal.aborted) return;
+            if (done === entries.length) {
+              setSizeProgress(null);
+            } else {
+              setSizeProgress({ done, total: entries.length });
+            }
+          },
+          signal,
+          async entry => computeMessengerExportChatSizeFromIndex(
+            entry._jsonFileName!,
+            plan.chatIndex,
+            mediaSizeIndex
+          )
+        );
+      }).catch(error => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.error('Failed to build Messenger media size index:', error);
+          if (archiveGenerationRef.current === plan.generation) setSizeProgress(null);
+        }
+      });
+      return;
+    }
+
+    const lanes = [
+      { entries: inboxListRef.current.filter(isPending), setList: setInboxList },
+      { entries: archivedListRef.current.filter(isPending), setList: setArchivedList },
+      { entries: requestsListRef.current.filter(isPending), setList: setRequestsList },
+    ];
+    const progress = lanes.map(lane => ({ done: 0, total: lane.entries.length }));
+    const total = progress.reduce((sum, item) => sum + item.total, 0);
+    if (total === 0) {
+      setSizeProgress(null);
+      return;
+    }
+    setSizeProgress({ done: 0, total });
+
+    const updateProgress = (index: number, done: number) => {
+      if (signal.aborted) return;
+      progress[index].done = done;
+      const totalDone = progress.reduce((sum, item) => sum + item.done, 0);
+      if (totalDone === total) {
+        setSizeProgress(null);
+      } else {
+        setSizeProgress({ done: totalDone, total });
+      }
+    };
+
+    lanes.forEach((lane, index) => {
+      startLazySizeComputation(
+        lane.entries,
+        lane.setList,
+        done => updateProgress(index, done),
+        signal
+      );
+    });
+  }, [
+    getMessengerMediaSizeIndexForRoot,
+    getSizeEntryKey,
+    hasCompleteSize,
+    startLazySizeComputation,
+    trackActiveSizeWork,
+  ]);
+
+  const resumeSizeWork = useCallback(() => {
+    if (!sizeWorkLifecycleRef.current.resume()) return;
+    startBackgroundSizeWork();
+  }, [startBackgroundSizeWork]);
 
   const openFolder = useCallback(async (requestWrite?: boolean, onFolderPicked?: () => void): Promise<boolean> => {
     let abortCtrl: AbortController | null = null;
@@ -386,6 +490,9 @@ export function useArchive(): {
       setInboxList([]);
       setArchivedList([]);
       setRequestsList([]);
+      inboxListRef.current = [];
+      archivedListRef.current = [];
+      requestsListRef.current = [];
       setRootHandle(null);
       setOriginalRootHandle(null);
       isMessengerExportRef.current = false;
@@ -394,9 +501,10 @@ export function useArchive(): {
       messengerReferenceIndexPromiseRef.current = null;
       messengerMediaSizeIndexRef.current = null;
       messengerMediaSizeIndexPromiseRef.current = null;
+      sizeWorkLifecycleRef.current.reset();
+      sizeWorkPlanRef.current = null;
+      deletedSizeEntryKeysRef.current.clear();
       sizeComputationPromisesRef.current.clear();
-      sizeQueuePauseCountRef.current = 0;
-      resumeSizeQueue();
       
       const messagesRoot = await resolveFacebookMessagesRoot(handle);
       if (!messagesRoot) {
@@ -423,47 +531,14 @@ export function useArchive(): {
           index: chatIndex.referenceIndex,
         };
 
+        inboxListRef.current = inbox;
+        archivedListRef.current = [];
+        requestsListRef.current = [];
         setInboxList(inbox);
         setArchivedList([]);
         setRequestsList([]);
-
-        if (inbox.length > 0) {
-          setSizeProgress({ done: 0, total: inbox.length });
-          const signal = abortCtrl.signal;
-          void (async () => {
-            const mediaSizeIndex = await getMessengerMediaSizeIndexForRoot(
-              handle,
-              generation,
-              signal
-            );
-            if (signal.aborted) return;
-
-            startLazySizeComputation(
-              inbox,
-              setInboxList,
-              done => {
-                if (done === inbox.length) {
-                  setSizeProgress(null);
-                } else {
-                  setSizeProgress({ done, total: inbox.length });
-                }
-              },
-              signal,
-              async entry => computeMessengerExportChatSizeFromIndex(
-                entry._jsonFileName!,
-                chatIndex,
-                mediaSizeIndex
-              )
-            );
-          })().catch(error => {
-            if (!(error instanceof DOMException && error.name === 'AbortError')) {
-              console.error('Failed to build Messenger media size index:', error);
-              if (archiveGenerationRef.current === generation) setSizeProgress(null);
-            }
-          });
-        } else {
-          setSizeProgress(null);
-        }
+        sizeWorkPlanRef.current = { kind: 'messenger', rootHandle: handle, generation, chatIndex };
+        startBackgroundSizeWork();
         return true;
       }
 
@@ -500,38 +575,14 @@ export function useArchive(): {
         if (b.lastTimestamp == null) return -1;
         return b.lastTimestamp - a.lastTimestamp;
       });
+      inboxListRef.current = mergedInbox;
+      archivedListRef.current = archived;
+      requestsListRef.current = requests;
       setInboxList(mergedInbox);
       setArchivedList(archived);
       setRequestsList(requests);
-      
-      const sizeProgresses = [
-        { done: 0, total: mergedInbox.length },
-        { done: 0, total: archived.length },
-        { done: 0, total: requests.length }
-      ];
-      const totalSizeToCompute = mergedInbox.length + archived.length + requests.length;
-      if (totalSizeToCompute > 0) {
-        setSizeProgress({ done: 0, total: totalSizeToCompute });
-      }
-
-      const updateSizeProgress = (idx: number, done: number) => {
-        sizeProgresses[idx].done = done;
-        let sumDone = 0;
-        let sumTotal = 0;
-        for (const p of sizeProgresses) {
-          sumDone += p.done;
-          sumTotal += p.total;
-        }
-        if (sumDone === sumTotal) {
-          setSizeProgress(null);
-        } else {
-          setSizeProgress({ done: sumDone, total: sumTotal });
-        }
-      };
-
-      startLazySizeComputation(mergedInbox, setInboxList, (d) => updateSizeProgress(0, d), abortCtrl.signal);
-      startLazySizeComputation(archived, setArchivedList, (d) => updateSizeProgress(1, d), abortCtrl.signal);
-      startLazySizeComputation(requests, setRequestsList, (d) => updateSizeProgress(2, d), abortCtrl.signal);
+      sizeWorkPlanRef.current = { kind: 'facebook', rootHandle: messagesRoot, generation };
+      startBackgroundSizeWork();
       return true;
     } catch (e: unknown) {
       if (e instanceof Error && e.name !== 'AbortError') {
@@ -545,7 +596,7 @@ export function useArchive(): {
         setLoadProgress(null);
       }
     }
-  }, [getMessengerMediaSizeIndexForRoot, resumeSizeQueue, startLazySizeComputation]);
+  }, [startBackgroundSizeWork]);
 
   const openFolderWithWriteAccess = useCallback(async () => {
     setError(null);
@@ -659,6 +710,7 @@ export function useArchive(): {
         : undefined;
       for (const identity of removedMedia) mediaSizeIndex?.delete(identity);
       if (archiveGenerationRef.current !== generation) return;
+      deletedSizeEntryKeysRef.current.add(getSizeEntryKey(entry));
       setInboxList(prev => prev.filter(e => e.folderName !== entry.folderName));
       return;
     }
@@ -670,6 +722,7 @@ export function useArchive(): {
       'archived_threads';
     await deleteChatFs(rootHandle, subfolderName, entry.folderName);
     if (archiveGenerationRef.current !== generation) return;
+    deletedSizeEntryKeysRef.current.add(getSizeEntryKey(entry));
     if (entry.source === 'inbox' || entry.source === 'e2ee') {
       setInboxList(prev => prev.filter(e => e.folderName !== entry.folderName));
     } else if (entry.source === 'requests') {
@@ -677,7 +730,7 @@ export function useArchive(): {
     } else {
       setArchivedList(prev => prev.filter(e => e.folderName !== entry.folderName));
     }
-  }, [getMessengerReferenceIndex, rootHandle]);
+  }, [getMessengerReferenceIndex, getSizeEntryKey, rootHandle]);
 
   const deleteChats = useCallback(async (entries: ChatListEntry[], onProgress?: (done: number, total: number) => void) => {
     if (!rootHandle) throw new Error('No folder open');
@@ -711,6 +764,7 @@ export function useArchive(): {
             : undefined;
           for (const identity of removedMedia) mediaSizeIndex?.delete(identity);
           deletedEntries.push(entry);
+          deletedSizeEntryKeysRef.current.add(getSizeEntryKey(entry));
         } catch (err) {
           console.error(`Failed to delete ${entry.folderName}`, err);
         }
@@ -726,6 +780,7 @@ export function useArchive(): {
       try {
         await deleteChatFs(rootHandle, subfolderName, entry.folderName);
         deletedEntries.push(entry);
+        deletedSizeEntryKeysRef.current.add(getSizeEntryKey(entry));
       } catch (err) {
         console.error(`Failed to delete ${entry.folderName}`, err);
       }
@@ -739,7 +794,7 @@ export function useArchive(): {
     setRequestsList(prev => prev.filter(e => !wasDeleted(e)));
     setArchivedList(prev => prev.filter(e => !wasDeleted(e)));
     return deletedEntries;
-  }, [getMessengerReferenceIndex, rootHandle]);
+  }, [getMessengerReferenceIndex, getSizeEntryKey, rootHandle]);
 
   const updateFolderSize = useCallback((entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => {
     const applySize = (e: ChatListEntry) => e.folderName === entry.folderName
@@ -766,11 +821,20 @@ export function useArchive(): {
     }
 
     const key = getSizeEntryKey(entry);
+    const workSignal = sizeWorkLifecycleRef.current.signal;
     let sizePromise = sizeComputationPromisesRef.current.get(key);
     if (!sizePromise) {
-      sizePromise = (async () => {
+      if (sizeWorkLifecycleRef.current.suspended) throw new DOMException('Aborted', 'AbortError');
+      const signal = sizeWorkLifecycleRef.current.signal;
+      sizePromise = trackActiveSizeWork((async () => {
         if (entry._messengerExport) {
-          const mediaSizeIndex = await getMessengerMediaSizeIndex();
+          if (!rootHandle) throw new Error('No folder open');
+          const mediaSizeIndex = await getMessengerMediaSizeIndexForRoot(
+            rootHandle,
+            archiveGenerationRef.current,
+            signal
+          );
+          throwIfAborted(signal);
           const cached = messengerChatIndexRef.current;
           if (cached
             && cached.rootHandle === rootHandle
@@ -782,15 +846,21 @@ export function useArchive(): {
               mediaSizeIndex
             );
           }
-          return computeMessengerExportChatSize(entry.dirHandle, entry._jsonFileName!, mediaSizeIndex);
+          return computeMessengerExportChatSize(
+            entry.dirHandle,
+            entry._jsonFileName!,
+            mediaSizeIndex,
+            signal
+          );
         }
-        return computeFolderSize(entry.dirHandle);
-      })();
+        return computeFolderSize(entry.dirHandle, signal);
+      })());
       sizeComputationPromisesRef.current.set(key, sizePromise);
     }
 
     try {
       const size = await sizePromise;
+      throwIfAborted(workSignal);
       updateFolderSize(entry, size, entry._messengerExport ? true : undefined);
       return size;
     } finally {
@@ -798,10 +868,18 @@ export function useArchive(): {
         sizeComputationPromisesRef.current.delete(key);
       }
     }
-  }, [getCurrentEntry, getMessengerMediaSizeIndex, getSizeEntryKey, hasCompleteSize, rootHandle, updateFolderSize]);
+  }, [
+    getCurrentEntry,
+    getMessengerMediaSizeIndexForRoot,
+    getSizeEntryKey,
+    hasCompleteSize,
+    rootHandle,
+    trackActiveSizeWork,
+    updateFolderSize,
+  ]);
 
   return {
     rootHandle, originalRootHandle, inboxList, archivedList, requestsList,    loading, loadProgress, sizeProgress, error,
-    openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, setSizeQueuePaused, deleteChat, deleteChats, updateFolderSize,
+    openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, suspendSizeWork, resumeSizeWork, deleteChat, deleteChats, updateFolderSize,
   };
 }

@@ -258,19 +258,36 @@ export async function loadChatMessages(
 }
 
 
-export async function computeFolderSize(dirHandle: ReadableDirectoryHandle): Promise<number> {
+export async function computeFolderSize(
+  dirHandle: ReadableDirectoryHandle,
+  signal?: AbortSignal
+): Promise<number> {
+  throwIfAborted(signal);
   let total = 0;
   for await (const [, entry] of dirHandle.entries()) {
+    throwIfAborted(signal);
     if (entry.kind === 'file') {
       try {
+        throwIfAborted(signal);
         const file = await entry.getFile();
+        throwIfAborted(signal);
         total += file.size;
-      } catch { /* ignore */ }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        /* Ignore unreadable files. */
+      }
     } else if (entry.kind === 'directory') {
-      total += await computeFolderSize(entry);
+      total += await computeFolderSize(entry, signal);
     }
   }
+  throwIfAborted(signal);
   return total;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
 }
 
 

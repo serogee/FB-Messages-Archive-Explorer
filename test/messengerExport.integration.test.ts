@@ -16,6 +16,7 @@ import { processMessengerExportMedia } from '../src/services/messengerExport/mes
 import { buildReferenceIndexFromChatMedia } from '../src/services/messengerExport/messengerExportIndex';
 import {
   buildMessengerExportMediaSizeIndex,
+  computeMessengerExportChatSize,
   computeMessengerExportChatSizeFromIndex,
 } from '../src/services/messengerExport/messengerExportSize';
 import type { ChatListEntry } from '../src/types/messenger';
@@ -131,6 +132,32 @@ describe('Messenger export filesystem services', () => {
     expect(size).toBe(chatIndex.jsonSizes.get('chat_alice.json')! + 7);
     expect(info.jsonSize).toBe(chatIndex.jsonSizes.get('chat_alice.json'));
     expect(getFileHandle).not.toHaveBeenCalled();
+  });
+
+  it('does not return or cache a partial Messenger size after abort', async () => {
+    const root = messengerRoot();
+    const media = await root.getDirectoryHandle('media');
+    const photo = await media.getFileHandle('photo1.jpg');
+    const readPhoto = photo.getFile.bind(photo);
+    const abortController = new AbortController();
+    vi.spyOn(photo, 'getFile').mockImplementation(async () => {
+      abortController.abort();
+      return readPhoto();
+    });
+
+    await expect(buildMessengerExportMediaSizeIndex(
+      root,
+      abortController.signal
+    )).rejects.toMatchObject({ name: 'AbortError' });
+
+    const fallbackAbortController = new AbortController();
+    fallbackAbortController.abort();
+    await expect(computeMessengerExportChatSize(
+      root,
+      'chat_alice.json',
+      undefined,
+      fallbackAbortController.signal
+    )).rejects.toMatchObject({ name: 'AbortError' });
   });
 
   it('fails closed when a possible conversation cannot be indexed', async () => {

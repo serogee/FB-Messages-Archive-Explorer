@@ -11,6 +11,7 @@ interface DeleteConfirmModalProps {
   messengerDeletionInfo?: MessengerExportDeletionInfo | null;
   deletionInfoLoading?: boolean;
   deletionInfoSkipped?: boolean;
+  preparingDeletion?: boolean;
   deleting?: boolean;
 }
 
@@ -23,6 +24,7 @@ export function DeleteConfirmModal({
   messengerDeletionInfo,
   deletionInfoLoading,
   deletionInfoSkipped,
+  preparingDeletion,
   deleting,
 }: DeleteConfirmModalProps) {
   const isMultiple = Array.isArray(entry);
@@ -30,8 +32,9 @@ export function DeleteConfirmModal({
   const entries = isMultiple ? entry : [entry];
   const isMessenger = entries.some(e => e._messengerExport);
   const isDeleting = !!deleting || !!progress;
-  const canSkipCalculation = !!deletionInfoLoading && !isMessenger && !deletionInfoSkipped && !messengerDeletionInfo && !isDeleting;
-  const canConfirm = !isDeleting && (!!messengerDeletionInfo || !!deletionInfoSkipped);
+  const isBusy = !!preparingDeletion || isDeleting;
+  const canSkipCalculation = !!deletionInfoLoading && !isMessenger && !deletionInfoSkipped && !messengerDeletionInfo && !isBusy;
+  const canConfirm = !isBusy && (!!messengerDeletionInfo || !!deletionInfoSkipped);
   const pendingDetailText = deletionInfoSkipped ? 'Skipped' : 'Calculating...';
   const targetName = isMultiple
     ? `${entry.length} chats selected`
@@ -39,7 +42,7 @@ export function DeleteConfirmModal({
 
   return (
     <div className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
-      <div className="delete-backdrop" onClick={isDeleting ? undefined : onCancel} />
+      <div className="delete-backdrop" onClick={isBusy ? undefined : onCancel} />
       <div className="delete-card">
         <h3 id="deleteTitle">{title}</h3>
         <div className="delete-warning">
@@ -111,7 +114,7 @@ export function DeleteConfirmModal({
           </div>
         )}
         <div className="delete-actions">
-          {!isDeleting && (
+          {!isBusy && (
             <button className="btn btn-secondary" onClick={onCancel}>
               Cancel
             </button>
@@ -122,13 +125,15 @@ export function DeleteConfirmModal({
             id="deleteConfirmBtn"
             disabled={canSkipCalculation ? !onSkipCalculation : !canConfirm}
           >
-            {isDeleting
-              ? 'Deleting...'
-              : canSkipCalculation
-                ? 'Skip calculation'
-                : deletionInfoLoading && !messengerDeletionInfo
-                  ? 'Calculating...'
-                  : 'Delete permanently'}
+            {preparingDeletion
+              ? 'Preparing deletion...'
+              : isDeleting
+                ? 'Deleting...'
+                : canSkipCalculation
+                  ? 'Skip calculation'
+                  : deletionInfoLoading && !messengerDeletionInfo
+                    ? 'Calculating...'
+                    : 'Delete permanently'}
           </button>
         </div>
       </div>
