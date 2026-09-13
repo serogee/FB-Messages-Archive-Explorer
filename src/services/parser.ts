@@ -51,6 +51,22 @@ function normalizeDisplayEncoding(data: MessengerThread): MessengerThread {
       if (typeof msg.content === 'string') msg.content = fixEncoding(msg.content);
       if (typeof msg.text === 'string') msg.text = fixEncoding(msg.text);
       if (typeof msg.share?.share_text === 'string') msg.share.share_text = fixEncoding(msg.share.share_text);
+      const mediaKeys = ['photos', 'videos', 'audio', 'audio_files', 'gifs', 'files', 'media'] as const;
+      mediaKeys.forEach(key => {
+        const items = msg[key];
+        if (!Array.isArray(items)) return;
+        items.forEach(item => {
+          if (!item || typeof item !== 'object') return;
+          (['uri', 'filename', 'path', 'name'] as const).forEach(field => {
+            if (typeof item[field] === 'string') item[field] = fixEncoding(item[field]);
+          });
+        });
+      });
+      if (msg.sticker && typeof msg.sticker === 'object') {
+        (['uri', 'filename', 'path', 'name'] as const).forEach(field => {
+          if (typeof msg.sticker?.[field] === 'string') msg.sticker[field] = fixEncoding(msg.sticker[field]);
+        });
+      }
       if (Array.isArray(msg.reactions)) {
         msg.reactions.forEach(reaction => {
           if (!reaction || typeof reaction !== 'object') return;

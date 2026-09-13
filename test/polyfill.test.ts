@@ -1,9 +1,21 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from 'vitest';
 import { resolveFacebookMessagesRoot } from '../src/services/fileSystem';
 import { isMessengerExport } from '../src/services/messengerExport/messengerExportDetector';
-import { createVirtualFileSystem } from '../src/services/polyfill';
+import { createVirtualFileSystem, openFolderPolyfill } from '../src/services/polyfill';
 import { isWritableDirectoryHandle } from '../src/types/fileSystem';
 import { createMockDirectoryHandle } from './helpers/mockFileSystem';
+
+if (!File.prototype.text) {
+  File.prototype.text = function text() {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(this);
+    });
+  };
+}
 
 function folderUploadFile(path: string, content = '{}'): File {
   const fileName = path.split('/').pop() || 'file';
@@ -51,5 +63,35 @@ describe('folder-upload filesystem fallback', () => {
 
     expect(isWritableDirectoryHandle(fallbackRoot)).toBe(false);
     expect(isWritableDirectoryHandle(nativeRoot)).toBe(true);
+  });
+
+  it('rejects duplicate, colliding, and malformed uploaded paths', () => {
+    expect(() => createVirtualFileSystem([
+      folderUploadFile('export/messages/item.json'),
+      folderUploadFile('export/messages/item.json'),
+    ])).toThrow(/collision/i);
+    expect(() => createVirtualFileSystem([
+      folderUploadFile('export/messages'),
+      folderUploadFile('export/messages/item.json'),
+    ])).toThrow(/collision/i);
+    expect(() => createVirtualFileSystem([
+      folderUploadFile('export/../item.json'),
+    ])).toThrow(/invalid uploaded file path/i);
+  });
+
+  it('rejects a picker change that has no files', async () => {
+    const input = {
+      type: '',
+      multiple: false,
+      webkitdirectory: false,
+      onchange: null as ((event: Event) => void) | null,
+      setAttribute: vi.fn(),
+      click() {
+        this.onchange?.({ target: { files: null } } as unknown as Event);
+      },
+    };
+    vi.spyOn(document, 'createElement').mockReturnValue(input as unknown as HTMLInputElement);
+
+    await expect(openFolderPolyfill()).rejects.toThrow('No files selected');
   });
 });

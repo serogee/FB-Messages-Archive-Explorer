@@ -41,6 +41,59 @@ describe('audio metadata', () => {
     expect(getFile).toHaveBeenCalledOnce();
     expect(instances[0]).toMatchObject({ removed: true, loadCalls: 1 });
   });
+
+  it('returns null duration and releases the source when metadata times out', async () => {
+    vi.useFakeTimers();
+    class SilentAudio {
+      preload = '';
+      duration = Number.NaN;
+      onloadedmetadata: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      removed = false;
+      loadCalls = 0;
+      set src(_value: string) { /* The browser never reports metadata or an error. */ }
+      removeAttribute(name: string) { if (name === 'src') this.removed = true; }
+      load() { this.loadCalls++; }
+    }
+    const instances: SilentAudio[] = [];
+    vi.stubGlobal('Audio', class extends SilentAudio { constructor() { super(); instances.push(this); } });
+    const entry: MediaEntry = {
+      type: 'audio',
+      url: 'blob:silent-audio',
+      handle: { kind: 'file', name: 'silent.m4a', getFile: async () => new File(['x'], 'silent.m4a') },
+    };
+
+    const request = getAudioMetadata(entry);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(request).resolves.toEqual({ duration: null, size: 1 });
+    expect(instances[0]).toMatchObject({ removed: true, loadCalls: 1 });
+    vi.useRealTimers();
+  });
+
+  it('returns null duration and releases the source after an audio metadata error', async () => {
+    class ErrorAudio {
+      preload = '';
+      duration = Number.NaN;
+      onloadedmetadata: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      removed = false;
+      loadCalls = 0;
+      set src(_value: string) { queueMicrotask(() => this.onerror?.()); }
+      removeAttribute(name: string) { if (name === 'src') this.removed = true; }
+      load() { this.loadCalls++; }
+    }
+    const instances: ErrorAudio[] = [];
+    vi.stubGlobal('Audio', class extends ErrorAudio { constructor() { super(); instances.push(this); } });
+    const entry: MediaEntry = {
+      type: 'audio',
+      url: 'blob:error-audio',
+      handle: { kind: 'file', name: 'error.m4a', getFile: async () => new File(['x'], 'error.m4a') },
+    };
+
+    await expect(getAudioMetadata(entry)).resolves.toEqual({ duration: null, size: 1 });
+    expect(instances[0]).toMatchObject({ removed: true, loadCalls: 1 });
+  });
 });
 
 describe('reaction enrichment', () => {

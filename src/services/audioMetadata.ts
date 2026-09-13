@@ -9,6 +9,7 @@ export interface AudioMetadata {
 
 const metadataCache = new WeakMap<MediaEntry, AudioMetadata>();
 const pendingMetadata = new WeakMap<MediaEntry, Promise<AudioMetadata>>();
+const AUDIO_METADATA_TIMEOUT_MS = 10_000;
 
 async function readDuration(entry: MediaEntry): Promise<number | null> {
   const url = await blobCache.getOrCreate(entry);
@@ -16,7 +17,11 @@ async function readDuration(entry: MediaEntry): Promise<number | null> {
 
   return new Promise(resolve => {
     const audio = new Audio();
+    let settled = false;
     const finish = (duration: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
       audio.onloadedmetadata = null;
       audio.onerror = null;
       audio.removeAttribute('src');
@@ -26,6 +31,7 @@ async function readDuration(entry: MediaEntry): Promise<number | null> {
     audio.preload = 'metadata';
     audio.onloadedmetadata = () => finish(Number.isFinite(audio.duration) ? audio.duration : null);
     audio.onerror = () => finish(null);
+    const timeout = setTimeout(() => finish(null), AUDIO_METADATA_TIMEOUT_MS);
     audio.src = url;
   });
 }

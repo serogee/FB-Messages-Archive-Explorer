@@ -24,6 +24,25 @@ const LONG_ATTACHMENT_FILENAME_LENGTH = 180;
 const ALPHANUMERIC_CHARACTER = /^[\p{L}\p{N}]$/u;
 const SAFE_FILENAME_CHARACTER = /^[\p{L}\p{N} _-]$/u;
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+export const CLASSIC_ZIP_MAX_ENTRIES = 0xffff;
+export const CLASSIC_ZIP_MAX_VALUE = 0xffffffff;
+
+export function assertClassicZipLimits(
+  entryCount: number,
+  centralDirectorySize: number,
+  centralDirectoryOffset: number,
+): void {
+  if (entryCount > CLASSIC_ZIP_MAX_ENTRIES) {
+    throw new Error('ZIP output supports at most 65,535 files. Select fewer attachments.');
+  }
+  if (
+    centralDirectorySize > CLASSIC_ZIP_MAX_VALUE
+    || centralDirectoryOffset > CLASSIC_ZIP_MAX_VALUE
+    || centralDirectoryOffset + centralDirectorySize + 22 > CLASSIC_ZIP_MAX_VALUE
+  ) {
+    throw new Error('ZIP output supports at most 4 GiB. Select fewer or smaller attachments.');
+  }
+}
 
 function truncate(value: string, maxLength: number): string {
   return Array.from(value).slice(0, maxLength).join('');
@@ -269,6 +288,10 @@ export async function downloadAsZip(
       continue;
     }
 
+    if (fileRecords.length >= CLASSIC_ZIP_MAX_ENTRIES) {
+      assertClassicZipLimits(fileRecords.length + 1, 0, currentOffset);
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const data = new Uint8Array(arrayBuffer);
     const crc = crc32(data);
@@ -311,6 +334,7 @@ export async function downloadAsZip(
     });
 
     currentOffset += headerBytes.length + data.length;
+    assertClassicZipLimits(fileRecords.length, 0, currentOffset);
     done++;
     onProgress(done, total);
   }
@@ -345,10 +369,12 @@ export async function downloadAsZip(
     cdBytes.set(record.nameBytes, 46);
     chunks.push(cdBytes);
     cdSize += cdBytes.length;
+    assertClassicZipLimits(fileRecords.length, cdSize, cdOffset);
   }
 
   // 3. End of Central Directory
   const eocd = new ArrayBuffer(22);
+  assertClassicZipLimits(fileRecords.length, cdSize, cdOffset);
   const viewEocd = new DataView(eocd);
   viewEocd.setUint32(0, 0x06054b50, true); // Signature
   viewEocd.setUint16(4, 0, true);          // Disk number

@@ -97,6 +97,8 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 - Browse all attachments in a filterable gallery (photos, videos, audio, GIFs, files)
 - Select attachments and save them to a folder (Chromium browsers) or download as a ZIP file (all browsers)
 
+ZIP downloads support at most 65,535 files and 4 GiB. In Chromium browsers, use **Save to folder** for a larger selection.
+
 **Customization**
 
 - Choose which participant's messages appear on the right ("View perspective")

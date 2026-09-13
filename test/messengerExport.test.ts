@@ -66,4 +66,29 @@ describe('Messenger export parser and detector', () => {
 
     expect(getMessengerExportLastMessage(thread)?.text).toBe('dated');
   });
+
+  it('repairs encoded Messenger export display fields', () => {
+    const thread = parseMessengerExportJson(JSON.stringify({
+      threadName: 'Caf\u00c3\u00a9',
+      participants: ['Andr\u00c3\u00a9'],
+      messages: [{
+        senderName: 'Zo\u00c3\u00ab',
+        text: 'Ol\u00c3\u00a1',
+        timestamp: 1,
+        share: { share_text: 'R\u00c3\u00a9sum\u00c3\u00a9' },
+        reactions: [{ actor: 'Andr\u00c3\u00a9', reaction: '\u00f0\u009f\u0091\u008d' }],
+        media: [{ uri: 'media/caf\u00c3\u00a9.jpg' }],
+      }],
+    }));
+
+    expect(thread.title).toBe('Caf\u00e9');
+    expect(thread.participants[0].name).toBe('Andr\u00e9');
+    expect(thread.messages[0]).toMatchObject({
+      senderName: 'Zo\u00eb',
+      text: 'Ol\u00e1',
+      share: { share_text: 'R\u00e9sum\u00e9' },
+      reactions: [{ actor: 'Andr\u00e9', reaction: '\ud83d\udc4d' }],
+      media: [{ uri: 'media/caf\u00e9.jpg' }],
+    });
+  });
 });

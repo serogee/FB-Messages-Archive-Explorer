@@ -41,8 +41,11 @@ export function createMediaState(): MediaState {
     files: {},
     types: {},
     lookup: new Map(),
+    basenameLookup: new Map(),
+    basenamePaths: new Map(),
     pathIndex: new Set(),
     basenameIndex: new Set(),
+    ambiguousBasenames: new Set(),
     mediaFileCount: 0,
   };
 }
@@ -60,9 +63,17 @@ export function addMediaToIndex(
     state.lookup.set(normalizedPath, entry);
   }
   if (basename) {
-    state.basenameIndex.add(basename);
-    if (!state.lookup.has(basename)) {
-      state.lookup.set(basename, entry);
+    const existingPath = state.basenamePaths.get(basename);
+    const existingEntry = state.basenameLookup.get(basename);
+    if (existingPath && existingPath !== normalizedPath && existingEntry !== entry) {
+      state.basenamePaths.delete(basename);
+      state.basenameLookup.delete(basename);
+      state.basenameIndex.delete(basename);
+      state.ambiguousBasenames.add(basename);
+    } else if (!state.ambiguousBasenames.has(basename) && !existingPath) {
+      state.basenamePaths.set(basename, normalizedPath);
+      state.basenameLookup.set(basename, entry);
+      state.basenameIndex.add(basename);
     }
   }
 }
@@ -79,7 +90,7 @@ export function isMediaReferenceFound(state: MediaState, path: string): boolean 
 export function findMediaFile(state: MediaState, path: string): MediaEntry | null {
   const normalizedPath = normalizeMediaPath(path);
   const basename = getMediaBasename(path);
-  return state.lookup.get(normalizedPath) || state.lookup.get(basename) || null;
+  return state.lookup.get(normalizedPath) || state.basenameLookup.get(basename) || null;
 }
 
 export function revokeAllMedia(state: MediaState): void {
@@ -94,8 +105,11 @@ export function revokeAllMedia(state: MediaState): void {
   state.files = {};
   state.types = {};
   state.lookup = new Map();
+  state.basenameLookup = new Map();
+  state.basenamePaths = new Map();
   state.pathIndex = new Set();
   state.basenameIndex = new Set();
+  state.ambiguousBasenames = new Set();
   state.mediaFileCount = 0;
 }
 

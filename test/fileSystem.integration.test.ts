@@ -73,6 +73,8 @@ describe('Facebook archive filesystem services', () => {
       jsonFileCount: 2,
       source: 'inbox',
     });
+    expect(entries[0]._messengerExport).toBeUndefined();
+    expect(entries[0]._jsonFileName).toBeUndefined();
   });
 
   it('returns an empty list for missing sections', async () => {

@@ -27,11 +27,8 @@ export async function isMessengerExport(handle: ReadableDirectoryHandle): Promis
     return false;
   } catch { /* No Facebook root markers found; inspect standalone Messenger JSON. */ }
 
-  let checked = 0;
   for await (const [name, entry] of handle.entries()) {
     if (entry.kind !== 'file' || !/\.json$/i.test(name)) continue;
-    if (checked >= 3) break;
-    checked++;
 
     try {
       const file = await entry.getFile();

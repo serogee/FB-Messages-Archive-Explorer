@@ -58,23 +58,38 @@ describe('bookmark hook lifecycle', () => {
     expect(result.current.error).toBeNull();
   });
 
-  it('discards loaded pins and late state when the archive root changes', async () => {
-    const pinRoot = createMockDirectoryHandle('pin-chat', {});
-    const pin = createPinnedChatBookmark(chat(pinRoot));
+  it('discards bookmark state that loads after the archive root changes', async () => {
+    const firstPinRoot = createMockDirectoryHandle('first-pin', {});
+    const secondPinRoot = createMockDirectoryHandle('second-pin', {});
+    const firstPin = createPinnedChatBookmark(chat(firstPinRoot, 'first-chat'));
+    const secondPin = createPinnedChatBookmark(chat(secondPinRoot, 'second-chat'));
     const first = createMockDirectoryHandle('first', {
       'fb-mae': { 'bookmarks.json': JSON.stringify({
-        version: 2, bookmarks: [], pinnedChats: [pin],
+        version: 2, bookmarks: [], pinnedChats: [firstPin],
       }) },
     });
-    const second = createMockDirectoryHandle('second', {});
+    const second = createMockDirectoryHandle('second', {
+      'fb-mae': { 'bookmarks.json': JSON.stringify({
+        version: 2, bookmarks: [], pinnedChats: [secondPin],
+      }) },
+    });
+    const firstFileHandle = await (await first.getDirectoryHandle('fb-mae')).getFileHandle('bookmarks.json');
+    const firstFile = await firstFileHandle.getFile();
+    let releaseFirstLoad!: (file: File) => void;
+    const firstLoad = new Promise<File>(resolve => { releaseFirstLoad = resolve; });
+    const getFirstFile = vi.spyOn(firstFileHandle, 'getFile').mockReturnValue(firstLoad);
     const { result, rerender } = renderHook(
       ({ root }) => useBookmarks(root),
       { initialProps: { root: first as FileSystemDirectoryHandle } },
     );
-    await waitFor(() => expect(result.current.pinnedChats).toHaveLength(1));
+    await waitFor(() => expect(getFirstFile).toHaveBeenCalledOnce());
 
     rerender({ root: second });
-    await waitFor(() => expect(result.current.pinnedChats).toEqual([]));
+    await waitFor(() => expect(result.current.pinnedChats.map(pin => pin.chat.folderName)).toEqual(['second-chat']));
+    await act(async () => { releaseFirstLoad(firstFile); });
+
+    expect(result.current.pinnedChats.map(pin => pin.chat.folderName)).toEqual(['second-chat']);
     expect(result.current.error).toBeNull();
+    expect(result.current.busy).toBe(false);
   });
 });

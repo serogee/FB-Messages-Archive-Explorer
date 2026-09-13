@@ -358,10 +358,18 @@ export function SelectionPanel({
               if (item.category === 'links') {
                 const hostname = getLinkHostname(item);
                 return (
-                  <button
+                  <div
                     key={`links:${item.messageIndex}:${item.url}`}
                     className="gallery-thumb gallery-link-card selection-link-card selected"
                     onClick={() => onDeselect(item)}
+                    onKeyDown={event => {
+                      if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                        event.preventDefault();
+                        onDeselect(item);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                     title={item.url}
                   >
                     <div className="select-checkbox"><Check size={14} /></div>
@@ -392,7 +400,7 @@ export function SelectionPanel({
                     >
                       <Info size={15} />
                     </button>
-                  </button>
+                  </div>
                 );
               }
 
@@ -402,10 +410,18 @@ export function SelectionPanel({
               const cat = att.category;
 
               return (
-                <button
+                <div
                   key={key}
                   className={`gallery-thumb ${cat === 'audio' || cat === 'files' ? 'gallery-thumb-file' : ''} ${cat === 'stickers' ? 'gallery-thumb-sticker' : ''} selected`}
                   onClick={() => onDeselect(att)}
+                  onKeyDown={event => {
+                    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault();
+                      onDeselect(att);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
                   title={basename}
                 >
                   <div className="select-checkbox"><Check size={14} /></div>
@@ -457,7 +473,7 @@ export function SelectionPanel({
                   >
                     <Info size={15} />
                   </button>
-                </button>
+                </div>
               );
             })}
           </div>
