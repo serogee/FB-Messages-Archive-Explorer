@@ -117,4 +117,17 @@ describe('image thumbnail cache', () => {
     expect(started).toEqual([blocker, current]);
     expect(received).toEqual(['blob:current']);
   });
+
+  it('retries a transient thumbnail failure instead of negatively caching it', async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('blob:retry');
+    const cache = new ImageThumbnailCache(2, 1, create);
+    const media = entry();
+
+    await expect(cache.getOrCreate(media)).resolves.toBeNull();
+    await expect(cache.getOrCreate(media)).resolves.toBe('blob:retry');
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(cache.get(media)).toBe('blob:retry');
+  });
 });

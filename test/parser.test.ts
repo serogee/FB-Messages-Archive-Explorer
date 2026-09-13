@@ -82,4 +82,37 @@ describe('parser service', () => {
     expect(sanitizeFileName('')).toBe('conversation');
     expect(sanitizeFileName('a'.repeat(200))).toHaveLength(140);
   });
+
+  it('rejects truncated Facebook JSON instead of returning partial conversation data', () => {
+    expect(() => parseMessengerJsonContent('{"title":"Partial"')).toThrow(SyntaxError);
+  });
+
+  it('repairs display encoding across people, shares, reactions, and attachment names', () => {
+    const parsed = parseMessengerJsonContent(JSON.stringify({
+      title: 'Caf\u00c3\u00a9 chat',
+      thread_path: 'inbox/caf\u00c3\u00a9',
+      participants: [{ name: 'Andr\u00c3\u00a9' }],
+      messages: [{
+        sender_name: 'Zo\u00c3\u00ab',
+        timestamp_ms: 1,
+        content: 'Ol\u00c3\u00a1',
+        share: { link: 'https://example.com', share_text: 'R\u00c3\u00a9sum\u00c3\u00a9' },
+        reactions: [{ actor: 'Andr\u00c3\u00a9', reaction: '\u00f0\u009f\u0091\u008d' }],
+        files: [{ uri: 'files/caf\u00c3\u00a9.txt' }],
+      }],
+    }));
+
+    expect(parsed).toMatchObject({
+      title: 'Caf\u00e9 chat',
+      thread_path: 'inbox/caf\u00e9',
+      participants: [{ name: 'Andr\u00e9' }],
+    });
+    expect(parsed.messages[0]).toMatchObject({
+      sender_name: 'Zo\u00eb',
+      content: 'Ol\u00e1',
+      share: { share_text: 'R\u00e9sum\u00e9' },
+      reactions: [{ actor: 'Andr\u00e9', reaction: '\ud83d\udc4d' }],
+      files: [{ uri: 'files/caf\u00e9.txt' }],
+    });
+  });
 });

@@ -73,11 +73,30 @@ describe('Facebook archive filesystem services', () => {
       jsonFileCount: 2,
       source: 'inbox',
     });
+    expect(entries[0]._messengerExport).toBeUndefined();
+    expect(entries[0]._jsonFileName).toBeUndefined();
   });
 
   it('returns an empty list for missing sections', async () => {
     const root = createMockDirectoryHandle('messages', {});
     await expect(listChatFolders(root, 'inbox', 'inbox')).resolves.toEqual([]);
+  });
+
+  it('skips malformed and unreadable Facebook conversations without hiding valid siblings', async () => {
+    const root = createMockDirectoryHandle('messages', {
+      inbox: {
+        malformed: { 'message_1.json': '{' },
+        valid: { 'message_1.json': JSON.stringify({
+          title: 'Valid', thread_path: 'inbox/valid', participants: [{ name: 'Alice' }],
+          messages: [{ sender_name: 'Alice', timestamp_ms: 1, content: 'visible' }],
+        }) },
+        missing_first_part: { 'message_2.json': JSON.stringify({ messages: [] }) },
+      },
+    });
+
+    const entries = await listChatFolders(root, 'inbox', 'inbox');
+
+    expect(entries.map(entry => entry.title)).toEqual(['Valid']);
   });
 
   it('indexes Facebook media directories', async () => {

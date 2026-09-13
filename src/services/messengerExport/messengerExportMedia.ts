@@ -68,8 +68,6 @@ export async function processMessengerExportMedia(
 
         state.types[normalizedPath] = type;
         addMediaToIndex(state, normalizedPath, entry);
-        addMediaToIndex(state, `./${normalizedPath}`, entry);
-        addMediaToIndex(state, handle.name, entry);
       } catch { /* ignore individual media failures */ }
 
     }));

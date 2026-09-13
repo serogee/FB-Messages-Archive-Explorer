@@ -160,8 +160,11 @@ export interface MediaState {
   files: Record<string, string>;
   types: Record<string, string>;
   lookup: Map<string, MediaEntry>;
+  basenameLookup: Map<string, MediaEntry>;
+  basenamePaths: Map<string, string>;
   pathIndex: Set<string>;
   basenameIndex: Set<string>;
+  ambiguousBasenames: Set<string>;
   /** Number of physical files discovered, excluding lookup aliases. */
   mediaFileCount: number;
 }

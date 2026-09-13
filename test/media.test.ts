@@ -155,4 +155,30 @@ describe('media service', () => {
     expect(findMediaFile(state, 'photos/photo.jpg')).toBe(entry);
     expect(findMediaFile(state, 'photo.jpg')).toBe(entry);
   });
+
+  it('uses full paths and fails closed for an ambiguous basename', () => {
+    const state = createMediaState();
+    const first: MediaEntry = { type: 'image' };
+    const second: MediaEntry = { type: 'video' };
+
+    addMediaToIndex(state, 'photos/shared.bin', first);
+    addMediaToIndex(state, 'videos/shared.bin', second);
+
+    expect(findMediaFile(state, 'photos/shared.bin')).toBe(first);
+    expect(findMediaFile(state, 'videos/shared.bin')).toBe(second);
+    expect(findMediaFile(state, 'shared.bin')).toBeNull();
+    expect(findMediaFile(state, 'other/shared.bin')).toBeNull();
+    expect(isMediaReferenceFound(state, 'other/shared.bin')).toBe(false);
+  });
+
+  it('does not treat two paths for the same media entry as ambiguous', () => {
+    const state = createMediaState();
+    const entry: MediaEntry = { type: 'image' };
+
+    addMediaToIndex(state, 'photos/photo.jpg', entry);
+    addMediaToIndex(state, 'alternate/photo.jpg', entry);
+
+    expect(findMediaFile(state, 'photo.jpg')).toBe(entry);
+    expect(state.ambiguousBasenames).toEqual(new Set());
+  });
 });

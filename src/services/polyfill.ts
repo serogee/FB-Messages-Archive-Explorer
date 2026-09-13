@@ -58,6 +58,9 @@ export class VirtualDirectoryHandle implements ReadableDirectoryHandle {
   }
 
   addChild(name: string, handle: VirtualFileHandle | VirtualDirectoryHandle) {
+    if (!name || name === '.' || name === '..' || this.children.has(name)) {
+      throw new Error(`Path collision or invalid path segment: ${name || '(empty)'}`);
+    }
     this.children.set(name, handle);
   }
 }
@@ -69,8 +72,13 @@ export function createVirtualFileSystem(files: FileList | File[]): ReadableDirec
     const file = files[i];
     // Folder uploads include the selected directory name; native handles expose its contents.
     const relativePath = file.webkitRelativePath;
-    const parts = (relativePath || file.name).split('/').filter(Boolean);
+    const rawParts = (relativePath || file.name).split('/');
+    if (rawParts.some(part => !part || part === '.' || part === '..')) {
+      throw new Error(`Invalid uploaded file path: ${relativePath || file.name}`);
+    }
+    const parts = rawParts;
     if (relativePath && parts.length > 1) parts.shift();
+    if (parts.length === 0) throw new Error(`Invalid uploaded file path: ${relativePath || file.name}`);
     
     let currentDir = root;
     

@@ -56,7 +56,13 @@ function categorizeMediaItem(item: MediaItem): 'photos' | 'videos' | 'audio' | '
 
 function normalizeMediaItems(items: MediaItem[] | undefined): MediaItem[] {
   if (!Array.isArray(items)) return [];
-  return items.filter(item => {
+  return items.map(item => {
+    const normalized = { ...item };
+    (['uri', 'filename', 'path', 'name'] as const).forEach(field => {
+      if (typeof normalized[field] === 'string') normalized[field] = fixEncoding(normalized[field]);
+    });
+    return normalized;
+  }).filter(item => {
     const path = String(item?.uri || item?.filename || item?.path || item?.name || '');
     return !!path && isUsableMediaUri(path);
   });
