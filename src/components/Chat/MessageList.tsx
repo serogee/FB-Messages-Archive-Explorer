@@ -106,8 +106,10 @@ function getChunksAndHeights(chatData: MessengerThread) {
 }
 
 function formatSeparatorDate(ts: number): string {
-  return new Date(ts).toLocaleString([], {
+  const date = new Date(ts);
+  return date.toLocaleString([], {
     weekday: 'short', month: 'short', day: 'numeric',
+    ...(date.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}),
     hour: '2-digit', minute: '2-digit'
   });
 }

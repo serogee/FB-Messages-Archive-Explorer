@@ -116,7 +116,7 @@ interface MessageBubbleProps {
 }
 
 function formatTimestamp(ts: number): string {
-  return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+  return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function getReactionTimeText(ts: number): string {
