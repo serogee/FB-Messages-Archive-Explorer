@@ -8,7 +8,7 @@ export function DisableOfflineModal({ busy, onCancel, onDisable }: DisableOfflin
   return (
     <div className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="disableOfflineTitle">
       <div className="delete-backdrop" onClick={busy ? undefined : onCancel} />
-      <div className="delete-card">
+      <div className="confirmation-card">
         <h3 id="disableOfflineTitle">Disable offline support?</h3>
         <div className="delete-warning">
           <strong>The cached copy of this app will be deleted.</strong>
