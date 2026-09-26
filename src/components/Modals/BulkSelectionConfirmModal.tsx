@@ -21,7 +21,7 @@ export function BulkSelectionConfirmModal({ count, action, onConfirm, onCancel }
   return (
     <div className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="bulkSelectionTitle">
       <div className="delete-backdrop" onClick={onCancel} />
-      <div className="delete-card">
+      <div className="confirmation-card">
         <h3 id="bulkSelectionTitle">
           {isDeselecting ? 'Unselect' : 'Select'} {count.toLocaleString()} items?
         </h3>

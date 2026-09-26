@@ -7,7 +7,7 @@ export function EnableDeletionModal({ onConfirm, onCancel }: EnableDeletionModal
   return (
     <div className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="enableDelTitle">
       <div className="delete-backdrop" onClick={onCancel} />
-      <div className="delete-card">
+      <div className="confirmation-card">
         <h3 id="enableDelTitle">Enable chat deletion?</h3>
         <div className="delete-warning">
           <strong>This lets you choose chat folders to delete from your storage.</strong>
