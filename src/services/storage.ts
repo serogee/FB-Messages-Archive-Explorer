@@ -93,6 +93,10 @@ export function formatRelativeTime(timestamp: number): string {
   const now = Date.now();
   const diff = now - timestamp;
   if (diff < 0) return 'just now';
+  const date = new Date(timestamp);
+  if (date.getFullYear() !== new Date(now).getFullYear()) {
+    return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+  }
   const seconds = Math.floor(diff / 1000);
   if (seconds < 60) return 'just now';
   const minutes = Math.floor(seconds / 60);
@@ -102,5 +106,5 @@ export function formatRelativeTime(timestamp: number): string {
   const days = Math.floor(hours / 24);
   if (days < 14) return `${days}d ago`;
   if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  return new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
