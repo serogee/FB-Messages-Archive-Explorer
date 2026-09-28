@@ -45,7 +45,7 @@ export function TrustModal({ settings, setSetting }: TrustModalProps) {
         <div className="trust-body">
           <p>
             This tool runs entirely in your browser. <strong>No data is uploaded anywhere.</strong>{' '}
-            Your Facebook archive files stay on your device.
+            Your archive files stay on your device.
           </p>
           <p>
             To view your messages, you'll be asked to grant this page read access to a folder on
