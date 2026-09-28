@@ -503,7 +503,7 @@ export function useArchive(): {
       if (!messagesRoot) {
         const messengerExport = await isMessengerExport(handle);
         if (!messengerExport) {
-          throw new Error("Could not find messages in this folder. Make sure you selected an extracted Facebook archive or Messenger export.");
+          throw new Error("Could not find messages in this folder. Make sure you selected an extracted Facebook, Instagram, or Messenger export in JSON format.");
         }
 
         isMessengerExportRef.current = true;
