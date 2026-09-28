@@ -5,10 +5,11 @@ import {
   listChatFolders,
   resolveFacebookMessagesRoot,
 } from '../src/services/fileSystem';
-import { createMediaState, findMediaFile, processMediaFromDirectory } from '../src/services/media';
+import { createMediaState, findMediaFile, processMediaFromDirectory, resolveMessageMediaItems } from '../src/services/media';
+import { parseMessengerJsonContent } from '../src/services/parser';
 import { createMockDirectoryHandle } from './helpers/mockFileSystem';
 
-describe('Facebook archive filesystem services', () => {
+describe('Facebook and Instagram archive filesystem services', () => {
   it('resolves every documented Facebook messages root layout', async () => {
     const selectedMessages = createMockDirectoryHandle('messages', { inbox: {} });
     const exportRoot = createMockDirectoryHandle('facebook-export', { messages: { inbox: {} } });
@@ -32,14 +33,80 @@ describe('Facebook archive filesystem services', () => {
     await expect(resolveFacebookMessagesRoot(root)).resolves.toBe(root);
   });
 
-  it('rejects undocumented and invalid archive layouts', async () => {
-    const instagramRoot = createMockDirectoryHandle('instagram-export', {
+  it('resolves Instagram messages from the export, activity, or messages directory', async () => {
+    const exportRoot = createMockDirectoryHandle('instagram-export', {
       your_instagram_activity: { messages: { inbox: {} } },
+    });
+    const activity = await exportRoot.getDirectoryHandle('your_instagram_activity');
+    const messages = await activity.getDirectoryHandle('messages');
+
+    for (const selected of [exportRoot, activity, messages]) {
+      await expect(resolveFacebookMessagesRoot(selected)).resolves.toBe(messages);
+    }
+  });
+
+  it('accepts an Instagram archive containing only message requests', async () => {
+    const exportRoot = createMockDirectoryHandle('instagram-export', {
+      your_instagram_activity: { messages: { message_requests: {} } },
+    });
+    const activity = await exportRoot.getDirectoryHandle('your_instagram_activity');
+    const messages = await activity.getDirectoryHandle('messages');
+
+    await expect(resolveFacebookMessagesRoot(exportRoot)).resolves.toBe(messages);
+  });
+
+  it('rejects undocumented and invalid archive layouts', async () => {
+    const undocumentedRoot = createMockDirectoryHandle('unknown-export', {
+      unknown_activity: { messages: { inbox: {} } },
     });
     const invalidRoot = createMockDirectoryHandle('invalid', { messages: {} });
 
-    await expect(resolveFacebookMessagesRoot(instagramRoot)).resolves.toBeNull();
+    await expect(resolveFacebookMessagesRoot(undocumentedRoot)).resolves.toBeNull();
     await expect(resolveFacebookMessagesRoot(invalidRoot)).resolves.toBeNull();
+  });
+
+  it('loads Instagram requests, reactions, shared links, and export-relative media with the shared importer', async () => {
+    const mediaPrefix = 'your_instagram_activity/messages/message_requests/alice_chat';
+    const root = createMockDirectoryHandle('messages', {
+      message_requests: {
+        alice_chat: {
+          'message_1.json': JSON.stringify({
+            title: 'Alice',
+            thread_path: 'message_requests/alice_chat',
+            participants: [{ name: 'Alice' }, { name: 'Bob' }],
+            messages: [
+              {
+                sender_name: 'Alice', timestamp_ms: 20, content: 'Shared a post',
+                reactions: [{ actor: 'Bob', reaction: '❤' }],
+                share: { link: 'https://www.instagram.com/p/example/', share_text: 'A post', original_content_owner: 'Example' },
+                photos: [{ uri: `${mediaPrefix}/photos/photo.jpg`, creation_timestamp: 1 }],
+                videos: [{ uri: `${mediaPrefix}/videos/clip.mp4` }],
+                audio_files: [{ uri: `${mediaPrefix}/audio/voice.mp4`, creation_timestamp: 1 }],
+              },
+              { sender_name: 'Bob', timestamp_ms: 10, content: 'Hello' },
+            ],
+          }),
+          photos: { 'photo.jpg': new Uint8Array([1]) },
+          videos: { 'clip.mp4': new Uint8Array([2]) },
+          audio: { 'voice.mp4': new Uint8Array([3]) },
+        },
+      },
+    });
+
+    const entries = await listChatFolders(root, 'message_requests', 'requests');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ title: 'Alice', source: 'requests', messageCount: 2, lastMessage: 'Shared a post' });
+    const fileHandle = await entries[0].dirHandle.getFileHandle('message_1.json');
+    const thread = parseMessengerJsonContent(await (await fileHandle.getFile()).text());
+    expect(thread.messages.map(message => message.timestamp_ms)).toEqual([10, 20]);
+    expect(thread.messages[1].reactions).toEqual([{ actor: 'Bob', reaction: '❤' }]);
+    expect(thread.messages[1].share).toMatchObject({ link: 'https://www.instagram.com/p/example/', share_text: 'A post' });
+
+    const mediaState = createMediaState();
+    await processMediaFromDirectory(entries[0].dirHandle, mediaState);
+    const resolved = resolveMessageMediaItems(thread.messages[1], mediaState);
+    expect(resolved.map(item => item.mediaType)).toEqual(['image', 'video', 'audio']);
+    expect(resolved.every(item => item.mediaFile?.handle)).toBe(true);
   });
 
   it('lists chat folders from a Facebook inbox', async () => {

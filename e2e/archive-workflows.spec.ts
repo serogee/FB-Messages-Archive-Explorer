@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-async function installArchive(page: Page, format: 'facebook' | 'messenger', failMessengerMediaOnce = false) {
+async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'messenger', failMessengerMediaOnce = false) {
   await page.addInitScript(({ selectedFormat, shouldFailMessengerMediaOnce }) => {
     let failBlockedMedia = shouldFailMessengerMediaOnce;
     const makeFile = (name: string, initialContents: string | number[], persistKey?: string) => {
@@ -81,7 +81,13 @@ async function installArchive(page: Page, format: 'facebook' | 'messenger', fail
             thread_path: 'inbox/alice_chat',
             participants: [{ name: 'Alice' }, { name: 'Tester' }],
             messages: [
-              { sender_name: 'Alice', timestamp_ms: 20, content: 'needle from Facebook', photos: [{ uri: 'photos/photo.jpg' }] },
+              {
+                sender_name: 'Alice', timestamp_ms: 20,
+                content: selectedFormat === 'instagram' ? 'needle from Instagram' : 'needle from Facebook',
+                photos: [{ uri: selectedFormat === 'instagram'
+                  ? 'your_instagram_activity/messages/inbox/alice_chat/photos/photo.jpg'
+                  : 'photos/photo.jpg' }],
+              },
               { sender_name: 'Tester', timestamp_ms: 10, content: 'first message', share: { link: 'https://example.com/report', share_text: 'Shared report' } },
             ],
           })),
@@ -101,6 +107,9 @@ async function installArchive(page: Page, format: 'facebook' | 'messenger', fail
           'bookmarks.json': makeFile('bookmarks.json', savedBookmarks, '__e2eBookmarks'),
         }),
       } : {}),
+    });
+    const instagram = makeDirectory('instagram-export', {
+      your_instagram_activity: makeDirectory('your_instagram_activity', { messages: facebook }),
     });
     const messenger = makeDirectory('messenger', {
       'alice.json': makeFile('alice.json', JSON.stringify({
@@ -132,7 +141,7 @@ async function installArchive(page: Page, format: 'facebook' | 'messenger', fail
     localStorage.setItem(`majv_${location.hostname}_setting_attachmentBookmarkingEnabled`, '1');
     Object.defineProperty(window, 'showDirectoryPicker', {
       configurable: true,
-      value: async () => selectedFormat === 'facebook' ? facebook : messenger,
+      value: async () => selectedFormat === 'facebook' ? facebook : selectedFormat === 'instagram' ? instagram : messenger,
     });
     Object.defineProperty(window, '__testArchives', { configurable: true, value: { facebook, messenger } });
   }, { selectedFormat: format, shouldFailMessengerMediaOnce: failMessengerMediaOnce });
@@ -160,6 +169,26 @@ test('opens a Facebook archive and wires chat, search, gallery, and pinning', as
   await page.getByRole('button', { name: 'Attachments', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Attachments' })).toBeVisible();
   await page.getByRole('button', { name: 'Back to chat' }).click();
+});
+
+test('opens an Instagram export root and searches its conversation', async ({ page }) => {
+  await installArchive(page, 'instagram');
+  await page.goto('');
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  const chat = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
+  await expect(chat).toBeVisible();
+  await chat.click();
+  await expect(page.getByText('needle from Instagram')).toBeVisible();
+  await expect(page.locator('.message-wrapper')).toHaveCount(2);
+
+  const search = page.getByRole('searchbox', { name: 'Search messages' });
+  await search.fill('needle');
+  await search.press('Enter');
+  await expect(page.getByRole('listbox', { name: 'Search results' })).toContainText('needle from Instagram');
+
+  await page.getByRole('button', { name: 'Toggle chat info panel' }).click();
+  await page.getByRole('button', { name: 'Attachments', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Attachments' })).toBeVisible();
 });
 
 test('opens and cancels the destructive Facebook deletion confirmation', async ({ page }) => {

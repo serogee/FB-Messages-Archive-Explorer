@@ -43,6 +43,18 @@ describe('folder-upload filesystem fallback', () => {
     await expect(resolveFacebookMessagesRoot(root)).resolves.toBe(root);
   });
 
+  it.each([
+    'instagram-export/your_instagram_activity/messages/message_requests/alice/message_1.json',
+    'your_instagram_activity/messages/message_requests/alice/message_1.json',
+    'messages/message_requests/alice/message_1.json',
+  ])('recognizes an Instagram folder upload from %s', async path => {
+    const root = createVirtualFileSystem([folderUploadFile(path)]);
+    const messagesRoot = await resolveFacebookMessagesRoot(root);
+
+    expect(messagesRoot).not.toBeNull();
+    await expect(messagesRoot?.getDirectoryHandle('message_requests')).resolves.toMatchObject({ kind: 'directory' });
+  });
+
   it('exposes standalone Messenger JSON files at the virtual root', async () => {
     const root = createVirtualFileSystem([
       folderUploadFile('messenger-export/alice.json', JSON.stringify({

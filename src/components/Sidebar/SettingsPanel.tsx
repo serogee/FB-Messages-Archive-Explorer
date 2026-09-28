@@ -390,16 +390,19 @@ export function SettingsPanel({
       )}
 
       <div className="settings-section download-info">
-        <strong>How to get your Facebook data</strong>
+        <strong>How to export your messages</strong>
         <a href="https://www.facebook.com/dyi" target="_blank" rel="noreferrer">
           Facebook Download Your Information
         </a>
         <a href="https://www.messenger.com/secure_storage/dyi" target="_blank" rel="noreferrer">
           Messenger Download Your Information
         </a>
+        <a href="https://accountscenter.instagram.com/info_and_permissions/dyi/" target="_blank" rel="noreferrer">
+          Instagram Download Your Information
+        </a>
         <p className="footer">
           Select <strong style={{fontSize: '0.85em'}}>JSON</strong> format and download the <em>Messages</em> category.
-          Extract the zip and open the <code>messages</code> folder here.
+          Extract the zip and open the export folder or its <code>messages</code> folder here.
         </p>
       </div>
     </div>

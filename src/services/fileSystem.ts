@@ -7,12 +7,14 @@ import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../types/
 const SELECTED_MESSAGES_DIRECTORY = [] as const;
 const FACEBOOK_EXPORT_MESSAGES_DIRECTORY = ['messages'] as const;
 const ACCOUNTS_CENTER_MESSAGES_DIRECTORY = ['your_facebook_activity', 'messages'] as const;
+const INSTAGRAM_MESSAGES_DIRECTORY = ['your_instagram_activity', 'messages'] as const;
 const FACEBOOK_MESSAGES_ROOT_PATHS = [
   SELECTED_MESSAGES_DIRECTORY,
   FACEBOOK_EXPORT_MESSAGES_DIRECTORY,
   ACCOUNTS_CENTER_MESSAGES_DIRECTORY,
+  INSTAGRAM_MESSAGES_DIRECTORY,
 ] as const;
-const FACEBOOK_CONVERSATION_SECTIONS = ['inbox', 'archived_threads'] as const;
+const FACEBOOK_CONVERSATION_SECTIONS = ['inbox', 'archived_threads', 'message_requests'] as const;
 
 function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
