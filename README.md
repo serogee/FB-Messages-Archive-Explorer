@@ -1,6 +1,6 @@
 # FB Messages Archive Explorer
 
-Browse, search, and manage your exported Facebook or Messenger message archive privately, in your browser, with nothing uploaded.
+Browse, search, and manage your exported Facebook, Instagram, or Messenger message archive privately, in your browser, with nothing uploaded.
 
 **[🔗 Open the App](https://serogee.github.io/FB-Messages-Archive-Explorer/)**
 
@@ -21,6 +21,7 @@ Browse, search, and manage your exported Facebook or Messenger message archive p
 - [❓ 4. How to Export Your Messages](#4-how-to-export-your-facebook-or-messenger-messages)
     - [4.1. Option A: Facebook](#41-option-a-facebook-all-facebook-messages)
     - [4.2. Option B: Messenger](#42-option-b-messenger-standalone-messenger-export)
+    - [4.3. Option C: Instagram](#43-option-c-instagram)
     - [4.x. Which folder structure does the app recognize?](#4x-which-folder-structure-does-the-app-recognize)
 - [❔ 5. Browser Support and Limitations](#5-browser-support-and-limitations)
 - [⚙️ 6. Run the App Locally](#6-run-the-app-locally)
@@ -40,9 +41,9 @@ Browse, search, and manage your exported Facebook or Messenger message archive p
 
 ## 🚀 1. Quick Start
 
-Before you begin, you need a Facebook or Messenger export in **JSON format** (not HTML). See [How to Export Your Messages](#4-how-to-export-your-facebook-or-messenger-messages) for step-by-step instructions.
+Before you begin, you need a Facebook, Instagram, or Messenger export in **JSON format** (not HTML). See [How to Export Your Messages](#4-how-to-export-your-facebook-or-messenger-messages) for step-by-step instructions.
 
-1. Download your Facebook or Messenger export from Meta.
+1. Download your Facebook, Instagram, or Messenger export from Meta.
 2. **Extract** (unzip) the downloaded `.zip` file to a folder on your computer.
 3. Open the app: **[https://serogee.github.io/FB-Messages-Archive-Explorer/](https://serogee.github.io/FB-Messages-Archive-Explorer/)**
 4. Click **Open Folder** in the sidebar.
@@ -75,7 +76,7 @@ Before you begin, you need a Facebook or Messenger export in **JSON format** (no
 
 **Viewing**
 
-- Load a complete Facebook export or a Messenger standalone export and see all your conversations
+- Load a Facebook or Instagram export, or a Messenger standalone export, and see all your conversations
 - View inbox, archived threads, and message request conversations separately
 - Read messages in a Messenger-like layout with chat bubbles and date headers
 - View images, videos, GIFs, audio messages, and file attachments inline
@@ -130,9 +131,9 @@ Offline access may stop if the browser clears site data. Reconnect once and wait
 
 <a name="4-how-to-export-your-facebook-or-messenger-messages"></a>
 
-## ❓ 4. How to Export Your Facebook or Messenger Messages
+## ❓ 4. How to Export Your Facebook, Instagram, or Messenger Messages
 
-Meta offers two ways to download your messages.
+Choose the export option for your Facebook, Messenger, or Instagram account.
 
 > [!NOTE]
 > Meta can change its interface at any time. If the steps look different from what is described below, visit the [Meta Help Center](https://www.facebook.com/help/) for current instructions.
@@ -173,6 +174,18 @@ Meta offers two ways to download your messages.
 5. Extract the downloaded `.zip` file.
 6. In the app, select the folder that contains your conversation `.json` files.
 
+<a name="43-option-c-instagram"></a>
+
+### 4.3. Option C: Instagram
+
+1. Open [Instagram Download Your Information](https://accountscenter.instagram.com/info_and_permissions/dyi/) in Accounts Center.
+2. Select your Instagram profile and request an export to your device.
+3. Select the **Messages** category and **JSON** format. Choose your date range and media quality.
+4. When the export is ready, download and extract the `.zip` file(s). Extract all parts into the same folder.
+5. In the app, select the extracted export folder, its `your_instagram_activity` folder, or `your_instagram_activity/messages` directly.
+
+Instagram inbox and message request conversations use the same reader as Facebook exports. Text, reactions, shared links, and locally exported photos, videos, and voice messages are supported. Shared posts and reels appear as links; the app does not fetch their content. Attachments absent from the export remain unavailable, and call duration and shared-post owner metadata are not displayed.
+
 <a name="4x-which-folder-structure-does-the-app-recognize"></a>
 
 ### 4.x. Which folder structure does the app recognize?
@@ -181,9 +194,10 @@ The app automatically finds your messages if you select any of these:
 
 | What you select                                          | What the app looks for                                           |
 | -------------------------------------------------------- | ---------------------------------------------------------------- |
-| The extracted folder root                                | A `messages/` subfolder containing `inbox` or `archived_threads` |
+| The extracted folder root                                | A `messages/` subfolder containing `inbox`, `archived_threads`, or `message_requests` |
 | The `messages/` folder directly                          | Uses it as the starting point                                    |
 | A folder with `your_facebook_activity/messages/` inside  | Recognized automatically                                         |
+| A folder with `your_instagram_activity/messages/` inside | Recognized automatically                                         |
 | A Messenger export folder with `.json` files at the root | Recognized as a Messenger export                                 |
 
 Conversations are loaded from `inbox`, `archived_threads`, `message_requests`, and `e2ee_cutover`. Other subfolders are not scanned.
