@@ -10,7 +10,7 @@ export function FolderPicker({ onOpenFolder }: FolderPickerProps) {
   return (
     <div className="folder-picker">
       <p>
-        Select your Facebook or Instagram archive's <strong>messages</strong> folder, or a Messenger export folder, to get started.<br />
+        Select your Facebook, Messenger, or Instagram archive's <strong>messages</strong> folder, to get started.{' '}
         No data leaves your device.
       </p>
       <button className="btn btn-primary folder-select-button" id="openFolderBtn" onClick={onOpenFolder}>
@@ -19,7 +19,6 @@ export function FolderPicker({ onOpenFolder }: FolderPickerProps) {
       </button>
       <p style={{ fontSize: '12px', marginBottom: fsSupported ? 0 : 12 }}>
         e.g. <code>your_facebook_activity/messages</code>
-        {' or '}<code>your_instagram_activity/messages</code>
       </p>
       
       {!fsSupported && (
