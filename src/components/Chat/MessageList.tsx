@@ -112,17 +112,17 @@ function formatSeparatorDate(ts: number): string {
   const messageDay = new Date(ts);
   messageDay.setHours(0, 0, 0, 0);
   if (messageDay.getTime() === today.getTime()) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   }
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   if (messageDay.getTime() === yesterday.getTime()) {
-    return `Yesterday, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    return `Yesterday, ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
   }
   return date.toLocaleString([], {
     weekday: 'short', month: 'short', day: 'numeric',
     ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}),
-    hour: '2-digit', minute: '2-digit'
+    hour: 'numeric', minute: '2-digit'
   });
 }
 
