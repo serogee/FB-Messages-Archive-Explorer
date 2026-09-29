@@ -1,6 +1,7 @@
 // Settings storage is best-effort: prefer localStorage, fall back to cookies,
 // and never block startup when either mechanism is unavailable.
-const STORAGE_PREFIX = 'majv_' + (window.location.hostname || 'local') + '_';
+const STORAGE_HOSTNAME = typeof window !== 'undefined' ? window.location.hostname : '';
+const STORAGE_PREFIX = 'majv_' + (STORAGE_HOSTNAME || 'local') + '_';
 
 function setCookie(name: string, value: string, days = 365): void {
   try {
