@@ -5,8 +5,9 @@ import { loadChatMessages } from '../services/fileSystem';
 import { processMediaFromDirectory, processFacebookStickerReferences, createMediaState, revokeAllMedia } from '../services/media';
 import { loadMessengerExportChat, processMessengerExportMedia } from '../services/messengerExport';
 import { enrichReactionTimestamps } from '../services/reactions';
-import { storageGet, storageSet } from '../services/storage';
+import { storageGet } from '../services/storage';
 import { getParticipantNames } from '../services/parser';
+import { normalizePerspectiveName, saveManualArchivePerspective } from '../services/perspective';
 
 export function useChat(): {
   chatData: MessengerThread | null;
@@ -17,7 +18,12 @@ export function useChat(): {
   loading: boolean;
   selectedPerspective: string;
   setSelectedPerspective: (name: string) => void;
-  loadChat: (entry: ChatListEntry, messagesRootHandle?: ReadableDirectoryHandle | null) => Promise<void>;
+  loadChat: (
+    entry: ChatListEntry,
+    messagesRootHandle?: ReadableDirectoryHandle | null,
+    archivePerspectiveKey?: string | null,
+    archivePerspectiveName?: string
+  ) => Promise<void>;
   clearChat: () => void;
   activeEntry: ChatListEntry | null;
 } {
@@ -31,15 +37,37 @@ export function useChat(): {
   const [selectedPerspective, setSelectedPerspectiveState] = useState<string>(() => {
     return storageGet('selectedPerspective') || '';
   });
+  const selectedPerspectiveRef = useRef(selectedPerspective);
+  const activeArchiveKeyRef = useRef<string | null>(null);
+  const manualPerspectiveRevisionRef = useRef(0);
+  const archiveManualOverridesRef = useRef(new Map<string, string>());
 
   const setSelectedPerspective = useCallback((name: string) => {
+    selectedPerspectiveRef.current = name;
     setSelectedPerspectiveState(name);
-    storageSet('selectedPerspective', name);
+    manualPerspectiveRevisionRef.current++;
+    const archiveKey = activeArchiveKeyRef.current;
+    if (archiveKey) {
+      archiveManualOverridesRef.current.delete(archiveKey);
+      archiveManualOverridesRef.current.set(archiveKey, name);
+      if (archiveManualOverridesRef.current.size > 20) {
+        const oldestKey = archiveManualOverridesRef.current.keys().next().value;
+        if (typeof oldestKey === 'string') archiveManualOverridesRef.current.delete(oldestKey);
+      }
+    }
+    saveManualArchivePerspective(archiveKey, name);
   }, []);
 
   const mediaAbortControllerRef = useRef<AbortController | null>(null);
 
-  const loadChat = useCallback(async (entry: ChatListEntry, messagesRootHandle?: ReadableDirectoryHandle | null) => {
+  const loadChat = useCallback(async (
+    entry: ChatListEntry,
+    messagesRootHandle?: ReadableDirectoryHandle | null,
+    archivePerspectiveKey?: string | null,
+    archivePerspectiveName = ''
+  ) => {
+    activeArchiveKeyRef.current = archivePerspectiveKey || null;
+    const manualRevisionAtStart = manualPerspectiveRevisionRef.current;
     setActiveEntry(entry);
     setChatData(null);
     setError(null);
@@ -55,6 +83,7 @@ export function useChat(): {
 
     await new Promise(r => setTimeout(r, 10));
     try {
+      if (abortCtrl.signal.aborted) return;
       setMediaState(prev => {
         revokeAllMedia(prev);
         return createMediaState();
@@ -120,12 +149,26 @@ export function useChat(): {
 
       setMsgStatusText("Loading messages...");
       await new Promise(r => setTimeout(r, 10));
+      if (abortCtrl.signal.aborted) return;
 
       const participants = getParticipantNames(data);
-      const stored = storageGet('selectedPerspective');
-      const perspective = (stored && participants.includes(stored))
-        ? stored
-        : (participants[0] || '');
+      const manuallyChangedDuringLoad = manualPerspectiveRevisionRef.current !== manualRevisionAtStart;
+      const currentManualChoice = selectedPerspectiveRef.current;
+      const legacyChoice = storageGet('selectedPerspective');
+      const archiveDefault = archivePerspectiveKey
+        ? archiveManualOverridesRef.current.get(archivePerspectiveKey) || archivePerspectiveName
+        : archivePerspectiveName;
+      const matchingParticipant = (candidate: string | null | undefined) => {
+        if (!candidate) return '';
+        const normalizedCandidate = normalizePerspectiveName(candidate);
+        return participants.find(name => normalizePerspectiveName(name) === normalizedCandidate) || '';
+      };
+      const perspective = (manuallyChangedDuringLoad && matchingParticipant(currentManualChoice))
+        ? matchingParticipant(currentManualChoice)
+        : matchingParticipant(archiveDefault)
+          || matchingParticipant(legacyChoice)
+          || (participants[0] || '');
+      selectedPerspectiveRef.current = perspective;
       setSelectedPerspectiveState(perspective);
 
       setChatData(data);
@@ -167,6 +210,7 @@ export function useChat(): {
     setMediaState(prev => { revokeAllMedia(prev); return createMediaState(); });
     setChatData(null);
     setActiveEntry(null);
+    activeArchiveKeyRef.current = null;
     setError(null);
     setLoading(false);
     setMsgProgress(0);

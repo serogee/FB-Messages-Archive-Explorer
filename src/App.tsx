@@ -270,7 +270,12 @@ export default function App() {
     setGalleryOpen(false);
     await archive.suspendSizeWork();
     try {
-      await chat.loadChat(entry, archive.rootHandle);
+      await chat.loadChat(
+        entry,
+        archive.rootHandle,
+        archive.archivePerspectiveKey,
+        archive.archivePerspectiveName
+      );
     } finally {
       archive.resumeSizeWork();
     }

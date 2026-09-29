@@ -34,6 +34,7 @@ import { SizeWorkLifecycle } from '../services/sizeWorkLifecycle';
 import { mapWithConcurrency } from '../services/concurrency';
 import { GenerationScopedAsyncCache } from '../services/generationScopedAsyncCache';
 import { SingleFlightGuard } from '../services/singleFlight';
+import { resolveArchivePerspective } from '../services/perspective';
 import type { BatchDeleteResult, DeleteProgress } from '../types/deletion';
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -159,6 +160,8 @@ export function useArchive(): {
   inboxList: ChatListEntry[];
   archivedList: ChatListEntry[];
   requestsList: ChatListEntry[];
+  archivePerspectiveKey: string | null;
+  archivePerspectiveName: string;
   loading: boolean;
   loadProgress: { done: number; total: number } | null;
   sizeProgress: { done: number; total: number } | null;
@@ -183,6 +186,8 @@ export function useArchive(): {
   const [inboxList, setInboxList] = useState<ChatListEntry[]>([]);
   const [archivedList, setArchivedList] = useState<ChatListEntry[]>([]);
   const [requestsList, setRequestsList] = useState<ChatListEntry[]>([]);
+  const [archivePerspectiveKey, setArchivePerspectiveKey] = useState<string | null>(null);
+  const [archivePerspectiveName, setArchivePerspectiveName] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadProgress, setLoadProgress] = useState<{ done: number; total: number } | null>(null);
   const [sizeProgress, setSizeProgress] = useState<{ done: number; total: number } | null>(null);
@@ -485,6 +490,8 @@ export function useArchive(): {
       setInboxList([]);
       setArchivedList([]);
       setRequestsList([]);
+      setArchivePerspectiveKey(null);
+      setArchivePerspectiveName('');
       inboxListRef.current = [];
       archivedListRef.current = [];
       requestsListRef.current = [];
@@ -516,6 +523,11 @@ export function useArchive(): {
           abortCtrl.signal
         );
         if (abortCtrl.signal.aborted) return false;
+
+        const perspective = resolveArchivePerspective(inbox, 'messenger');
+        if (archiveGenerationRef.current !== generation || abortCtrl.signal.aborted) return false;
+        setArchivePerspectiveKey(perspective.archiveKey);
+        setArchivePerspectiveName(perspective.name);
 
         messengerChatIndexRef.current = { rootHandle: handle, generation, chatIndex };
         messengerReferenceIndexCacheRef.current.set(handle, generation, chatIndex.referenceIndex);
@@ -564,6 +576,13 @@ export function useArchive(): {
         if (b.lastTimestamp == null) return -1;
         return b.lastTimestamp - a.lastTimestamp;
       });
+      const perspective = resolveArchivePerspective(
+        [...mergedInbox, ...archived, ...requests],
+        'facebook'
+      );
+      if (archiveGenerationRef.current !== generation || abortCtrl.signal.aborted) return false;
+      setArchivePerspectiveKey(perspective.archiveKey);
+      setArchivePerspectiveName(perspective.name);
       inboxListRef.current = mergedInbox;
       archivedListRef.current = archived;
       requestsListRef.current = requests;
@@ -906,7 +925,9 @@ export function useArchive(): {
   ]);
 
   return {
-    rootHandle, originalRootHandle, inboxList, archivedList, requestsList,    loading, loadProgress, sizeProgress, error,
+    rootHandle, originalRootHandle, inboxList, archivedList, requestsList,
+    archivePerspectiveKey, archivePerspectiveName,
+    loading, loadProgress, sizeProgress, error,
     openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, suspendSizeWork, resumeSizeWork, deleteChat, deleteChats, deleteMessengerChatsJsonOnly, updateFolderSize,
   };
 }
