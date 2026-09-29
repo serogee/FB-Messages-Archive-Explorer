@@ -107,9 +107,21 @@ function getChunksAndHeights(chatData: MessengerThread) {
 
 function formatSeparatorDate(ts: number): string {
   const date = new Date(ts);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const messageDay = new Date(ts);
+  messageDay.setHours(0, 0, 0, 0);
+  if (messageDay.getTime() === today.getTime()) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (messageDay.getTime() === yesterday.getTime()) {
+    return `Yesterday, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
   return date.toLocaleString([], {
     weekday: 'short', month: 'short', day: 'numeric',
-    ...(date.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}),
+    ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}),
     hour: '2-digit', minute: '2-digit'
   });
 }
