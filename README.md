@@ -2,6 +2,8 @@
 
 Browse, search, and manage your exported Facebook, Instagram, or Messenger message archive privately, in your browser, with nothing uploaded.
 
+[Read the getting-started guide](https://serogee.github.io/FB-Messages-Archive-Explorer/guide/) for supported exports, privacy details, and troubleshooting.
+
 **[🔗 Open the App](https://serogee.github.io/FB-Messages-Archive-Explorer/)**
 
 > [!NOTE]
