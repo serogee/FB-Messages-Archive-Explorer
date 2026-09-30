@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Facebook, Messenger &amp; Instagram Archive Guide | FB Messages Archive Explorer</title>
+    <meta name="description" content="Open Facebook, Messenger, and Instagram JSON exports with FB Messages Archive Explorer. Instructions for choosing folders, searching chats, and viewing media." />
+    <link rel="canonical" href="https://serogee.github.io/FB-Messages-Archive-Explorer/guide/" />
+    <link rel="icon" type="image/x-icon" href="../favicon.ico?v=2" />
+    <link rel="stylesheet" href="./guide.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="../">FB Messages Archive Explorer</a>
+      <a href="https://github.com/serogee/FB-Messages-Archive-Explorer">Source &amp; documentation</a>
+    </header>
+    <main id="content">
+      <section class="intro" aria-labelledby="guide-title">
+        <h1 id="guide-title">Viewing your message archive</h1>
+        <p class="lead">Use FB Messages Archive Explorer to read your Facebook, Messenger, or Instagram JSON export in your browser. You can search conversations and view their attachments without uploading your files.</p>
+        <a class="button" href="../">Open the app</a>
+      </section>
+
+      <figure>
+        <img src="../demo.png" width="1920" height="933" alt="FB Messages Archive Explorer with a conversation list, chat bubbles, and a panel showing message statistics." decoding="async" />
+        <figcaption>Example conversation with dummy data.</figcaption>
+      </figure>
+
+      <nav class="contents" aria-label="On this page">
+        <a href="#open-archive">Open an archive</a>
+        <a href="#supported-exports">Supported exports</a>
+        <a href="#features">Search and attachments</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#troubleshooting">Troubleshooting</a>
+      </nav>
+
+      <section id="open-archive">
+        <h2>Open an archive</h2>
+        <ol class="steps">
+          <li>Download a message export in <strong>JSON format</strong>. Follow the <a href="https://github.com/serogee/FB-Messages-Archive-Explorer#4-how-to-export-your-facebook-or-messenger-messages">export instructions for your account</a>.</li>
+          <li>Extract the ZIP files into one folder. Keep the folder structure and filenames, including any media folders.</li>
+          <li><a href="../">Open the app</a> and click <strong>Select messages folder</strong>. Choose the extracted export folder or its <code>messages</code> subfolder. For a standalone Messenger export, choose the folder containing the conversation JSON files.</li>
+          <li>Select a conversation from the chat list after it loads.</li>
+        </ol>
+      </section>
+
+      <section id="supported-exports">
+        <h2>Supported exports</h2>
+        <p>Select your extracted export folder or the folder listed for your export type:</p>
+        <dl class="formats">
+          <dt>Facebook</dt>
+          <dd><code>your_facebook_activity/messages</code> or a top-level <code>messages</code> folder.</dd>
+          <dt>Messenger</dt>
+          <dd>A folder containing conversation <code>.json</code> files and their exported media.</dd>
+          <dt>Instagram</dt>
+          <dd><code>your_instagram_activity/messages</code>, including inbox and message requests.</dd>
+        </dl>
+      </section>
+
+      <section id="features">
+        <h2>Search and attachments</h2>
+        <p>Search within the current conversation, or switch to <strong>All</strong> to search across chats. Use the date navigator to jump to a date. In the chat info panel, you can check message counts and participant activity.</p>
+        <p>Open the attachment gallery to browse photos, videos, audio, and files. Filter by type and select the attachments you want to download.</p>
+        <p>For offline use, open the app with an internet connection and wait for <strong>Ready for offline use</strong>. Revisit the site with a connection if you clear your browser's site data.</p>
+      </section>
+
+      <section id="privacy">
+        <h2>Privacy and folder access</h2>
+        <p>You grant read access to a folder on your computer to view its messages. You can browse and search without uploading the archive or signing in to an account.</p>
+        <p>To bookmark attachments or delete chats, you must enable those features in Settings and grant write access in a supported browser. Keep the original ZIP files as a backup before deleting anything. You cannot undo a deletion.</p>
+        <p>You can review the <a href="https://github.com/serogee/FB-Messages-Archive-Explorer">source code</a> and follow the README to run a local copy.</p>
+      </section>
+
+      <section id="troubleshooting">
+        <h2>Troubleshooting</h2>
+        <h3>Folder not recognized</h3>
+        <p>Check that you extracted the ZIP and chose a folder with JSON conversation files. If you downloaded an HTML export, request a new export in JSON format.</p>
+        <h3>Missing photos or videos</h3>
+        <p>Include media when requesting your export, and extract each downloaded part into the same folder. You can view attachments that Meta included in the download. For shared posts and reels, you may need to open a link to the original post.</p>
+        <h3>Browser support</h3>
+        <p>Use Chrome, Edge, or Brave for native folder access and the bookmarking and deletion features. In Firefox and Safari, you can browse messages and download attachments as ZIP files, but opening a large archive may take more memory and time.</p>
+        <h3>Deleted messages</h3>
+        <p>You can read messages included in your export. You cannot use this viewer to recover messages missing from the download.</p>
+      </section>
+
+    </main>
+    <footer>
+      <p><a href="../">Open the app</a> &middot; <a href="https://github.com/serogee/FB-Messages-Archive-Explorer">Documentation on GitHub</a></p>
+      <p>By <a href="https://github.com/serogee">serogee</a>.</p>
+      <p>An independent tool, not affiliated with Meta.</p>
+    </footer>
+  </body>
+</html>

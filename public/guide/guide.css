@@ -1,0 +1,50 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e5edf3;
+  background: #0b1116;
+  font-synthesis: none;
+  line-height: 1.7;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: #8bd6cc; text-underline-offset: 0.2em; }
+a:hover { color: #c1f4ee; }
+a:focus-visible { outline: 3px solid #8bd6cc; outline-offset: 5px; }
+.site-header, main, footer { width: min(100% - 40px, 1000px); margin-inline: auto; }
+.site-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 24px; border-bottom: 1px solid #293841; font-size: 0.875rem; }
+.brand { color: #e5edf3; font-weight: 700; text-decoration: none; }
+.intro { max-width: 790px; padding-block: 40px 30px; border: 0; }
+h1, h2, h3 { line-height: 1.2; }
+h1 { margin: 0 0 20px; font-size: clamp(1.8rem, 4vw, 2.4rem); }
+h2 { margin-block: 0 20px; font-size: 1.5rem; }
+h3 { margin-top: 28px; font-size: 1.125rem; }
+p, li, dd { color: #b7c5cf; }
+strong { color: #e5edf3; }
+.lead { font-size: 1.125rem; max-width: 720px; }
+.button { display: inline-block; margin-top: 12px; padding: 12px 20px; border-radius: 8px; background: #a0e8db; color: #102b28; font-weight: 700; text-decoration: none; line-height: 1.5; }
+.button:hover { background: #c1f4ee; color: #102b28; }
+figcaption { color: #9bafb9; font-size: 0.8125rem; }
+figure { margin: 8px 0 32px; }
+figure img { display: block; width: 100%; height: auto; border: 1px solid #293841; border-radius: 10px; }
+figcaption { margin-top: 10px; }
+.contents { display: flex; flex-wrap: wrap; gap: 12px 24px; padding-block: 20px; border-top: 1px solid #293841; font-size: 0.875rem; }
+section { padding-block: 38px; border-top: 1px solid #293841; scroll-margin-top: 24px; }
+section > p, section > ul, .steps { max-width: 780px; }
+li { padding-left: 6px; margin-block: 14px; }
+ol, ul { padding-left: 24px; }
+.formats { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 16px 24px; max-width: 780px; }
+.formats dt { font-weight: 600; }
+.formats dd { margin: 0; }
+code { color: #d6e6ed; font-size: 0.875em; overflow-wrap: anywhere; }
+footer { padding-block: 20px 36px; border-top: 1px solid #293841; font-size: 0.8125rem; }
+.skip-link { position: absolute; top: -100px; left: 20px; padding: 10px 16px; background: #122522; }
+.skip-link:focus { top: 8px; }
+
+@media (max-width: 640px) {
+  .site-header { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .intro { padding-top: 36px; }
+  .formats { grid-template-columns: 1fr; gap: 6px; }
+  .formats dd { margin-bottom: 14px; }
+}
