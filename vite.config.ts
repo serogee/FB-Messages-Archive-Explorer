@@ -8,6 +8,26 @@ const appBase = '/FB-Messages-Archive-Explorer/'
 export default defineConfig({
   base: appBase,
   plugins: [
+    {
+      name: 'serve-public-guide',
+      apply: 'serve',
+      configureServer(server) {
+        // Vite's dev public-file lookup requires an exact filename, unlike Pages.
+        const guidePath = `${appBase}guide/`
+        server.middlewares.use((req, res, next) => {
+          const url = new URL(req.url || '/', 'http://localhost')
+          if (url.pathname === guidePath.slice(0, -1)) {
+            res.writeHead(302, { Location: `${guidePath}${url.search}` })
+            res.end()
+            return
+          }
+          if (url.pathname === guidePath) {
+            req.url = `${guidePath}index.html${url.search}`
+          }
+          next()
+        })
+      },
+    },
     react(),
     VitePWA({
       strategies: 'generateSW',
@@ -16,9 +36,14 @@ export default defineConfig({
       workbox: {
         cacheId: 'fb-messages-archive-explorer',
         // Manifest icons and manifest.webmanifest are added by the plugin separately.
-        // Keeping PNGs out also avoids caching the README-only demo screenshot.
+        // Keep the public guide and demo screenshot out of the app's offline cache.
         globPatterns: ['**/*.{js,css,html,ico,svg}'],
+        globIgnores: ['**/guide/**'],
         navigateFallback: 'index.html',
+        navigateFallbackDenylist: [
+          /^\/FB-Messages-Archive-Explorer\/guide(?:[/?]|$)/,
+          /^\/FB-Messages-Archive-Explorer\/sitemap\.xml(?:\?|$)/,
+        ],
         cleanupOutdatedCaches: true,
       },
       manifest: {
