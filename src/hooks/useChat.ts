@@ -1,10 +1,9 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, startTransition } from 'react';
 import type { ChatListEntry, MessengerThread, MediaState } from '../types/messenger';
 import type { ReadableDirectoryHandle } from '../types/fileSystem';
 import { loadChatMessages } from '../services/fileSystem';
 import { processMediaFromDirectory, processFacebookStickerReferences, createMediaState, revokeAllMedia } from '../services/media';
 import { loadMessengerExportChat, processMessengerExportMedia } from '../services/messengerExport';
-import { enrichReactionTimestamps } from '../services/reactions';
 import { storageGet } from '../services/storage';
 import { getParticipantNames } from '../services/parser';
 import { normalizePerspectiveName, saveManualArchivePerspective } from '../services/perspective';
@@ -171,22 +170,15 @@ export function useChat(): {
       selectedPerspectiveRef.current = perspective;
       setSelectedPerspectiveState(perspective);
 
-      setChatData(data);
-      setLoading(false);
-      setMsgProgress(1);
+      if (entry._messengerExport) data._standaloneMessenger = true;
+      // Publishing a large thread must allow React to yield between components
+      // while the loading view remains responsive.
+      startTransition(() => {
+        setChatData(data);
+        setLoading(false);
+        setMsgProgress(1);
+      });
       
-      if (!data._reactionsEnriched) {
-        const enrichAbort = abortCtrl;
-        requestAnimationFrame(() => {
-          if (enrichAbort.signal.aborted) return;
-          enrichReactionTimestamps(data.messages, undefined, enrichAbort.signal)
-            .then(() => {
-              if (enrichAbort.signal.aborted) return;
-              data._reactionsEnriched = true;
-            })
-            .catch(() => { /* Reaction enrichment is best-effort; base messages remain usable. */ });
-        });
-      }
 
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return;

@@ -6,6 +6,7 @@ import { isReactionNoticeMessage } from '../../services/reactions';
 import { getMessageTimestamp } from '../../services/parser';
 import { escapeHtml, padDatePart } from '../../services/storage';
 import { estimateMessageIndexInChunk, shouldAcceptBucketChange } from './dateNavigatorScroll';
+import { useThreadData } from '../../hooks/useThreadData';
 
 type DateScale = 'month' | 'week' | 'day';
 
@@ -21,6 +22,12 @@ type BucketsByScale = Record<DateScale, DateBucket[]>;
 
 const DATE_NAV_SYNC_LOCK_MS = 900;
 const DATE_NAV_ACTIVE_LINE_OFFSET_PX = 40;
+const monthFormatter = new Intl.DateTimeFormat([], { month: 'short', year: 'numeric' });
+const dayFormatter = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric' });
+const bucketCache = new WeakMap<MessengerThread['messages'], BucketsByScale>();
+function formatDate(formatter: Intl.DateTimeFormat, date: Date): string {
+  return Number.isNaN(date.getTime()) ? date.toString() : formatter.format(date);
+}
 
 function getLocalDateKey(date: Date): string {
   return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
@@ -37,14 +44,14 @@ function getWeekStartDate(date: Date): Date {
 }
 function getBucketLabel(scale: DateScale, timestamp: number): string {
   const date = new Date(timestamp);
-  if (scale === 'month') return date.toLocaleDateString([], { month: 'short', year: 'numeric' });
+  if (scale === 'month') return formatDate(monthFormatter, date);
   if (scale === 'week') {
     const start = getWeekStartDate(date);
     const end = new Date(start);
     end.setDate(start.getDate() + 6);
-    return `${start.toLocaleDateString([], { month: 'short', day: 'numeric' })}-${end.toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
+    return `${formatDate(dayFormatter, start)}-${formatDate(dayFormatter, end)}`;
   }
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return formatDate(dayFormatter, date);
 }
 function getBucketKey(scale: DateScale, timestamp: number): string {
   const date = new Date(timestamp);
@@ -53,27 +60,49 @@ function getBucketKey(scale: DateScale, timestamp: number): string {
   return getLocalDateKey(date);
 }
 
-function buildDateBuckets(messages: MessengerThread['messages']): BucketsByScale {
+async function buildDateBuckets(messages: MessengerThread['messages'], signal: AbortSignal): Promise<BucketsByScale> {
+  const cached = bucketCache.get(messages);
+  if (cached) return cached;
   const maps: Record<DateScale, Map<string, DateBucket>> = {
     month: new Map(), week: new Map(), day: new Map(),
   };
-  messages.forEach((msg, index) => {
-    if (isReactionNoticeMessage(msg)) return;
+  let yieldedAt = performance.now();
+  let dayStart = 0, dayEnd = 0;
+  let dayKeys: Record<DateScale, string> = { month: '', week: '', day: '' };
+  for (let index = 0; index < messages.length; index++) {
+    if (index % 256 === 0 && performance.now() - yieldedAt >= 8) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      yieldedAt = performance.now();
+    }
+    const msg = messages[index];
+    if (isReactionNoticeMessage(msg)) continue;
     const timestamp = getMessageTimestamp(msg);
-    if (timestamp === null) return;
+    if (timestamp === null) continue;
+    if (!Number.isFinite(dayStart) || timestamp < dayStart || timestamp >= dayEnd) {
+      const start = new Date(timestamp);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      dayStart = start.getTime(); dayEnd = end.getTime();
+      dayKeys = { month: getBucketKey('month', timestamp), week: getBucketKey('week', timestamp), day: getBucketKey('day', timestamp) };
+    }
     (['month', 'week', 'day'] as DateScale[]).forEach(scale => {
-      const key = getBucketKey(scale, timestamp);
+      const key = dayKeys[scale];
       if (!maps[scale].has(key)) {
         maps[scale].set(key, { key, index, timestamp, count: 0, label: getBucketLabel(scale, timestamp) });
       }
       maps[scale].get(key)!.count++;
     });
-  });
-  return {
+  }
+  if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+  const result = {
     month: Array.from(maps.month.values()),
     week: Array.from(maps.week.values()),
     day: Array.from(maps.day.values()),
   };
+  bucketCache.set(messages, result);
+  return result;
 }
 
 function getBucketKeyForMessageIndex(buckets: DateBucket[], msgIndex: number): string | null {
@@ -178,13 +207,14 @@ function findMessageIndexAtActiveLine(container: HTMLDivElement): number | null 
 }
 
 interface DateNavigatorProps {
-  chatData: MessengerThread | null;
+  chatData?: MessengerThread | null;
   settings: Settings;
   onJumpToMessage: (index: number) => Promise<void>;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, chatContainerRef }: DateNavigatorProps) {
+export function DateNavigator({ chatData: providedThread, settings: _settings, onJumpToMessage, chatContainerRef }: DateNavigatorProps) {
+  const chatData = useThreadData(providedThread);
   const [scale, setScale] = useState<DateScale>('month');
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [buckets, setBuckets] = useState<BucketsByScale>({ month: [], week: [], day: [] });
@@ -202,10 +232,14 @@ export function DateNavigator({ chatData, settings: _settings, onJumpToMessage, 
       setActiveKey(null);
       return;
     }
-    const built = buildDateBuckets(chatData.messages);
-    setBuckets(built);
-    setScale('month');
-    setActiveKey(built.month[0]?.key ?? null);
+    const controller = new AbortController();
+    void buildDateBuckets(chatData.messages, controller.signal).then(built => {
+      if (controller.signal.aborted) return;
+      setBuckets(built);
+      setScale('month');
+      setActiveKey(built.month[0]?.key ?? null);
+    }).catch(error => { if (error instanceof Error && error.name !== 'AbortError') console.error(error); });
+    return () => controller.abort();
   }, [chatData]);
 
   const currentBuckets = React.useMemo(() => buckets[scale] || [], [buckets, scale]);
