@@ -154,7 +154,8 @@ test('opens a Facebook archive and wires chat, search, gallery, and pinning', as
   const chat = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
   await expect(chat).toBeVisible();
   await chat.click();
-  await expect(page.getByText('needle from Facebook')).toBeVisible();
+  await expect(page.locator('.message-wrapper').getByText('needle from Facebook')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Attachments', includeHidden: true })).toHaveCount(0);
 
   const search = page.getByRole('searchbox', { name: 'Search messages' });
   await search.fill('needle');
@@ -168,7 +169,16 @@ test('opens a Facebook archive and wires chat, search, gallery, and pinning', as
   await page.getByRole('button', { name: 'Toggle chat info panel' }).click();
   await page.getByRole('button', { name: 'Attachments', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Attachments' })).toBeVisible();
+  await page.locator('.gallery-tab').filter({ hasText: 'Links' }).click();
+  await expect(page.locator('.gallery-tab.active')).toContainText('Links');
   await page.getByRole('button', { name: 'Back to chat' }).click();
+  await expect(page.getByRole('heading', { name: 'Attachments', includeHidden: true })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Attachments', exact: true }).click();
+  await expect(page.locator('.gallery-tab.active')).toContainText('Links');
+  await page.getByRole('button', { name: 'Back to chat' }).click();
+  await page.locator('.chat-list-item').filter({ hasText: 'Bob Chat' }).click();
+  await expect(page.locator('.message-wrapper').getByText('keep this chat')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Attachments', includeHidden: true })).toHaveCount(0);
 });
 
 test('opens an Instagram export root and searches its conversation', async ({ page }) => {
@@ -178,7 +188,7 @@ test('opens an Instagram export root and searches its conversation', async ({ pa
   const chat = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
   await expect(chat).toBeVisible();
   await chat.click();
-  await expect(page.getByText('needle from Instagram')).toBeVisible();
+  await expect(page.locator('.message-wrapper').getByText('needle from Instagram')).toBeVisible();
   await expect(page.locator('.message-wrapper')).toHaveCount(2);
 
   const search = page.getByRole('searchbox', { name: 'Search messages' });
@@ -213,7 +223,7 @@ test('opens a standalone Messenger export and searches its normalized conversati
   const chat = page.locator('.chat-list-item').filter({ hasText: 'Messenger Alice' });
   await expect(chat).toBeVisible();
   await chat.click();
-  await expect(page.getByText('needle from Messenger')).toBeVisible();
+  await expect(page.locator('.message-wrapper').getByText('needle from Messenger')).toBeVisible();
   await expect(page.locator('.message-wrapper')).toHaveCount(2);
 
   const search = page.getByRole('searchbox', { name: 'Search messages' });
