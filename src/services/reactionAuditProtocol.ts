@@ -7,6 +7,7 @@ export interface ReactionConsistencyReport {
   status: 'consistent' | 'inconsistent' | 'incomplete';
   reason: string; owner: string | null; notices: number; candidates: number;
   inconsistentChats: ReactionConsistencyChat[];
+  unmatchedChats: ReactionConsistencyChat[];
 }
 export interface ReactionConsistencyChat { id: string; notices: number; candidates: number }
 export interface ReactionWorkerInput {
