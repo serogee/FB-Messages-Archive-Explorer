@@ -20,7 +20,7 @@ interface AuditState {
 }
 interface ConsistencyState {
   status: 'idle' | 'checking' | ReactionConsistencyReport['status']; reason: string;
-  inconsistentChats: ReactionConsistencyChat[];
+  inconsistentChats: ReactionConsistencyChat[]; unmatchedChats: ReactionConsistencyChat[];
   notices: number | null; candidates: number | null;
 }
 interface ReactionFeature {
@@ -30,7 +30,7 @@ interface ReactionFeature {
   time: (reaction: Reaction, messageIndex: number, reactionIndex: number) => { timestamp: number; method?: ReactionEstimate['method'] };
 }
 const emptyAudit: AuditState = { session: null, id: '', mode: 'off', status: 'idle', reason: '', data: null };
-const emptyConsistency: ConsistencyState = { status: 'idle', reason: '', inconsistentChats: [], notices: null, candidates: null };
+const emptyConsistency: ConsistencyState = { status: 'idle', reason: '', inconsistentChats: [], unmatchedChats: [], notices: null, candidates: null };
 const defaultFeature: ReactionFeature = { hide: true, applicable: true, status: 'off', reason: '', mode: 'off', hasCache: false, canClear: false, clear: () => {}, retry: () => {}, showAll: () => {}, consistency: emptyConsistency, canCheckArchive: false, checkArchive: () => {}, cancelArchiveCheck: () => {}, time: r => ({ timestamp: getReactionTimestamp(r) }) };
 export const ReactionFeatureContext = createContext<ReactionFeature>(defaultFeature);
 export const useReactionContext = () => useContext(ReactionFeatureContext);
@@ -187,7 +187,7 @@ export function useReactionFeature(options: {
   const cancelArchiveCheck = useCallback(() => {
     if (!fullRef.current) return;
     fullRef.current.dispose(); fullRef.current = null;
-    setConsistency({ status: 'incomplete', reason: 'Check canceled. Archive consistency is unknown.', inconsistentChats: [], notices: null, candidates: null });
+    setConsistency({ status: 'incomplete', reason: 'Check canceled. Archive consistency is unknown.', inconsistentChats: [], unmatchedChats: [], notices: null, candidates: null });
   }, []);
   const canCheckArchive = !!root && !standalone && !archiveLoading;
   const checkArchive = useCallback(() => {
@@ -199,14 +199,14 @@ export function useReactionFeature(options: {
     fullRef.current = scan;
     const current = () => scopeRef.current === scope && fullRef.current === scan && !scan.signal.aborted;
     const report = (state: ConsistencyState) => { if (current()) setConsistency(state); };
-    report({ status: 'checking', reason: 'Finding chats for the full consistency check...', inconsistentChats: [], notices: null, candidates: null });
+    report({ status: 'checking', reason: 'Finding chats for the full consistency check...', inconsistentChats: [], unmatchedChats: [], notices: null, candidates: null });
     void (async () => {
       try {
         const conversations = await discoverReactionConversations(root, scan.signal, () => scan.idle(current));
         let checked = 0, failures = 0;
         for (const conversation of conversations) {
           await scan.idle(current);
-          report({ status: 'checking', reason: `Checking archive consistency: ${checked} of ${conversations.length} chats checked...`, inconsistentChats: [], notices: null, candidates: null });
+          report({ status: 'checking', reason: `Checking archive consistency: ${checked} of ${conversations.length} chats checked...`, inconsistentChats: [], unmatchedChats: [], notices: null, candidates: null });
           try {
             const files: File[] = [];
             for (const name of conversation.files) { await scan.idle(current); files.push(await (await conversation.handle.getFileHandle(name)).getFile()); }
@@ -216,7 +216,7 @@ export function useReactionFeature(options: {
         }
         const reply = await scan.request({ type: 'report' }, current);
         const result = reply.report!;
-        report(failures ? { status: 'incomplete', reason: `${failures} chats could not be fully checked. Archive consistency is unknown.`, inconsistentChats: [], notices: null, candidates: null } : result);
+        report(failures ? { status: 'incomplete', reason: `${failures} chats could not be fully checked. Archive consistency is unknown.`, inconsistentChats: [], unmatchedChats: [], notices: null, candidates: null } : result);
         // A full check is advisory for notice coverage. A conflicting owner
         // result does withdraw guesses based on the former owner.
         const session = sessionRef.current;
@@ -225,7 +225,7 @@ export function useReactionFeature(options: {
           setAudit(previous => ({ ...previous, status: 'unavailable', reason: 'The full check conflicts with the sampled export owner. Refresh guesses before using estimated times.', output: undefined }));
         }
       } catch (error) {
-        report({ status: 'incomplete', reason: `Full check could not finish. Archive consistency is unknown. ${errorText(error)}`, inconsistentChats: [], notices: null, candidates: null });
+        report({ status: 'incomplete', reason: `Full check could not finish. Archive consistency is unknown. ${errorText(error)}`, inconsistentChats: [], unmatchedChats: [], notices: null, candidates: null });
       } finally {
         if (fullRef.current === scan) fullRef.current = null;
         scan.dispose();

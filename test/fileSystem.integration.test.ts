@@ -77,7 +77,7 @@ describe('Facebook and Instagram archive filesystem services', () => {
             messages: [
               {
                 sender_name: 'Alice', timestamp_ms: 20, content: 'Shared a post',
-                reactions: [{ actor: 'Bob', reaction: '❤' }],
+                reactions: [{ actor: 'Bob', reaction: '❤️' }],
                 share: { link: 'https://www.instagram.com/p/example/', share_text: 'A post', original_content_owner: 'Example' },
                 photos: [{ uri: `${mediaPrefix}/photos/photo.jpg`, creation_timestamp: 1 }],
                 videos: [{ uri: `${mediaPrefix}/videos/clip.mp4` }],
@@ -99,7 +99,7 @@ describe('Facebook and Instagram archive filesystem services', () => {
     const fileHandle = await entries[0].dirHandle.getFileHandle('message_1.json');
     const thread = parseMessengerJsonContent(await (await fileHandle.getFile()).text());
     expect(thread.messages.map(message => message.timestamp_ms)).toEqual([10, 20]);
-    expect(thread.messages[1].reactions).toEqual([{ actor: 'Bob', reaction: '❤' }]);
+    expect(thread.messages[1].reactions).toEqual([{ actor: 'Bob', reaction: '❤️' }]);
     expect(thread.messages[1].share).toMatchObject({ link: 'https://www.instagram.com/p/example/', share_text: 'A post' });
 
     const mediaState = createMediaState();

@@ -7,11 +7,12 @@ import { formatEntrySize, getAvatarChar, getAvatarColor } from '../../services/c
 
 interface ConsistencyDetailsModalProps {
   chats: { entry: ChatListEntry; issue: ReactionConsistencyChat }[];
+  title?: string;
   onOpenChat: (entry: ChatListEntry) => Promise<void>;
   onClose: () => void;
 }
 
-export function ConsistencyDetailsModal({ chats, onOpenChat, onClose }: ConsistencyDetailsModalProps) {
+export function ConsistencyDetailsModal({ chats, title = 'Chats with inconsistent matches', onOpenChat, onClose }: ConsistencyDetailsModalProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -31,8 +32,8 @@ export function ConsistencyDetailsModal({ chats, onOpenChat, onClose }: Consiste
       <div className="shortcuts-backdrop" onClick={onClose} />
       <div className="shortcuts-card consistency-details-card">
         <div className="shortcuts-header">
-          <h3 id="consistencyDetailsTitle">Chats with inconsistent matches</h3>
-          <button ref={closeRef} className="shortcuts-close" onClick={onClose} aria-label="Close inconsistent chats">
+          <h3 id="consistencyDetailsTitle">{title}</h3>
+          <button ref={closeRef} className="shortcuts-close" onClick={onClose} aria-label={`Close ${title.toLowerCase()}`}>
             <X size={18} />
           </button>
         </div>

@@ -6,7 +6,7 @@ import { readReactionFile, validateReactionInput } from '../src/services/reactio
 import { discoverReactionConversations } from '../src/services/reactionAuditInventory';
 import { createMockDirectoryHandle } from './helpers/mockFileSystem';
 import type { MessengerMessage, MessengerThread } from '../src/types/messenger';
-const emoji = '\u{1f602}', heart = '\u2764';
+const emoji = '\u{1f602}', heart = '❤️';
 const message = (t: number, reaction = emoji, actor = 'Alice'): MessengerMessage => ({ sender_name: 'Owner', timestamp_ms: t, content: 'hello', reactions: [{ actor, reaction }] });
 const notice = (t: number, reaction = emoji, sender = 'Alice'): MessengerMessage => ({ sender_name: sender, timestamp_ms: t, content: `Wrong embedded name reacted ${reaction} to your message` });
 const thread = (messages: MessengerMessage[]): MessengerThread => ({ messages, participants: [{ name: 'Owner' }, { name: 'Alice' }], title: 'test', thread_path: 'inbox/test', is_still_participant: true });
@@ -163,6 +163,70 @@ describe('activity blocks and indexed matching', () => {
   it('keeps invalid-present and recorded competitors instead of redirecting to missing fields', () => {
     const newer = message(2); newer.reactions![0].timestamp = 0;
     expect(match([message(1), newer, notice(3)])).toHaveLength(0);
+  });
+  it('matches a consistently identified historical recipient only before an added-you boundary', () => {
+    const historical = (t: number) => ({ ...message(t), sender_name: 'Earlier member' });
+    const recorded = historical(1_000); recorded.reactions![0].timestamp = 2;
+    const input = [
+      recorded,
+      historical(2_500),
+      notice(2_000),
+      notice(3_000),
+      { sender_name: 'Moderator', timestamp_ms: 4_000, content: 'Moderator added you and 7 others to the group.' },
+      message(5_000),
+      notice(6_000),
+    ];
+    const compact = compactReactionThread(thread(input));
+    const result = matchReactionThread(compact, 'Owner', 'near');
+    expect(compact.joinBoundary).toBe(4);
+    expect(result).toMatchObject({ candidates: 3, associations: { recorded: 1, strict: 2, local: 0, cross: 0 } });
+    expect(result.estimates).toEqual([
+      { messageIndex: 1, reactionIndex: 0, noticeIndex: 3, timestamp: 3_000, method: 'strict' },
+      { messageIndex: 5, reactionIndex: 0, noticeIndex: 6, timestamp: 6_000, method: 'strict' },
+    ]);
+    expect(recorded.reactions![0].timestamp).toBe(2);
+  });
+  it('recognizes you-joined boundaries and never extends the historical recipient past one', () => {
+    const historical = (t: number) => ({ ...message(t), sender_name: 'Earlier member' });
+    const input = [
+      historical(1_000), notice(2_000), historical(3_000), notice(4_000),
+      { sender_name: 'Moderator', timestamp_ms: 5_000, content: 'You joined the group.' },
+      historical(6_000), notice(7_000),
+    ];
+    const result = matchReactionThread(compactReactionThread(thread(input)), 'Owner', 'aggressive');
+    expect(result.candidates).toBe(2);
+    expect(result.estimates.map(estimate => estimate.noticeIndex).sort()).toEqual([1, 3]);
+  });
+  it('does not infer a historical recipient from one coincidental pre-join pair', () => {
+    const historical = { ...message(1_000), sender_name: 'Earlier member' };
+    const input = [historical, notice(2_000), { sender_name: 'Moderator', timestamp_ms: 3_000, content: 'Moderator added you to the group.' }];
+    const result = matchReactionThread(compactReactionThread(thread(input)), 'Owner', 'near');
+    expect(result.candidates).toBe(0);
+    expect(result.estimates).toEqual([]);
+  });
+  it('prefers a better-supported entry boundary over an earlier typed lookalike', () => {
+    const historical = (t: number) => ({ ...message(t), sender_name: 'Earlier member' });
+    const entry = (t: number, content: string) => ({ sender_name: 'Moderator', timestamp_ms: t, content });
+    const input = [
+      historical(1_000), notice(1_100), historical(2_000), notice(2_100),
+      entry(2_500, 'Moderator added you to the group.'),
+      historical(3_000), notice(3_100), historical(4_000), notice(4_100),
+      entry(5_000, 'You joined the group.'), message(6_000), notice(6_100),
+    ];
+    const compact = compactReactionThread(thread(input));
+    const result = matchReactionThread(compact, 'Owner', 'near');
+    expect(compact.joinBoundaries).toEqual([4, 9]);
+    expect(result.candidates).toBe(5);
+    expect(result.estimates.map(estimate => estimate.noticeIndex).sort((a, b) => a - b)).toEqual([1, 3, 6, 8, 11]);
+  });
+  it('does not treat an entry-like message with normal-message payload as a boundary', () => {
+    const input = [{
+      sender_name: 'Moderator', timestamp_ms: 1_000, content: 'Moderator added you to the group.',
+      reactions: [{ actor: 'Alice', reaction: emoji }],
+    }];
+    const compact = compactReactionThread(thread(input));
+    expect(compact.joinBoundary).toBeNull();
+    expect(compact.joinBoundaries).toEqual([]);
   });
   it('freezes local pairs and only aggressive reaches much older leftover targets', () => {
     const input = [message(1), message(2), message(40_000_000), notice(40_000_001), notice(40_000_002)];

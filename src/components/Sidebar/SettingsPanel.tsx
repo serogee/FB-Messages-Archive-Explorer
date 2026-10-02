@@ -153,17 +153,18 @@ export function SettingsPanel({
   const [showFilenamePlaceholdersModal, setShowFilenamePlaceholdersModal] = useState(false);
   const [bookmarkPermissionError, setBookmarkPermissionError] = useState(false);
   const [showDisableOfflineModal, setShowDisableOfflineModal] = useState(false);
-  const [showConsistencyDetails, setShowConsistencyDetails] = useState(false);
+  const [consistencyDetails, setConsistencyDetails] = useState<'inconsistent' | 'unmatched' | null>(null);
   const [showReactionNoticesInfo, setShowReactionNoticesInfo] = useState(false);
   const [offlineSupportBusy, setOfflineSupportBusy] = useState(false);
   const [offlineSupportError, setOfflineSupportError] = useState<string | null>(null);
-  const inconsistentChats = useMemo(() => {
+  const consistencyChats = useMemo(() => {
     const entries = new Map(chatEntries.map(entry => [reactionConversationId(entry.source, entry.folderName), entry]));
-    return (reactionFeature.consistency.inconsistentChats || []).flatMap(issue => {
+    const resolve = (issues: typeof reactionFeature.consistency.inconsistentChats) => issues.flatMap(issue => {
       const entry = entries.get(issue.id);
       return entry ? [{ entry, issue }] : [];
     });
-  }, [chatEntries, reactionFeature.consistency.inconsistentChats]);
+    return { inconsistent: resolve(reactionFeature.consistency.inconsistentChats), unmatched: resolve(reactionFeature.consistency.unmatchedChats) };
+  }, [chatEntries, reactionFeature.consistency.inconsistentChats, reactionFeature.consistency.unmatchedChats]);
   const consistencyPercent = reactionFeature.consistency.notices
     ? `${((reactionFeature.consistency.candidates || 0) / reactionFeature.consistency.notices * 100).toFixed(1)}%`
     : null;
@@ -270,11 +271,15 @@ export function SettingsPanel({
           </div>
           {reactionFeature.consistency.status !== 'idle' && <p className="browser-notice" role="status">{reactionFeature.consistency.status === 'checking' ? 'Full archive consistency check running. ' : consistencyPercent ? `Full archive consistency check: ${consistencyPercent} passed. ` : 'Full archive consistency check was inconclusive. '}{reactionFeature.consistency.reason}</p>}
           {reactionFeature.consistency.status === 'inconsistent' && <>
-            <button type="button" className="settings-shortcuts-btn" onClick={() => setShowConsistencyDetails(true)}>
+            <button type="button" className="settings-shortcuts-btn" onClick={() => setConsistencyDetails('inconsistent')}>
               <span>View inconsistent matches</span>
               <ChevronRight size={16} />
             </button>
           </>}
+          {reactionFeature.consistency.status !== 'checking' && reactionFeature.consistency.unmatchedChats.length > 0 && <button type="button" className="settings-shortcuts-btn" onClick={() => setConsistencyDetails('unmatched')}>
+            <span>View chats with unmatched notices</span>
+            <ChevronRight size={16} />
+          </button>}
         </>}
       </div>
 
@@ -436,8 +441,13 @@ export function SettingsPanel({
         <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />
       )}
 
-      {showConsistencyDetails && (
-        <ConsistencyDetailsModal chats={inconsistentChats} onOpenChat={onSelectChat} onClose={() => setShowConsistencyDetails(false)} />
+      {consistencyDetails && (
+        <ConsistencyDetailsModal
+          chats={consistencyChats[consistencyDetails]}
+          title={consistencyDetails === 'inconsistent' ? 'Chats with inconsistent matches' : 'Chats with unmatched notices'}
+          onOpenChat={onSelectChat}
+          onClose={() => setConsistencyDetails(null)}
+        />
       )}
 
       {showReactionNoticesInfo && (

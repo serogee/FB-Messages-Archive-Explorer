@@ -12,7 +12,7 @@ import {
   subscribeMediaDimensions,
   type MediaDimensions,
 } from '../../services/mediaDimensions';
-import { formatReactionTime } from '../../services/reactions';
+import { displayReactionEmoji, formatReactionTime } from '../../services/reactions';
 import { useReactionContext } from '../../hooks/useReactionFeature';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
@@ -961,7 +961,7 @@ export const MessageBubble = memo(function MessageBubble({
               >
                 {uniqueEmojis.map((emoji, i) => (
                   <span key={i} className="reaction-emoji-simple">
-                    {emoji}
+                    {displayReactionEmoji(emoji)}
                   </span>
                 ))}
                 {msg.reactions!.length > 1 && (
@@ -974,7 +974,7 @@ export const MessageBubble = memo(function MessageBubble({
                     const timeText = formatReactionTime(time.timestamp, time.method);
                     return (
                       <div key={i} className="reaction-popover-item">
-                        <span className="popover-emoji">{r.reaction}</span>
+                        <span className="popover-emoji">{displayReactionEmoji(r.reaction)}</span>
                         <span className={`popover-actor${timeText ? ' has-time-info' : ''}`} title={timeText || undefined}>{r.actor}</span>
                       </div>
                     );

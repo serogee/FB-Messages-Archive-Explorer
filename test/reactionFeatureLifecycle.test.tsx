@@ -21,7 +21,7 @@ class AuditWorker {
   static holdFinish = false;
   static holdThreads = false;
   static holdReport = false;
-  static report = { status: 'consistent', reason: '24/24 supported notices match reactions.', owner: 'Owner', notices: 24, candidates: 24, inconsistentChats: [] };
+  static report = { status: 'consistent', reason: '24/24 supported notices match reactions.', owner: 'Owner', notices: 24, candidates: 24, inconsistentChats: [], unmatchedChats: [] };
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onerror: ((event: { message: string }) => void) | null = null;
   onmessageerror: (() => void) | null = null;
@@ -68,7 +68,7 @@ beforeEach(() => {
   AuditWorker.holdFinish = false;
   AuditWorker.holdThreads = false;
   AuditWorker.holdReport = false;
-  AuditWorker.report = { status: 'consistent', reason: '24/24 supported notices match reactions.', owner: 'Owner', notices: 24, candidates: 24, inconsistentChats: [] };
+  AuditWorker.report = { status: 'consistent', reason: '24/24 supported notices match reactions.', owner: 'Owner', notices: 24, candidates: 24, inconsistentChats: [], unmatchedChats: [] };
   vi.stubGlobal('Worker', AuditWorker);
   deps.discover.mockResolvedValue(['chat', 'other', 'third', 'unopened'].map(id => ({ id: `inbox:${id}`, handle, files: ['message_1.json'] })));
   deps.files.mockReturnValue([file]);
@@ -324,13 +324,14 @@ describe('reaction feature lifecycle', () => {
   it('retains the individual chats reported by a failed full consistency check', async () => {
     AuditWorker.report = {
       status: 'inconsistent', reason: '1 chat has inconsistent matches.', owner: 'Owner', notices: 30, candidates: 28,
-      inconsistentChats: [{ id: 'inbox:other', notices: 20, candidates: 18 }],
+      inconsistentChats: [{ id: 'inbox:other', notices: 20, candidates: 18 }], unmatchedChats: [{ id: 'inbox:other', notices: 20, candidates: 18 }],
     };
     const { result } = renderHook(props => useReactionFeature(props), { initialProps: { ...defaults, mode: 'near' as const } });
     await waitFor(() => expect(result.current.status).toBe('ready'));
     act(() => result.current.checkArchive());
     await waitFor(() => expect(result.current.consistency.status).toBe('inconsistent'));
     expect(result.current.consistency.inconsistentChats).toEqual([{ id: 'inbox:other', notices: 20, candidates: 18 }]);
+    expect(result.current.consistency.unmatchedChats).toEqual([{ id: 'inbox:other', notices: 20, candidates: 18 }]);
     expect(result.current.consistency).toMatchObject({ notices: 30, candidates: 28 });
   });
   it('withdraws archive authority after a late partial chat load and cannot restore it by switching modes', async () => {

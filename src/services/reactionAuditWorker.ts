@@ -43,7 +43,7 @@ self.onmessage = async (event: MessageEvent<ReactionWorkerInput>) => {
     }
     const detectedOwner = owner();
     if (input.type === 'report') {
-      const report: ReactionConsistencyReport = { status: 'incomplete', reason: '', owner: detectedOwner, notices: 0, candidates: 0, inconsistentChats: [] };
+      const report: ReactionConsistencyReport = { status: 'incomplete', reason: '', owner: detectedOwner, notices: 0, candidates: 0, inconsistentChats: [], unmatchedChats: [] };
       if (!detectedOwner) {
         const pairs = new Set([...participants.values()].map(t => [...new Set(t.participants)].sort()).filter(p => p.length === 2).map(p => JSON.stringify(p)));
         report.status = pairs.size >= 3 ? 'inconsistent' : 'incomplete';
@@ -53,6 +53,7 @@ self.onmessage = async (event: MessageEvent<ReactionWorkerInput>) => {
           const result = matchReactionThread(compact, detectedOwner, 'near');
           report.notices += result.syntaxCount;
           report.candidates += result.candidates;
+          if (result.candidates < result.syntaxCount) report.unmatchedChats.push({ id, notices: result.syntaxCount, candidates: result.candidates });
           if (result.syntaxCount >= 20 && result.candidates / result.syntaxCount < .95) {
             report.inconsistentChats.push({ id, notices: result.syntaxCount, candidates: result.candidates });
           }

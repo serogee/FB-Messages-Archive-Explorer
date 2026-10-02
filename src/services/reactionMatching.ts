@@ -4,6 +4,10 @@ import { getRecordedReactionTime, validReactionClock, type RecordedReactionTime,
 import { assignReactionPairBlocks, findReactionActivityBoundaries, normalizeReactionEmoji, parseStrictReactionNoticeText, hasProtectedReactionPayload, isBroadReactionNoticeText, type ReactionActivityBoundary } from './reactionNoticeClassifier';
 export const normalizeReactionName = (name: string) => fixEncoding(name).normalize('NFC').trim();
 const groupKey = (actor: string, emoji: string) => JSON.stringify([actor, emoji]);
+// These are the system-message forms emitted when the archive owner entered a
+// group. Keep this deliberately narrow: an ordinary message must not change
+// the recipient used for reaction matching.
+const groupJoinNotice = /^(?:(?:.+?)\s+)?added you(?:\s+and\s+\d+\s+others?)?\s+to (?:the )?group[.!]?$|^you joined (?:the )?group[.!]?$/i;
 export function getVerifiedMessageTime(msg: MessengerMessage): number | null {
   return !Object.hasOwn(msg, 'timestamp') && validReactionClock(msg.timestamp_ms) ? msg.timestamp_ms : null;
 }
@@ -16,7 +20,7 @@ interface Target { mi: number; ri: number; t: number | null; author: string; key
 interface Notice { mi: number; t: number; key: string }
 export interface CompactReactionThread {
   participants: string[]; targets: Target[]; notices: Notice[]; syntaxCount: number; hidingCandidates: number;
-  messageCount: number; boundaries: ReactionActivityBoundary[];
+  messageCount: number; boundaries: ReactionActivityBoundary[]; joinBoundary: number | null; joinBoundaries: number[];
 }
 // Complete pending actor/emoji pairs beyond the activity cutoff, then close.
 export function buildReactionBlocks(messages: MessengerMessage[], owner?: string): Int32Array {
@@ -30,11 +34,15 @@ export function compactReactionThread(data: MessengerThread): CompactReactionThr
   });
   const out: CompactReactionThread = {
     participants: (data.participants || []).map(p => normalizeReactionName(p.name)).filter(Boolean), targets: [], notices: [], syntaxCount: 0, hidingCandidates: 0,
-    messageCount: data.messages.length, boundaries: findReactionActivityBoundaries(events),
+    messageCount: data.messages.length, boundaries: findReactionActivityBoundaries(events), joinBoundary: null, joinBoundaries: [],
   };
   data.messages.forEach((msg, mi) => {
     const t = getVerifiedMessageTime(msg), author = authorOf(msg);
     const text = fixEncoding(msg.text || msg.content || '');
+    if (groupJoinNotice.test(text.trim()) && !hasProtectedReactionPayload(msg)) {
+      if (out.joinBoundary === null) out.joinBoundary = mi;
+      out.joinBoundaries.push(mi);
+    }
     const parsed = parseStrictReactionNoticeText(text);
     if (!hasProtectedReactionPayload(msg) && isBroadReactionNoticeText(text)) out.hidingCandidates++;
     if (parsed) out.syntaxCount++;
@@ -70,21 +78,30 @@ export interface ThreadMatchingResult {
   suppressedGroups: number; recordedDisagreements: number;
   associations: { recorded: number; strict: number; local: number; cross: number };
 }
-export function matchReactionThread(thread: CompactReactionThread, owner: string, mode: ReactionGuessingMode): ThreadMatchingResult {
-  const out: ThreadMatchingResult = {
+function emptyResult(thread: CompactReactionThread): ThreadMatchingResult {
+  return {
     estimates: [], candidates: 0, syntaxCount: thread.syntaxCount, hidingCandidates: thread.hidingCandidates, usableNotices: thread.notices.length,
     suppressedGroups: 0, recordedDisagreements: 0, associations: { recorded: 0, strict: 0, local: 0, cross: 0 },
   };
+}
+// Match one recipient in one contiguous part of a thread. Keeping the existing
+// matcher intact at this level makes historical and current recipients obey the
+// same recorded, local, cross-block, and ambiguity rules.
+function matchRecipientSegment(thread: CompactReactionThread, recipient: string, mode: ReactionGuessingMode, start = 0, end = thread.messageCount): ThreadMatchingResult {
+  const inSegment = (mi: number) => mi >= start && mi < end;
+  const out = emptyResult(thread);
   if (mode === 'off') return out;
-  const blocks = assignReactionPairBlocks(thread.messageCount, thread.boundaries, thread.targets.filter(r => r.author === owner), thread.notices);
+  const noticesInSegment = thread.notices.filter(n => inSegment(n.mi));
+  const targetsInSegment = thread.targets.filter(r => inSegment(r.mi));
+  const blocks = assignReactionPairBlocks(thread.messageCount, thread.boundaries, targetsInSegment.filter(r => r.author === recipient), noticesInSegment);
   const groups = new Map<string, Group>();
   const group = (key: string) => { let g = groups.get(key); if (!g) { g = { rs: [], ns: [], incomplete: false }; groups.set(key, g); } return g; };
-  for (const n of thread.notices) group(n.key).ns.push({ ...n, block: blocks[n.mi] });
+  for (const n of noticesInSegment) group(n.key).ns.push({ ...n, block: blocks[n.mi] });
   const latestNotice = new Map<string, number>();
-  for (const n of thread.notices) latestNotice.set(n.key, Math.max(n.t, latestNotice.get(n.key) || 0));
-  for (const r of thread.targets) {
+  for (const n of noticesInSegment) latestNotice.set(n.key, Math.max(n.t, latestNotice.get(n.key) || 0));
+  for (const r of targetsInSegment) {
     const g = group(r.key);
-    if (r.author === owner) { if (r.t === null) g.incomplete = true; else g.rs.push({ ...r, t: r.t, block: blocks[r.mi] }); }
+    if (r.author === recipient) { if (r.t === null) g.incomplete = true; else g.rs.push({ ...r, t: r.t, block: blocks[r.mi] }); }
     else if (!r.author && latestNotice.has(r.key) && (r.t === null || r.t < latestNotice.get(r.key)!)) g.incomplete = true;
   }
   for (const g of groups.values()) {
@@ -140,4 +157,66 @@ export function matchReactionThread(thread: CompactReactionThread, owner: string
     if (mode === 'aggressive') process(g.rs, g.ns, 'cross');
   }
   return out;
+}
+function associationCount(result: ThreadMatchingResult): number {
+  return result.associations.recorded + result.associations.strict + result.associations.local + result.associations.cross;
+}
+interface HistoricalSegment { recipient: string; boundary: number }
+function inferHistoricalRecipient(thread: CompactReactionThread, owner: string, mode: ReactionGuessingMode): HistoricalSegment | null {
+  if (!thread.joinBoundaries.length || mode === 'off') return null;
+  const supported: (HistoricalSegment & { matches: number; coverage: number })[] = [];
+  for (const boundary of thread.joinBoundaries) {
+    if (boundary === 0) continue;
+    const notices = thread.notices.filter(n => n.mi < boundary);
+    if (!notices.length) continue;
+    const latestNotice = new Map<string, number>();
+    for (const n of notices) latestNotice.set(n.key, Math.max(n.t, latestNotice.get(n.key) || 0));
+    // Consider only people with a reaction that could actually precede one of the
+    // historical notices. This avoids work (and accidental inference) from every
+    // participant in a large group.
+    const authors = new Set<string>();
+    for (const r of thread.targets) {
+      if (r.mi < boundary && r.author && r.author !== owner && r.t !== null && (latestNotice.get(r.key) || 0) > r.t) authors.add(r.author);
+    }
+    const candidates = [...authors].map(author => ({ author, result: matchRecipientSegment(thread, author, mode, 0, boundary) }))
+      .map(candidate => ({ ...candidate, matches: associationCount(candidate.result) }))
+      .sort((a, b) => b.matches - a.matches || a.author.localeCompare(b.author));
+    const best = candidates[0], next = candidates[1];
+    // A single coincidental pair is not enough to reinterpret “your message”.
+    // The observed exports have near-complete agreement; requiring 75% gives a
+    // little room for unsupported notices while keeping that interpretation safe.
+    if (!best || best.matches < 2 || best.matches / notices.length < .75 || best.matches === next?.matches) continue;
+    supported.push({ recipient: best.author, boundary, matches: best.matches, coverage: best.matches / notices.length });
+  }
+  // A typed lookalike can precede the real system entry notice. Prefer the
+  // boundary with the most corroborating history, then its coverage, rather
+  // than allowing the first matching sentence to truncate that history.
+  supported.sort((a, b) => b.matches - a.matches || b.coverage - a.coverage || b.boundary - a.boundary || a.recipient.localeCompare(b.recipient));
+  return supported[0] || null;
+}
+function combineSegments(thread: CompactReactionThread, segments: ThreadMatchingResult[]): ThreadMatchingResult {
+  const out: ThreadMatchingResult = {
+    estimates: [], candidates: 0, syntaxCount: thread.syntaxCount, hidingCandidates: thread.hidingCandidates, usableNotices: thread.notices.length,
+    suppressedGroups: 0, recordedDisagreements: 0, associations: { recorded: 0, strict: 0, local: 0, cross: 0 },
+  };
+  for (const segment of segments) {
+    out.estimates.push(...segment.estimates);
+    out.candidates += segment.candidates;
+    out.suppressedGroups += segment.suppressedGroups;
+    out.recordedDisagreements += segment.recordedDisagreements;
+    out.associations.recorded += segment.associations.recorded;
+    out.associations.strict += segment.associations.strict;
+    out.associations.local += segment.associations.local;
+    out.associations.cross += segment.associations.cross;
+  }
+  return out;
+}
+export function matchReactionThread(thread: CompactReactionThread, owner: string, mode: ReactionGuessingMode): ThreadMatchingResult {
+  if (mode === 'off') return emptyResult(thread);
+  const historical = inferHistoricalRecipient(thread, owner, mode);
+  if (historical === null) return matchRecipientSegment(thread, owner, mode);
+  return combineSegments(thread, [
+    matchRecipientSegment(thread, historical.recipient, mode, 0, historical.boundary),
+    matchRecipientSegment(thread, owner, mode, historical.boundary),
+  ]);
 }

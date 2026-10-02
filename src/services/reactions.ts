@@ -26,6 +26,12 @@ export function getReactionTimestamp(reaction: Reaction, standalone = false): nu
   const time = getRecordedReactionTime(reaction);
   return time.kind === 'recorded' ? time.ms : 0;
 }
+// Some Facebook exports encode the red heart without its emoji variation
+// selector. Render that legacy text form as the standard red-heart emoji while
+// preserving the source value for matching and archive fidelity.
+export function displayReactionEmoji(reaction: string): string {
+  return reaction === '❤' ? '❤️' : reaction;
+}
 export type ReactionGuessingMode = 'off' | 'near' | 'aggressive';
 export interface ReactionEstimate {
   messageIndex: number; reactionIndex: number; noticeIndex: number; timestamp: number; method: 'strict' | 'local' | 'cross';
