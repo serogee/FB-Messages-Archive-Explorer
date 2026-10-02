@@ -149,7 +149,7 @@ test('reaction hints dismiss and timestamped names show blue hover dates across 
         messages.push(...[1, 2].map(i => ({ sender_name: 'Owner', timestamp_ms: base - 60 * 86400000 + i, content: `old target ${i}`, reactions: [{ actor, reaction: emoji }] })));
         messages.push(...Array.from({ length: 300 }, (_, i) => ({ sender_name: 'Owner', timestamp_ms: base + i, content: `history ${i}` })));
       }
-      for (let i = 0; i < count; i++) messages.push({ sender_name: 'Owner', timestamp_ms: base + 1000 + i, content: `target ${i}`, reactions: [{ actor: 'Ghost', reaction: '\u2764', timestamp: 1700000000 }, { actor, reaction: emoji }] });
+      for (let i = 0; i < count; i++) messages.push({ sender_name: 'Owner', timestamp_ms: base + 1000 + i, content: `target ${i}`, reactions: [{ actor: 'Ghost', reaction: '❤️', timestamp: 1700000000 }, { actor, reaction: emoji }] });
       for (let i = 0; i < count + (actor === 'Alice' ? 2 : 0); i++) {
         messages.push({ sender_name: actor, timestamp_ms: base + 2000 + 2 * i, content: `Wrong text name reacted ${emoji} to your message` });
         messages.push({ sender_name: actor, timestamp_ms: base + 2001 + 2 * i, content: `reply ${i}` });

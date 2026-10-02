@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import type { MessengerMessage } from '../../types/messenger';
-import { formatReactionTime } from '../../services/reactions';
+import { displayReactionEmoji, formatReactionTime } from '../../services/reactions';
 import { useReactionContext } from '../../hooks/useReactionFeature';
 
 interface ReactionModalProps {
@@ -48,7 +48,7 @@ export function ReactionModal({ reactions, onClose, messageIndex }: ReactionModa
               className={`reaction-tab ${activeTab === emoji ? 'active' : ''}`}
               onClick={() => setActiveTab(emoji)}
             >
-              {emoji} {counts[emoji]}
+              {displayReactionEmoji(emoji)} {counts[emoji]}
             </button>
           ))}
         </div>
@@ -59,7 +59,7 @@ export function ReactionModal({ reactions, onClose, messageIndex }: ReactionModa
             const timeText = formatReactionTime(time.timestamp, time.method);
             return (
               <div key={i} className="reaction-modal-item">
-                <span className="modal-emoji">{r.reaction}</span>
+                <span className="modal-emoji">{displayReactionEmoji(r.reaction)}</span>
                 <div className="modal-actor-info">
                   <span className={`modal-actor${timeText ? ' has-time-info' : ''}`} title={timeText || undefined}>{r.actor}</span>
                   {timeText && <span className="modal-time">{timeText}</span>}
