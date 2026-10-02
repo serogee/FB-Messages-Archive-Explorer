@@ -2,20 +2,25 @@ import { useCallback, useMemo } from 'react';
 import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink } from '../types/messenger';
 import { getMessageAttachmentReferences, findMediaFile } from '../services/media';
 import { getMessageTimestamp } from '../services/parser';
-import { isReactionNoticeMessage } from '../services/reactions';
 import { getMessageLinks } from '../services/messageLinks';
 
 export type AttachmentCategory = 'all' | 'photos' | 'videos' | 'audio' | 'gifs' | 'files' | 'stickers';
 export type GalleryCategory = AttachmentCategory | 'links';
 
+// Imported threads are immutable during browsing. Share scans between the app,
+// chat header and gallery; weak keys release a closed thread naturally.
+const linksCache = new WeakMap<MessengerThread, ResolvedLink[]>();
+const attachmentsCache = new WeakMap<MessengerThread, { mediaState: MediaState; all: ResolvedAttachment[] }>();
+
 export function useSharedLinks(chatData: MessengerThread | null): ResolvedLink[] {
   return useMemo(() => {
     if (!chatData) return [];
+    const cached = linksCache.get(chatData);
+    if (cached) return cached;
 
     const links: ResolvedLink[] = [];
     for (let i = 0; i < chatData.messages.length; i++) {
       const msg = chatData.messages[i];
-      if (isReactionNoticeMessage(msg)) continue;
 
       for (const link of getMessageLinks(msg)) {
         links.push({
@@ -28,6 +33,7 @@ export function useSharedLinks(chatData: MessengerThread | null): ResolvedLink[]
         });
       }
     }
+    linksCache.set(chatData, links);
     return links;
   }, [chatData]);
 }
@@ -43,16 +49,18 @@ export function useAttachments(
 } {
   const all = useMemo<ResolvedAttachment[]>(() => {
     if (!chatData) return [];
+    const cached = attachmentsCache.get(chatData);
+    if (cached?.mediaState === mediaState) return cached.all;
 
     const result: ResolvedAttachment[] = [];
     const seen = new Set<string>();
 
     for (let i = 0; i < chatData.messages.length; i++) {
       const msg = chatData.messages[i];
-      if (isReactionNoticeMessage(msg)) continue;
 
-      const ts = getMessageTimestamp(msg) || 0;
       const refs = getMessageAttachmentReferences(msg);
+      if (refs.length === 0) continue;
+      const ts = getMessageTimestamp(msg) || 0;
 
       for (const { path, category, shared } of refs) {
         const key = `${category}:${path.toLowerCase()}`;
@@ -71,6 +79,7 @@ export function useAttachments(
       }
     }
 
+    attachmentsCache.set(chatData, { mediaState, all: result });
     return result;
   }, [chatData, mediaState]);
 

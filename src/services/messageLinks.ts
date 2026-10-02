@@ -18,6 +18,8 @@ export function trimTrailingUrlPunctuation(value: string): string {
 }
 
 export function normalizeExternalUrl(value: string): string | null {
+  // Avoid a URL exception for every ordinary message during thread scans.
+  if (!value) return null;
   const candidate = /^www\./i.test(value) ? `https://${value}` : value;
   try {
     const parsed = new URL(candidate);
