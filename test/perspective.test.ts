@@ -26,7 +26,7 @@ describe('archive perspective resolution', () => {
     expect(resolution).toMatchObject({ name: 'Alice', source: 'detected' });
   });
 
-  it('does not count duplicate participant pairs as independent evidence', () => {
+  it('does not count duplicate participant pairs as independent chats', () => {
     const result = resolveArchivePerspective([
       entry('1', ['Alice', 'Bob']), entry('2', ['Bob', 'Alice']), entry('3', ['Alice', 'Carol']),
     ], 'facebook');
