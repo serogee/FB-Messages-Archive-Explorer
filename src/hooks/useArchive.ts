@@ -155,6 +155,9 @@ type SizeWorkPlan =
 
 export function useArchive(): {
   rootHandle: ReadableDirectoryHandle | null;
+  reactionSourceRevision: number;
+  reactionMutationPending: boolean;
+  standaloneMessenger: boolean;
   originalRootHandle: ReadableDirectoryHandle | null;
 
   inboxList: ChatListEntry[];
@@ -181,6 +184,8 @@ export function useArchive(): {
   deleteMessengerChatsJsonOnly: (entries: ChatListEntry[], onProgress?: (progress: DeleteProgress) => void) => Promise<BatchDeleteResult>;
   updateFolderSize: (entry: ChatListEntry, size: number, sizeIncludesMedia?: boolean) => void;
 } {
+  const [reactionSourceRevision, setReactionSourceRevision] = useState(0);
+  const [reactionMutationPending, setReactionMutationPending] = useState(false);
   const [rootHandle, setRootHandle] = useState<ReadableDirectoryHandle | null>(null);
   const [originalRootHandle, setOriginalRootHandle] = useState<ReadableDirectoryHandle | null>(null);
   const [inboxList, setInboxList] = useState<ChatListEntry[]>([]);
@@ -477,6 +482,7 @@ export function useArchive(): {
     try {
       const handle = requestWrite ? await pickFolderWithWriteAccess() : await pickMessagesFolder();
       onFolderPicked?.();
+      setReactionSourceRevision(v => v + 1);
       const generation = ++archiveGenerationRef.current;
       
       setError(null);
@@ -692,11 +698,16 @@ export function useArchive(): {
   }, [getMessengerMediaSizeIndex, getMessengerReferenceIndex, rootHandle]);
 
   const beginDeletionOperation = useCallback((): symbol => {
-    return deletionOperationGuardRef.current.begin();
+    const token = deletionOperationGuardRef.current.begin();
+    setReactionMutationPending(true);
+    setReactionSourceRevision(v => v + 1);
+    return token;
   }, []);
 
   const finishDeletionOperation = useCallback((token: symbol) => {
     deletionOperationGuardRef.current.finish(token);
+    setReactionSourceRevision(v => v + 1);
+    setReactionMutationPending(false);
   }, []);
 
   const removeDeletedEntriesFromLists = useCallback((entries: readonly ChatListEntry[]) => {
@@ -925,7 +936,7 @@ export function useArchive(): {
   ]);
 
   return {
-    rootHandle, originalRootHandle, inboxList, archivedList, requestsList,
+    rootHandle, reactionSourceRevision, reactionMutationPending, standaloneMessenger: isMessengerExportRef.current, originalRootHandle, inboxList, archivedList, requestsList,
     archivePerspectiveKey, archivePerspectiveName,
     loading, loadProgress, sizeProgress, error,
     openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, suspendSizeWork, resumeSizeWork, deleteChat, deleteChats, deleteMessengerChatsJsonOnly, updateFolderSize,

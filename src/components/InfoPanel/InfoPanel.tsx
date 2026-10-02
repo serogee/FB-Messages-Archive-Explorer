@@ -9,11 +9,11 @@ import {
 } from '../../services/storage';
 import { getMessageTimestamp } from '../../services/parser';
 import { getMessageAttachmentReferences, isMediaReferenceFound } from '../../services/media';
-import { isReactionNoticeMessage } from '../../services/reactions';
 import { getMessageLinks } from '../../services/messageLinks';
+import { useThreadData } from '../../hooks/useThreadData';
 
 interface InfoPanelProps {
-  chatData: MessengerThread | null;
+  chatData?: MessengerThread | null;
   activeEntry: ChatListEntry | null;
   mediaState: MediaState;
   selectedPerspective: string;
@@ -67,7 +67,6 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
   let loadedChatAttachments = 0;
 
   for (const msg of messages) {
-    if (isReactionNoticeMessage(msg)) continue;
     visibleCount++;
 
     const ts = getMessageTimestamp(msg);
@@ -120,7 +119,8 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
   };
 }
 
-export function InfoPanel({ chatData, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery, header }: InfoPanelProps) {
+export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery, header }: InfoPanelProps) {
+  const chatData = useThreadData(providedThread);
   const stats = useMemo(() => {
     if (!chatData) return null;
     return computeStats(chatData.messages, mediaState, activeEntry?._messengerExport === true);

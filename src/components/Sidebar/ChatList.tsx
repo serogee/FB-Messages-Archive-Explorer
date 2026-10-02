@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { Pin } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import type { ChatListEntry } from '../../types/messenger';
-import { formatRelativeTime, formatFileSize } from '../../services/storage';
+import { formatRelativeTime } from '../../services/storage';
 import { getOrderedMessageFileNames } from '../../services/parser';
 import { getBookmarkChatId } from '../../services/bookmarks';
 import { filterAndOrderChats, type ChatSortOption } from '../../services/chatList';
+import { formatEntrySize, getAvatarChar, getAvatarColor } from '../../services/chatListPresentation';
 
 interface ChatListProps {
   chatList: ChatListEntry[];
@@ -40,34 +41,8 @@ interface ChatItemProps {
   onTogglePin: () => Promise<void>;
 }
 
-function getAvatarChar(title: string): string {
-  return (title || '?').trim().charAt(0).toUpperCase();
-}
-
-function getAvatarColor(title: string): string {
-  const colors = [
-    '#0084ff', '#44bec7', '#fa3c4c', '#d696bb',
-    '#6d86d4', '#1da1f2', '#e75d5d', '#5bb974',
-  ];
-  let hash = 0;
-  for (let i = 0; i < title.length; i++) hash = (hash * 31 + title.charCodeAt(i)) & 0xffffff;
-  return colors[Math.abs(hash) % colors.length];
-}
-
 const MENU_DROP_UP_THRESHOLD_PX = 150;
 const MENU_WIDTH_PX = 160;
-
-function formatEntrySize(entry: ChatListEntry): string {
-  if (entry._messengerExport && !entry._sizeIncludesMedia) {
-    return `${formatFileSize(entry.folderSize)} + media`;
-  }
-
-  if (entry.folderSize <= 0) {
-    return `${entry.jsonFileCount} json + media`;
-  }
-
-  return formatFileSize(entry.folderSize);
-}
 
 async function copyFolderPath(entry: ChatListEntry) {
   const subfolder =

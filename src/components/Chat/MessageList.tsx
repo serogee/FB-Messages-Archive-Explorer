@@ -2,12 +2,16 @@ import React, { useRef, useImperativeHandle, forwardRef, useCallback } from 'rea
 import type { MediaEntry, MessengerThread, MediaState } from '../../types/messenger';
 import type { Settings } from '../../hooks/useSettings';
 import { isReactionNoticeMessage } from '../../services/reactions';
+import { useReactionContext } from '../../hooks/useReactionFeature';
+import { useThreadData } from '../../hooks/useThreadData';
 import { getMessageTimestamp } from '../../services/parser';
 import { getMediaReferencePath, getMediaType, getMessageMediaItems, resolveMessageMediaItems } from '../../services/media';
 import { scanMediaDimensions } from '../../services/mediaDimensions';
 import { chunkArray } from '../../services/storage';
 import { resolveMessageJumpTarget } from '../../services/messageJump';
+import { getVisibleMessageNeighbors } from '../../services/messageVisibility';
 import { MessageBubble } from './MessageBubble';
+import { ReactionVisibilityAnchor } from './ReactionVisibilityAnchor';
 import {
   captureChatScrollAnchor,
   hasPendingMediaBeforeJumpTarget,
@@ -18,6 +22,7 @@ import {
 } from './chatScrollAnchoring';
 
 const CHUNK_SIZE = 50;
+const CHUNKS_PER_RENDER_GROUP = 40;
 const CHUNK_ESTIMATED_MESSAGE_HEIGHT = 58;
 const CHUNK_ESTIMATED_MEDIA_HEIGHT = 150;
 const CHUNK_ESTIMATED_SEPARATOR_HEIGHT = 34;
@@ -35,8 +40,18 @@ const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home
 
 type Messages = MessengerThread['messages'];
 
+// Keep thread-sized arrays in one context. Passing them to every chunk also
+// makes React's development performance tracks inspect the whole history for
+// each chunk when a visibility setting changes.
+const ChunkMessageContext = React.createContext<{
+  allMessages: Messages;
+  chunks: Messages[];
+  visibility: Uint8Array;
+  neighbors: ReturnType<typeof getVisibleMessageNeighbors>;
+} | null>(null);
+
 interface MessageListProps {
-  chatData: MessengerThread | null;
+  chatData?: MessengerThread | null;
   mediaState: MediaState;
   selectedPerspective: string;
   settings: Settings;
@@ -44,6 +59,7 @@ interface MessageListProps {
   onScrollSync: () => void;
   onMediaClick?: (mediaPath: string, msgIndex: number) => void;
   onLinkClick?: (url: string, msgIndex: number) => void;
+  onHiddenCountChange?: (count: number) => void;
 }
 
 export interface MessageListHandle {
@@ -52,24 +68,10 @@ export interface MessageListHandle {
   scrollToBottom: () => void;
 }
 
-function findPreviousVisibleIndex(messages: Messages, fromIndex: number): number {
-  for (let i = fromIndex - 1; i >= 0; i--) {
-    if (!isReactionNoticeMessage(messages[i])) return i;
-  }
-  return -1;
-}
-
-function findNextVisibleIndex(messages: Messages, fromIndex: number): number {
-  for (let i = fromIndex + 1; i < messages.length; i++) {
-    if (!isReactionNoticeMessage(messages[i])) return i;
-  }
-  return -1;
-}
-
-function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages: Messages): number {
+function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages: Messages, visibility: Uint8Array, previous: Int32Array): number {
   let visibleCount = 0, mediaCount = 0, separatorCount = 0;
   messages.forEach((msg, localIdx) => {
-    if (isReactionNoticeMessage(msg)) return;
+    if (visibility[chunkIndex * CHUNK_SIZE + localIdx]) return;
     visibleCount++;
     const mediaItems = getMessageMediaItems(msg);
     let previewCount = 0;
@@ -84,25 +86,18 @@ function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages
     mediaCount += (previewCount > 1 ? Math.ceil(previewCount / 2) : previewCount) + otherCount;
     const globalIdx = chunkIndex * CHUNK_SIZE + localIdx;
     if (globalIdx === 0) { separatorCount++; return; }
-    const prevIdx = findPreviousVisibleIndex(allMessages, globalIdx);
+    const prevIdx = previous[globalIdx];
     const prevMsg = prevIdx >= 0 ? allMessages[prevIdx] : null;
     const prevTime = prevMsg ? (getMessageTimestamp(prevMsg) || 0) : 0;
     const currTime = getMessageTimestamp(msg) || 0;
     if (!prevMsg || Math.abs(currTime - prevTime) > TIME_GAP_MS) separatorCount++;
   });
+  if (visibleCount === 0) return 0;
   return Math.max(160,
     visibleCount * CHUNK_ESTIMATED_MESSAGE_HEIGHT +
     mediaCount * CHUNK_ESTIMATED_MEDIA_HEIGHT +
     separatorCount * CHUNK_ESTIMATED_SEPARATOR_HEIGHT
   );
-}
-
-function getChunksAndHeights(chatData: MessengerThread) {
-  const chunks = chunkArray(chatData.messages, CHUNK_SIZE);
-  if (!chatData._chunkHeights || chatData._chunkHeights.length !== chunks.length) {
-    chatData._chunkHeights = chunks.map((chunk, i) => estimateChunkHeight(chunk, i, chatData.messages));
-  }
-  return { chunks, chunkHeights: chatData._chunkHeights };
 }
 
 function formatSeparatorDate(ts: number): string {
@@ -143,11 +138,7 @@ async function waitForDimensionPreflight(entries: readonly MediaEntry[], priorit
   await scanMediaDimensions(entries, priority);
 }
 
-interface MessageChunkProps {
-  chunkIndex: number;
-  messages: Messages;
-  allMessages: Messages;
-  estimatedHeight: number;
+interface ChunkViewData {
   selectedPerspective: string;
   settings: Settings;
   mediaState: MediaState;
@@ -155,38 +146,50 @@ interface MessageChunkProps {
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
   onMediaClick?: (mediaPath: string, msgIndex: number) => void;
   onLinkClick?: (url: string, msgIndex: number) => void;
-  forceRender?: boolean;
-  dimensionPriority: number;
   onRendered: (chunkIndex: number) => void;
   onHeightMeasured: (chunkIndex: number, height: number) => void;
+  getChunkHeight: (chunkIndex: number) => number;
+  lastVisibleChunk: number;
+  forcedChunkIndex: number | null;
+}
+
+const ChunkViewContext = React.createContext<ChunkViewData | null>(null);
+
+interface MessageChunkProps {
+  chunkIndex: number;
+  estimatedHeight: number;
+  forceRender: boolean;
+  dimensionPriority: number;
 }
 
 const MessageChunk = React.memo(function MessageChunk({
   chunkIndex,
-  messages,
-  allMessages,
   estimatedHeight,
-  selectedPerspective,
-  settings,
-  mediaState,
-  highlightQuery,
-  chatContainerRef,
-  onMediaClick,
-  onLinkClick,
   forceRender,
   dimensionPriority,
-  onRendered,
-  onHeightMeasured,
 }: MessageChunkProps) {
+  const {
+    selectedPerspective,
+    settings,
+    mediaState,
+    highlightQuery,
+    chatContainerRef,
+    onMediaClick,
+    onLinkClick,
+    onRendered,
+    onHeightMeasured,
+  } = React.useContext(ChunkViewContext)!;
+  const { allMessages, chunks, visibility, neighbors } = React.useContext(ChunkMessageContext)!;
+  const messages = chunks[chunkIndex];
   const chunkRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = React.useState(false);
   const preparationRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(true);
+  const nearbyRef = useRef(false);
+  const forcedRef = useRef(forceRender);
+  forcedRef.current = forceRender;
+  const measuredRef = useRef<{ visibility: Uint8Array; height: number } | null>(null);
   const shouldRender = rendered;
-  const dimensionEntries = React.useMemo(
-    () => getChunkDimensionEntries(messages, mediaState),
-    [mediaState, messages],
-  );
 
   React.useEffect(() => {
     mountedRef.current = true;
@@ -197,6 +200,8 @@ const MessageChunk = React.memo(function MessageChunk({
 
   const prepareAndRender = React.useCallback((priority = dimensionPriority): Promise<void> => {
     if (rendered) return Promise.resolve();
+    // Resolve media only for nearby or explicitly requested chunks.
+    const dimensionEntries = getChunkDimensionEntries(messages, mediaState);
     if (preparationRef.current) {
       // A visible or jump-target chunk can promote reads that started as preload work.
       void scanMediaDimensions(dimensionEntries, priority);
@@ -204,17 +209,17 @@ const MessageChunk = React.memo(function MessageChunk({
     }
     const preparation = waitForDimensionPreflight(dimensionEntries, priority)
       .then(() => {
-        if (mountedRef.current) {
+        if (mountedRef.current && (nearbyRef.current || forcedRef.current)) {
           const container = chatContainerRef.current;
           // The chunk itself is about to change height, so it is only an
           // exclusion boundary; anchoring chooses stable content in the viewport.
           if (container) captureChatScrollAnchor(container, false, chunkRef.current);
           setRendered(true);
         }
-      });
+      }).finally(() => { preparationRef.current = null; });
     preparationRef.current = preparation;
     return preparation;
-  }, [chatContainerRef, dimensionEntries, dimensionPriority, rendered]);
+  }, [chatContainerRef, messages, mediaState, dimensionPriority, rendered]);
 
   React.useEffect(() => {
     if (forceRender) void prepareAndRender();
@@ -223,12 +228,19 @@ const MessageChunk = React.memo(function MessageChunk({
   React.useEffect(() => {
     const el = chunkRef.current;
     const container = chatContainerRef.current;
-    if (!el || !container || shouldRender) return;
+    if (!el || !container) return;
 
     const preloadObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach(entry => {
-          if (entry.isIntersecting && !rendered) void prepareAndRender();
+          nearbyRef.current = entry.isIntersecting;
+          if (entry.isIntersecting) void prepareAndRender();
+          else if (!forcedRef.current && rendered) {
+            // Keep its measured space while releasing message DOM outside the
+            // preload margin. Visited chunks must not accumulate forever.
+            measuredRef.current = { visibility, height: el.offsetHeight };
+            setRendered(false);
+          }
         });
       },
       { root: container, threshold: 0.01, rootMargin: `${CHUNK_PRELOAD_MARGIN_PX}px 0px` }
@@ -248,20 +260,29 @@ const MessageChunk = React.memo(function MessageChunk({
       preloadObserver.disconnect();
       visibleObserver.disconnect();
     };
-  }, [rendered, shouldRender, chatContainerRef, prepareAndRender]);
+  }, [rendered, chatContainerRef, prepareAndRender, visibility, forceRender]);
 
   React.useLayoutEffect(() => {
     if (shouldRender && chunkRef.current && chatContainerRef.current) {
       const actualHeight = chunkRef.current.offsetHeight;
+      measuredRef.current = { visibility, height: actualHeight };
       const container = chatContainerRef.current;
       onHeightMeasured(chunkIndex, actualHeight);
       stabilizeChatScrollAnchor(container);
       onRendered(chunkIndex);
     }
-  }, [rendered, shouldRender, chatContainerRef, chunkIndex, onHeightMeasured, onRendered]);
+  }, [rendered, shouldRender, visibility, chatContainerRef, chunkIndex, onHeightMeasured, onRendered]);
 
-
-
+  React.useEffect(() => {
+    const element = chunkRef.current;
+    if (!rendered || !element) return;
+    const observer = new ResizeObserver(() => {
+      measuredRef.current = { visibility, height: element.offsetHeight };
+      onHeightMeasured(chunkIndex, element.offsetHeight);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [rendered, visibility, chunkIndex, onHeightMeasured]);
   if (!shouldRender) {
     return (
       <div
@@ -271,21 +292,21 @@ const MessageChunk = React.memo(function MessageChunk({
         data-start-msg-index={chunkIndex * CHUNK_SIZE}
         data-end-msg-index={Math.min(allMessages.length - 1, (chunkIndex + 1) * CHUNK_SIZE - 1)}
         data-rendered="false"
-        style={{ minHeight: estimatedHeight }}
+        style={{ minHeight: measuredRef.current?.visibility === visibility ? measuredRef.current.height : estimatedHeight }}
       />
     );
   }
 
   const items: React.ReactNode[] = [];
   messages.forEach((msg, localIdx) => {
-    if (isReactionNoticeMessage(msg)) return;
+    if (visibility[chunkIndex * CHUNK_SIZE + localIdx]) return;
     const globalIdx = chunkIndex * CHUNK_SIZE + localIdx;
 
     let showSeparator = false;
     if (globalIdx === 0) {
       showSeparator = true;
     } else {
-      const prevIdx = findPreviousVisibleIndex(allMessages, globalIdx);
+      const prevIdx = neighbors.previous[globalIdx];
       const prevMsg = prevIdx >= 0 ? allMessages[prevIdx] : null;
       const prevTime = prevMsg ? (getMessageTimestamp(prevMsg) || 0) : 0;
       const currTime = getMessageTimestamp(msg) || 0;
@@ -305,7 +326,7 @@ const MessageChunk = React.memo(function MessageChunk({
     const isMe = sender === selectedPerspective;
 
     let isFirstInClump = showSeparator;
-    const prevIdx = findPreviousVisibleIndex(allMessages, globalIdx);
+    const prevIdx = neighbors.previous[globalIdx];
     if (prevIdx >= 0 && !showSeparator) {
       const prevMsg = allMessages[prevIdx];
       const prevSender = prevMsg.senderName || prevMsg.sender_name || 'Unknown';
@@ -313,7 +334,7 @@ const MessageChunk = React.memo(function MessageChunk({
     }
 
     let isLastInClump = true;
-    const nextIdx = findNextVisibleIndex(allMessages, globalIdx);
+    const nextIdx = neighbors.next[globalIdx];
     if (nextIdx >= 0) {
       const nextMsg = allMessages[nextIdx];
       const nextSender = nextMsg.senderName || nextMsg.sender_name || 'Unknown';
@@ -357,10 +378,50 @@ const MessageChunk = React.memo(function MessageChunk({
   );
 });
 
+// React can yield between groups. Building every placeholder and estimating
+// every message inside MessageList's render would block even in a transition.
+const MessageChunkGroup = React.memo(function MessageChunkGroup({ start }: { start: number }) {
+  const { chunks } = React.useContext(ChunkMessageContext)!;
+  const { getChunkHeight, lastVisibleChunk, forcedChunkIndex } = React.useContext(ChunkViewContext)!;
+  const items = [];
+  for (let i = start; i < Math.min(chunks.length, start + CHUNKS_PER_RENDER_GROUP); i++) {
+    const height = getChunkHeight(i);
+    if (height === 0) continue;
+    const forced = i === lastVisibleChunk || i === forcedChunkIndex;
+    items.push(<MessageChunk key={i} chunkIndex={i} estimatedHeight={height} forceRender={forced} dimensionPriority={forced ? 0 : 1} />);
+  }
+  return <>{items}</>;
+});
+
 const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function MessageList(
-  { chatData, mediaState, selectedPerspective, settings, highlightQuery, onScrollSync, onMediaClick, onLinkClick },
+  { chatData: providedThread, mediaState, selectedPerspective, settings, highlightQuery, onScrollSync, onMediaClick, onLinkClick, onHiddenCountChange },
   ref
 ) {
+  const chatData = useThreadData(providedThread);
+  const reactionFeature = useReactionContext();
+  const [revealed, setRevealed] = React.useState<{ data: MessengerThread | null; hide: boolean; indices: Set<number> }>({ data: null, hide: false, indices: new Set() });
+  const visibility = React.useMemo(() => {
+    const messages = chatData?.messages || [];
+    const result = new Uint8Array(messages.length);
+    if (!reactionFeature.hide) return result;
+    const exceptions = revealed.data === chatData && revealed.hide === reactionFeature.hide ? revealed.indices : null;
+    for (let index = 0; index < messages.length; index++) {
+      if (!exceptions?.has(index) && isReactionNoticeMessage(messages[index])) result[index] = 1;
+    }
+    return result;
+  }, [chatData, reactionFeature.hide, revealed]);
+  const neighbors = React.useMemo(() => getVisibleMessageNeighbors(visibility), [visibility]);
+  // A fresh token for each loaded thread keeps snapshot comparisons cheap.
+  const threadIdentity = React.useMemo(() => ({ threadPath: chatData?.thread_path }), [chatData]);
+  const getVisibility = useCallback(() => visibility, [visibility]);
+  const chunks = React.useMemo(() => chatData ? chunkArray(chatData.messages, CHUNK_SIZE) : [], [chatData]);
+  const chunkMessageData = React.useMemo(() => ({ allMessages: chatData?.messages || [], chunks, visibility, neighbors }), [chatData, chunks, visibility, neighbors]);
+  React.useEffect(() => {
+    onHiddenCountChange?.(visibility.reduce((sum, value) => sum + value, 0));
+  }, [visibility, onHiddenCountChange]);
+  React.useEffect(() => {
+    setRevealed(prev => prev.indices.size > 0 && (prev.data !== chatData || prev.hide !== reactionFeature.hide) ? { data: chatData, hide: reactionFeature.hide, indices: new Set() } : prev);
+  }, [chatData, reactionFeature.hide]);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -467,6 +528,11 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
         requestId === jumpRequestIdRef.current && container === chatContainerRef.current
       );
       const chunkIndex = Math.floor(index / CHUNK_SIZE);
+      if (visibility[index] && chatData) {
+        setRevealed(prev => ({ data: chatData, hide: reactionFeature.hide, indices: new Set([...(prev.data === chatData && prev.hide === reactionFeature.hide ? prev.indices : []), index]) }));
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (!isCurrent()) return;
+      }
       const dimensionEntries = chatData
         ? getChunkDimensionEntries(
             chatData.messages.slice(chunkIndex * CHUNK_SIZE, (chunkIndex + 1) * CHUNK_SIZE),
@@ -529,7 +595,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
         resetChatScrollAnchor(container);
       }
     },
-  }), [beginJumpSettling, cancelPendingChunkRender, chatData, clearJumpHighlight, clearJumpSettling, mediaState, renderChunk]);
+  }), [beginJumpSettling, cancelPendingChunkRender, chatData, clearJumpHighlight, clearJumpSettling, mediaState, renderChunk, visibility, reactionFeature.hide]);
 
   const handleScroll = useCallback(() => {
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
@@ -575,10 +641,19 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
   }, [cancelPendingChunkRender, clearJumpHighlight, clearJumpSettling]);
 
-  const { chunks, chunkHeights } = React.useMemo(
-    () => chatData ? getChunksAndHeights(chatData) : { chunks: [], chunkHeights: [] },
-    [chatData]
-  );
+  const chunkHeights = React.useMemo(() => ({ visibility, values: new Map<number, number>() }), [visibility]);
+  const getChunkHeight = useCallback((index: number) => {
+    const cached = chunkHeights.values.get(index);
+    if (cached !== undefined) return cached;
+    const height = estimateChunkHeight(chunks[index], index, chatData!.messages, visibility, neighbors.previous);
+    chunkHeights.values.set(index, height);
+    return height;
+  }, [chunkHeights, chunks, chatData, visibility, neighbors]);
+
+  const lastVisibleChunk = React.useMemo(() => {
+    for (let i = visibility.length - 1; i >= 0; i--) if (!visibility[i]) return Math.floor(i / CHUNK_SIZE);
+    return -1;
+  }, [visibility]);
 
   const opening = !!chatData && readyChat !== chatData;
 
@@ -612,7 +687,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
 
       container.dataset.isAtBottom = 'true';
       container.scrollTop = container.scrollHeight;
-      const lastChunkIndex = chunks.length - 1;
+      const lastChunkIndex = lastVisibleChunk;
       const lastChunkReady = lastChunkIndex < 0 || !!container.querySelector(
         `.message-chunk[data-chunk-index="${lastChunkIndex}"][data-rendered="true"]`,
       );
@@ -649,15 +724,20 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
       if (timer) clearTimeout(timer);
       if (revealFrame !== null) cancelAnimationFrame(revealFrame);
     };
-  }, [chatData, chunks.length, readyChat]);
+  }, [chatData, chunks.length, readyChat, lastVisibleChunk]);
 
   const handleChunkHeightMeasured = useCallback((chunkIndex: number, height: number) => {
-    if (chatData?._chunkHeights) chatData._chunkHeights[chunkIndex] = height;
-  }, [chatData]);
+    chunkHeights.values.set(chunkIndex, height);
+  }, [chunkHeights]);
+  const chunkViewData = React.useMemo(() => ({
+    selectedPerspective, settings, mediaState, highlightQuery, chatContainerRef,
+    onMediaClick, onLinkClick, onRendered: handleChunkRendered,
+    onHeightMeasured: handleChunkHeightMeasured, getChunkHeight, lastVisibleChunk, forcedChunkIndex,
+  }), [selectedPerspective, settings, mediaState, highlightQuery, onMediaClick, onLinkClick,
+    handleChunkRendered, handleChunkHeightMeasured, getChunkHeight, lastVisibleChunk, forcedChunkIndex]);
+  const renderGroups = React.useMemo(() => Array.from({ length: Math.ceil(chunks.length / CHUNKS_PER_RENDER_GROUP) }, (_, index) => index * CHUNKS_PER_RENDER_GROUP), [chunks.length]);
 
   if (!chatData) return null;
-
-  const allMessages = chatData.messages;
 
   return (
     <div
@@ -672,28 +752,16 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
       onKeyDown={handleJumpKeyDown}
     >
       {opening && <div className="chat-opening-status" role="status">Preparing messages...</div>}
-      <div className="message-list-content">
-        {chunks.map((chunk, i) => (
-          <MessageChunk
-            key={i}
-            chunkIndex={i}
-            messages={chunk}
-            allMessages={allMessages}
-            estimatedHeight={chunkHeights[i]}
-            selectedPerspective={selectedPerspective}
-            settings={settings}
-            mediaState={mediaState}
-            highlightQuery={highlightQuery}
-            chatContainerRef={chatContainerRef}
-            onMediaClick={onMediaClick}
-            onLinkClick={onLinkClick}
-            forceRender={i === chunks.length - 1 || i === forcedChunkIndex}
-            dimensionPriority={i === chunks.length - 1 || i === forcedChunkIndex ? 0 : 1}
-            onRendered={handleChunkRendered}
-            onHeightMeasured={handleChunkHeightMeasured}
-          />
-        ))}
+      {lastVisibleChunk < 0 && <div className="reaction-empty-chat">All messages are hidden. <button type="button" onClick={reactionFeature.showAll}>Show all</button></div>}
+      <ChunkMessageContext value={chunkMessageData}>
+      <ChunkViewContext value={chunkViewData}>
+      <ReactionVisibilityAnchor data={threadIdentity} getVisibility={getVisibility} containerRef={chatContainerRef}>
+      <div className="message-list-content" key={chatData.thread_path || chatData.title}>
+        {renderGroups.map(start => <MessageChunkGroup key={start} start={start} />)}
       </div>
+      </ReactionVisibilityAnchor>
+      </ChunkViewContext>
+      </ChunkMessageContext>
     </div>
   );
 });
@@ -706,6 +774,8 @@ export const MessageList = React.memo(MessageListBase, (prev, next) => {
          prev.settings.showMyName === next.settings.showMyName &&
          prev.settings.showTheirName === next.settings.showTheirName &&
          prev.settings.showReactions === next.settings.showReactions &&
+         prev.settings.hideLikelyReactionNotices === next.settings.hideLikelyReactionNotices &&
+         prev.onHiddenCountChange === next.onHiddenCountChange &&
          prev.onMediaClick === next.onMediaClick &&
          prev.onLinkClick === next.onLinkClick;
 });

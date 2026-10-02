@@ -71,6 +71,10 @@
 
 .settings-section { margin-bottom: 16px; color: var(--muted); }
 .settings-section > strong { display: block; margin-bottom: 10px; font-size: 15px; color: var(--text); }
+.settings-section-heading { display:flex; align-items:center; gap:6px; margin-bottom:10px; }
+.settings-section-heading > strong { margin:0; font-size:15px; color:var(--text); }
+.settings-info-button { display:flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--muted); cursor:pointer; }
+.settings-info-button:hover, .settings-info-button:focus-visible { color:var(--accent); background:var(--hover-overlay); outline:none; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .settings-row > label:first-child { font-size: 14px; color: var(--muted); cursor: pointer; flex: 1; }
 .settings-row > .switch { flex: 0 0 auto; }
@@ -274,3 +278,24 @@
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+.reaction-guessing-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.reaction-guessing-status .browser-notice { flex: 1; min-width: 0; margin: 0; font-style: normal; }
+.reaction-refresh-control { flex-shrink: 0; padding: 4px 8px; font-size: 12px; }
+/* This overlay follows the header without changing the chat's scroll geometry. */
+.reaction-notice-overlay { position: relative; flex: 0 0 0; height: 0; z-index: 30; }
+.reaction-notice-panel {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100% - 32px);
+  box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel-bg); color: var(--muted); font-size: 12px; line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .15);
+}
+.reaction-notice-panel > span { min-width: 0; }
+.reaction-hidden-control { flex-shrink: 0; background: transparent; border: 0; color: var(--accent); font: inherit; cursor: pointer; padding: 4px 0; white-space: nowrap; }
+.reaction-hidden-control:hover { text-decoration: underline; }
+.reaction-hidden-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+.reaction-search-hint { font-size: 12px; color: var(--muted); padding: 5px 0; }
+.reaction-search-hint button, .reaction-empty-chat button { color: var(--accent); border: 0; background: transparent; cursor: pointer; }
+.reaction-empty-chat { text-align: center; padding: 24px; color: var(--muted); }
+.perspective-dropdown-btn:disabled { opacity: .5; cursor: default; }

@@ -12,10 +12,12 @@ import {
   subscribeMediaDimensions,
   type MediaDimensions,
 } from '../../services/mediaDimensions';
-import { getReactionTimestamp } from '../../services/reactions';
+import { formatReactionTime } from '../../services/reactions';
+import { useReactionContext } from '../../hooks/useReactionFeature';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
 import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
+import { formatMessageDateTime } from '../../services/dateTime';
 import { ReactionModal } from './ReactionModal';
 import { registerChatAnchorCandidate, stabilizeChatScrollAnchor } from './chatScrollAnchoring';
 import { MediaFileSize } from '../MediaFileSize';
@@ -116,13 +118,9 @@ interface MessageBubbleProps {
 }
 
 function formatTimestamp(ts: number): string {
-  return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  return formatMessageDateTime(ts);
 }
 
-function getReactionTimeText(ts: number): string {
-  if (!ts) return '';
-  return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-}
 
 function renderHighlightedText(text: string, highlightQuery: string, key: string) {
   const html = highlightQuery ? highlightText(text, highlightQuery) : escapeHtml(text);
@@ -875,6 +873,7 @@ export const MessageBubble = memo(function MessageBubble({
   const isMediaOnly = hasMediaPreview && !rawText && messageLinks.length === 0 && otherMediaItems.length === 0;
 
   const showName = isMe ? showMyName : showTheirName;
+  const reactionFeature = useReactionContext();
   
   const hasReactions = !!(showReactions && msg.reactions && msg.reactions.length > 0);
   let uniqueEmojis: string[] = [];
@@ -971,16 +970,12 @@ export const MessageBubble = memo(function MessageBubble({
                 
                 <div className="reaction-popover">
                   {msg.reactions!.map((r, i) => {
-                    const reactionTs = getReactionTimestamp(r);
-                    const timeText = getReactionTimeText(reactionTs);
+                    const time = reactionFeature.time(r, msgIndex, i);
+                    const timeText = formatReactionTime(time.timestamp, time.method);
                     return (
-                      <div 
-                        key={i} 
-                        className="reaction-popover-item"
-                        title={timeText || undefined}
-                      >
+                      <div key={i} className="reaction-popover-item">
                         <span className="popover-emoji">{r.reaction}</span>
-                        <span className={`popover-actor ${timeText ? 'has-time-info' : ''}`}>{r.actor}</span>
+                        <span className={`popover-actor${timeText ? ' has-time-info' : ''}`} title={timeText || undefined}>{r.actor}</span>
                       </div>
                     );
                   })}
@@ -990,7 +985,8 @@ export const MessageBubble = memo(function MessageBubble({
             
             {isModalOpen && msg.reactions && (
               <ReactionModal 
-                reactions={msg.reactions} 
+                reactions={msg.reactions}
+                messageIndex={msgIndex}
                 onClose={() => setIsModalOpen(false)} 
               />
             )}

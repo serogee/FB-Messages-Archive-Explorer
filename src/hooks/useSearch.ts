@@ -9,12 +9,12 @@ import { loadMessengerExportChat } from '../services/messengerExport';
 const WIDE_INDEX_CACHE_LIMIT = 50;
 const globalWideIndexCache = new Map<string, { dirHandle: ReadableDirectoryHandle; index: SearchIndexEntry[] }>();
 
-function getWideIndexCacheKey(entry: ChatListEntry): string {
-  return `${entry.source}:${entry.folderName}:${entry._jsonFileName || ''}`;
+function getWideIndexCacheKey(entry: ChatListEntry, hide = true): string {
+  return `${entry.source}:${entry.folderName}:${entry._jsonFileName || ''}:${hide && !entry._messengerExport}`;
 }
 
-function getCachedWideIndex(entry: ChatListEntry): SearchIndexEntry[] | null {
-  const key = getWideIndexCacheKey(entry);
+function getCachedWideIndex(entry: ChatListEntry, hide: boolean): SearchIndexEntry[] | null {
+  const key = getWideIndexCacheKey(entry, hide);
   const cached = globalWideIndexCache.get(key);
   if (!cached || cached.dirHandle !== entry.dirHandle) {
     if (cached) globalWideIndexCache.delete(key);
@@ -26,8 +26,8 @@ function getCachedWideIndex(entry: ChatListEntry): SearchIndexEntry[] | null {
   return cached.index;
 }
 
-function setCachedWideIndex(entry: ChatListEntry, index: SearchIndexEntry[]) {
-  const key = getWideIndexCacheKey(entry);
+function setCachedWideIndex(entry: ChatListEntry, index: SearchIndexEntry[], hide: boolean) {
+  const key = getWideIndexCacheKey(entry, hide);
   globalWideIndexCache.delete(key);
   globalWideIndexCache.set(key, { dirHandle: entry.dirHandle, index });
 
@@ -40,13 +40,16 @@ function setCachedWideIndex(entry: ChatListEntry, index: SearchIndexEntry[]) {
 
 export function useSearch(
   chatData: MessengerThread | null,
-  archiveList: ChatListEntry[]
+  archiveList: ChatListEntry[],
+  hideNotices = true,
+  standalone = false
 ): {
   activeQuery: string;
   results: SearchResult[];
   isSearching: boolean;
   progress: number;
   isWideSearch: boolean;
+  noticesFiltered: boolean;
   setIsWideSearch: (wide: boolean) => void;
   startSearch: (q: string) => Promise<void>;
   clearSearch: () => void;
@@ -95,7 +98,7 @@ export function useSearch(
         if (indexCacheRef.current.data !== chatData || !indexCacheRef.current.index.length) {
           indexCacheRef.current = {
             data: chatData,
-            index: buildSearchIndex(chatData.messages, isReactionNoticeMessage),
+            index: buildSearchIndex(chatData.messages, hideNotices && !standalone ? isReactionNoticeMessage : () => false),
           };
         }
         if (signal.aborted) return;
@@ -110,14 +113,14 @@ export function useSearch(
           if (signal.aborted) return;
           const entry = archiveList[i];
           try {
-            let index = getCachedWideIndex(entry);
+            let index = getCachedWideIndex(entry, hideNotices);
             if (!index) {
               const data = entry._messengerExport
                 ? await loadMessengerExportChat(entry.dirHandle, entry._jsonFileName!, undefined, signal)
                 : await loadChatMessages(entry.dirHandle, undefined, signal);
               if (signal.aborted) return;
-              index = buildSearchIndex(data.messages, isReactionNoticeMessage);
-              setCachedWideIndex(entry, index);
+              index = buildSearchIndex(data.messages, hideNotices && !entry._messengerExport ? isReactionNoticeMessage : () => false);
+              setCachedWideIndex(entry, index, hideNotices);
             }
             const found = await performSearch(searchQuery, index, undefined, signal);
             if (signal.aborted) return;
@@ -150,7 +153,17 @@ export function useSearch(
         setProgress(100);
       }
     }
-  }, [isWideSearch, chatData, archiveList]);
+  }, [isWideSearch, chatData, archiveList, hideNotices, standalone]);
+
+  const previousVisibility = useRef(`${hideNotices}:${standalone}`);
+  useEffect(() => {
+    const visibility = `${hideNotices}:${standalone}`;
+    if (visibility === previousVisibility.current) return;
+    previousVisibility.current = visibility;
+    abortControllerRef.current?.abort();
+    indexCacheRef.current = { data: chatData, index: [] };
+    if (activeQuery) void startSearch(activeQuery);
+  }, [hideNotices, standalone, chatData, activeQuery, startSearch]);
 
   const clearSearch = useCallback(() => {
     if (abortControllerRef.current) {
@@ -167,5 +180,5 @@ export function useSearch(
     globalWideIndexCache.clear();
   }, []);
 
-  return { activeQuery, results, isSearching, progress, isWideSearch, setIsWideSearch, startSearch, clearSearch, clearWideSearchCache };
+  return { noticesFiltered: hideNotices && !standalone, activeQuery, results, isSearching, progress, isWideSearch, setIsWideSearch, startSearch, clearSearch, clearWideSearchCache };
 }

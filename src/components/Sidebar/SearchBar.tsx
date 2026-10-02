@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { useSearch } from '../../hooks/useSearch';
 import { highlightText } from '../../services/search';
 import { formatInfoDate } from '../../services/storage';
+import { useReactionContext } from '../../hooks/useReactionFeature';
 
 interface SearchBarProps {
   search: ReturnType<typeof useSearch>;
@@ -9,6 +10,7 @@ interface SearchBarProps {
 }
 
 export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
+  const reactions = useReactionContext();
   const { activeQuery, results, isSearching, progress, isWideSearch, setIsWideSearch, startSearch, clearSearch } = search;
   const [localQuery, setLocalQuery] = useState(activeQuery);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -79,6 +81,8 @@ export function SearchBar({ search, onJumpToMessage }: SearchBarProps) {
         </div>
         <span className="sidebar-search-progress-text">{progress < 100 ? `${progress}%` : 'Done'}</span>
       </div>
+
+      {search.noticesFiltered && hasQuery && <div className="reaction-search-hint">Likely reaction notices are excluded. <button type="button" onClick={reactions.showAll}>Show all</button></div>}
 
       {searchDone && (
         <div className="sidebar-search-results" role="listbox" aria-label="Search results">
