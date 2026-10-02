@@ -1,6 +1,9 @@
-import { useRef, useImperativeHandle, forwardRef, useState, useCallback } from 'react';
+import { useRef, useImperativeHandle, forwardRef, useState, useCallback, useMemo, useEffect } from 'react';
 import type { MessengerThread, MediaState, ChatListEntry, SelectableItem } from '../../types/messenger';
 import { Info } from 'lucide-react';
+import { useReactionContext } from '../../hooks/useReactionFeature';
+import { useThreadData } from '../../hooks/useThreadData';
+import { isReactionNoticeMessage } from '../../services/reactions';
 import type { Settings } from '../../hooks/useSettings';
 import type { useSearch } from '../../hooks/useSearch';
 import type { GalleryCategory } from '../../hooks/useAttachments';
@@ -15,7 +18,7 @@ import { MediaViewer } from '../MediaViewer/MediaViewer';
 import type { BookmarksController } from '../../hooks/useBookmarks';
 
 interface ChatViewProps {
-  chatData: MessengerThread | null;
+  chatData?: MessengerThread | null;
   activeEntry: ChatListEntry | null;
   mediaState: MediaState;
   msgProgress: number;
@@ -61,7 +64,7 @@ function ProgressBar({ value, label }: { value: number; label: string }) {
 
 export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView(
   {
-    chatData,
+    chatData: providedThread,
     activeEntry,
     mediaState,
     msgProgress,
@@ -85,10 +88,32 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   },
   ref
 ) {
+  const chatData = useThreadData(providedThread);
+  const reactions = useReactionContext();
+  const totalHiddenCount = useMemo(() => reactions.hide ? (chatData?.messages || []).filter(isReactionNoticeMessage).length : 0, [chatData, reactions.hide]);
+  const [reportedHidden, setReportedHidden] = useState<{ data: MessengerThread | null; hide: boolean; count: number } | null>(null);
+  const handleHiddenCountChange = useCallback((count: number) => setReportedHidden({ data: chatData, hide: reactions.hide, count }), [chatData, reactions.hide]);
+  const hiddenCount = reportedHidden?.data === chatData && reportedHidden.hide === reactions.hide ? reportedHidden.count : totalHiddenCount;
+  const hasHiddenNotices = hiddenCount > 0;
+  const [noticeHintChat, setNoticeHintChat] = useState<MessengerThread | null>(null);
+  useEffect(() => {
+    if (loading || !chatData || !reactions.hide || !hasHiddenNotices) {
+      setNoticeHintChat(null);
+      return;
+    }
+    setNoticeHintChat(chatData);
+    const timer = setTimeout(() => setNoticeHintChat(null), 3000);
+    return () => clearTimeout(timer);
+  }, [chatData, loading, reactions.hide, hasHiddenNotices]);
   const messageListRef = useRef<MessageListHandle>(null);
 
   const [viewerState, setViewerState] = useState<{ open: boolean; index: number; kind: 'attachments' | 'links' }>({ open: false, index: 0, kind: 'attachments' });
   const [attachmentJumpTarget, setAttachmentJumpTarget] = useState<AttachmentJumpTarget | null>(null);
+  const [galleryThread, setGalleryThread] = useState<MessengerThread | null>(null);
+  useEffect(() => {
+    setGalleryThread(previous => galleryOpen && chatData ? chatData : previous === chatData ? previous : null);
+  }, [chatData, galleryOpen]);
+  const galleryMounted = !!chatData && (galleryOpen || galleryThread === chatData);
   const attachments = useAttachments(chatData, mediaState);
   const links = useSharedLinks(chatData);
   const bookmarkRecords = bookmarks.attachmentBookmarks;
@@ -161,9 +186,9 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
         className={`chat-view-layer ${galleryOpen && chatData ? 'active' : 'inactive'}`}
         aria-hidden={!galleryOpen || !chatData}
       >
-        {chatData && (
+        {galleryMounted && (
           <AttachmentGallery
-            chatData={chatData}
+            chatData={providedThread ?? undefined}
             mediaState={mediaState}
             settings={settings}
             isOpen={galleryOpen}
@@ -197,7 +222,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
 
             {chatData && (
               <DateNavigator
-                chatData={chatData}
+                chatData={providedThread}
                 settings={settings}
                 onJumpToMessage={handleJumpToMessage}
                 chatContainerRef={chatContainerRef as React.RefObject<HTMLDivElement | null>}
@@ -217,6 +242,13 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
           </div>
 
           <div id="line" />
+
+          {!loading && chatData && hasHiddenNotices && noticeHintChat === chatData && <div className="reaction-notice-overlay">
+            <div className="reaction-notice-panel" role="region" aria-label="Hidden reaction notices">
+              <span role="status">{hiddenCount} reaction {hiddenCount === 1 ? 'notice' : 'notices'} hidden</span>
+              <button type="button" className="reaction-hidden-control" onClick={reactions.showAll}>Show all</button>
+            </div>
+          </div>}
 
           {loading && (
             <div id="loading">
@@ -240,7 +272,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
           {!loading && chatData && (
             <MessageList
               ref={messageListRef}
-              chatData={chatData}
+              chatData={providedThread}
               mediaState={mediaState}
               selectedPerspective={selectedPerspective}
               settings={settings}
@@ -248,6 +280,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
               onScrollSync={() => {}}
               onMediaClick={handleMediaClick}
               onLinkClick={handleLinkClick}
+              onHiddenCountChange={handleHiddenCountChange}
             />
           )}
 

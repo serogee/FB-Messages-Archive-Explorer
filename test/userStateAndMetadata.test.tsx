@@ -2,9 +2,9 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getAudioMetadata } from '../src/services/audioMetadata';
-import { enrichReactionTimestamps, getReactionTimestamp, isReactionNoticeMessage } from '../src/services/reactions';
+import { getReactionTimestamp } from '../src/services/reactions';
 import { useSettings } from '../src/hooks/useSettings';
-import type { MediaEntry, MessengerMessage } from '../src/types/messenger';
+import type { MediaEntry } from '../src/types/messenger';
 
 afterEach(() => {
   localStorage.clear();
@@ -96,32 +96,24 @@ describe('audio metadata', () => {
   });
 });
 
-describe('reaction enrichment', () => {
-  it('matches a reaction notice to the preceding message by actor and normalized emoji', async () => {
-    const messages: MessengerMessage[] = [
-      { sender_name: 'Alice', timestamp_ms: 1, content: 'Hello', reactions: [{ actor: 'Bob', reaction: '👍️' }] },
-      { sender_name: 'Bob', timestamp_ms: 25, content: 'Bob reacted 👍 to your message' },
-    ];
-
-    expect(isReactionNoticeMessage(messages[1])).toBe(true);
-    await enrichReactionTimestamps(messages);
-    expect(getReactionTimestamp(messages[0].reactions![0])).toBe(25);
-  });
-
-  it('does not mutate reactions when enrichment is already aborted', async () => {
-    const messages: MessengerMessage[] = [
-      { sender_name: 'Alice', timestamp_ms: 1, reactions: [{ actor: 'Bob', reaction: '❤' }] },
-      { sender_name: 'Bob', timestamp_ms: 25, content: 'Bob reacted ❤ to your message' },
-    ];
-    const controller = new AbortController();
-    controller.abort();
-
-    await enrichReactionTimestamps(messages, undefined, controller.signal);
-    expect(getReactionTimestamp(messages[0].reactions![0])).toBe(0);
+describe('reaction source times', () => {
+  it('converts supported source seconds and ignores imported inferred fields', () => {
+    expect(getReactionTimestamp({ actor: 'Bob', reaction: 'x', timestamp: 25 })).toBe(25000);
+    expect(getReactionTimestamp({ actor: 'Bob', reaction: 'x', __timestamp: 25 })).toBe(0);
   });
 });
 
 describe('settings persistence', () => {
+  it('starts with Nearby and preserves an explicitly saved guessing mode', () => {
+    const { result, unmount } = renderHook(() => useSettings());
+    expect(result.current.settings.reactionTimestampGuessingMode).toBe('aggressive');
+    act(() => result.current.setSetting('reactionTimestampGuessingMode', 'off'));
+    unmount();
+    const saved = renderHook(() => useSettings());
+    expect(saved.result.current.settings.reactionTimestampGuessingMode).toBe('off');
+    saved.unmount();
+  });
+
   it('loads persisted settings, migrates the legacy filename template, and updates DOM state', () => {
     const prefix = `majv_${window.location.hostname || 'local'}_setting_`;
     localStorage.setItem(`${prefix}darkMode`, 'false');

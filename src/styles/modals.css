@@ -66,6 +66,11 @@
     white-space:nowrap;
 }
 .shortcuts-note { margin:16px 0 0; color:var(--muted); font-size:12px; line-height:1.5; }
+.consistency-details-card { width:min(640px,92%); }
+.consistency-chat-list { display:flex; flex-direction:column; gap:2px; margin-top:14px; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.consistency-chat-item { width:100%; border:0; background:transparent; color:var(--text); font:inherit; text-align:left; }
+.consistency-chat-item:hover .chat-item-meta { opacity:1; }
+.consistency-chat-result { color:var(--muted); font-size:11px; line-height:1.4; }
 
 @media (max-width:520px) {
     .shortcuts-header { padding:13px 14px; }

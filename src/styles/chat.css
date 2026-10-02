@@ -575,12 +575,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.popover-actor.has-time-info {
-    text-decoration: underline dotted var(--muted);
-    text-underline-offset: 3px;
-    cursor: help;
-}
-
 .reaction-modal-overlay {
     position: fixed;
     top: 0;
@@ -679,6 +673,11 @@
     font-size: 15px;
     font-weight: 500;
     color: var(--text);
+}
+.popover-actor.has-time-info,
+.modal-actor.has-time-info {
+    color: var(--accent);
+    cursor: help;
 }
 .modal-time {
     font-size: 12px;

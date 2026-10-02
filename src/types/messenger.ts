@@ -16,7 +16,7 @@ export interface Reaction {
   reaction: string;
   timestamp?: number;
   timestamp_ms?: number;
-  /** Enriched from reaction-notice messages */
+  /** Legacy/imported field; never trusted as a reaction time. */
   __timestamp?: number;
 }
 
@@ -46,7 +46,7 @@ export interface MessengerMessage {
   is_unsent?: boolean;
   is_geoblocked_for_viewer?: boolean;
   is_unsent_image_by_messenger_kid_parent?: boolean;
-  /** Runtime cache for repeated reaction-notice checks */
+  /** Legacy/imported field; classification uses a separate WeakMap. */
   _isReactionNotice?: boolean;
 }
 
@@ -59,8 +59,10 @@ export interface MessengerThread {
   magic_words?: string[];
   joinable_mode?: { mode: number; link: string };
 
-  /** Avoids repeating asynchronous reaction timestamp enrichment. */
-  _reactionsEnriched?: boolean;
+  /** Identity of the file bytes parsed by the loader; never trusted from imported JSON. */
+  _reactionSnapshot?: string;
+  _reactionInputComplete?: boolean;
+  _standaloneMessenger?: boolean;
   /** Cached height estimates for virtualized message chunks. */
   _chunkHeights?: number[];
 }

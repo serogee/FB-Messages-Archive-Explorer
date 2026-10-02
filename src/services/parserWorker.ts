@@ -9,10 +9,18 @@ self.onmessage = async (e: MessageEvent<{ files: File[] }>) => {
     }
     
     const parsedData: MessengerThread[] = [];
+    let complete = true;
     for (const file of files) {
-      const text = await file.text();
-      parsedData.push(parseMessengerJsonContent(text));
+      try {
+        const text = await file.text();
+        const data = parseMessengerJsonContent(text);
+        if (!Array.isArray(data?.messages)) throw new Error('Invalid messages array.');
+        parsedData.push(data);
+      } catch {
+        complete = false;
+      }
     }
+    if (!parsedData.length) throw new Error('No readable message JSON files.');
     
     const base = { ...parsedData[0] };
     base.messages = parsedData.flatMap(data => Array.isArray(data.messages) ? data.messages : []);
@@ -36,7 +44,7 @@ self.onmessage = async (e: MessageEvent<{ files: File[] }>) => {
       })
       .map(item => item.msg);
       
-    self.postMessage({ type: 'success', data: base });
+    self.postMessage({ type: 'success', data: base, complete });
   } catch (error) {
     self.postMessage({ type: 'error', error: error instanceof Error ? error.message : String(error) });
   }

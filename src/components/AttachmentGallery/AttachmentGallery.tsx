@@ -17,6 +17,7 @@ import { applyGalleryFilters, getGallerySenderOptions, getGallerySenderSearchRes
 import { BulkSelectionConfirmModal } from '../Modals/BulkSelectionConfirmModal';
 import { ShortcutsModal } from '../Modals/ShortcutsModal';
 import { getAttachmentJumpTab } from './attachmentJump';
+import { useThreadData } from '../../hooks/useThreadData';
 
 const VIRTUAL_OVERSCAN_PX = 600;
 const COMPACT_CARD_MIN_WIDTH = 220;
@@ -25,7 +26,7 @@ const JUMP_HIGHLIGHT_DURATION_MS = 2200;
 const NO_BOOKMARK_LOOKUP = () => false;
 
 interface AttachmentGalleryProps {
-  chatData: MessengerThread;
+  chatData?: MessengerThread;
   mediaState: MediaState;
   settings: Settings;
   isOpen: boolean;
@@ -58,8 +59,10 @@ const TABS: { key: GalleryCategory; label: string }[] = [
   { key: 'stickers', label: 'Stickers' },
 ];
 
+const monthYearFormatter = new Intl.DateTimeFormat([], { month: 'long', year: 'numeric' });
 function formatMonthYear(ts: number): string {
-  return new Date(ts).toLocaleDateString([], { month: 'long', year: 'numeric' });
+  const date = new Date(ts);
+  return Number.isNaN(date.getTime()) ? 'Unknown Date' : monthYearFormatter.format(date);
 }
 
 function findFirstRow(rows: GalleryLayoutRow[], target: number): number {
@@ -564,7 +567,7 @@ const GalleryLinkCard = memo(function GalleryLinkCard({
 });
 
 const AttachmentGalleryBase = function AttachmentGallery({
-  chatData,
+  chatData: providedThread,
   mediaState,
   settings: _settings,
   isOpen,
@@ -583,6 +586,8 @@ const AttachmentGalleryBase = function AttachmentGallery({
   onToggleAttachmentBookmark,
   bookmarkBusy,
 }: AttachmentGalleryProps) {
+  // ChatView mounts the gallery only when a loaded thread exists.
+  const chatData = useThreadData(providedThread)!;
   const { all, byCategory } = useAttachments(chatData, mediaState);
   const links = useSharedLinks(chatData);
   const allItems = useMemo<GalleryItem[]>(

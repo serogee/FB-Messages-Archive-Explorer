@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import type { Settings } from '../../hooks/useSettings';
-import type { MessengerThread } from '../../types/messenger';
+import type { ChatListEntry, MessengerThread } from '../../types/messenger';
 import type { ReadableDirectoryHandle } from '../../types/fileSystem';
 import { getParticipantNames } from '../../services/parser';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
@@ -8,19 +8,27 @@ import { EnableDeletionModal } from '../Modals/EnableDeletionModal';
 import { ShortcutsModal } from '../Modals/ShortcutsModal';
 import { FilenamePlaceholdersModal } from '../Modals/FilenamePlaceholdersModal';
 import { DisableOfflineModal } from '../Modals/DisableOfflineModal';
-import { Braces, ChevronUp, ChevronDown, ChevronRight, Keyboard } from 'lucide-react';
+import { Braces, ChevronUp, ChevronDown, ChevronRight, Info, Keyboard } from 'lucide-react';
 import { DEFAULT_ATTACHMENT_FILENAME_TEMPLATE } from '../../services/saveAttachments';
 import { disableOfflineSupport } from '../../services/pwa';
+import { useReactionContext } from '../../hooks/useReactionFeature';
+import { ReactionGuessingDropdown } from './ReactionGuessingDropdown';
+import { useThreadData } from '../../hooks/useThreadData';
+import { reactionConversationId } from '../../services/reactionAuditInventory';
+import { ConsistencyDetailsModal } from '../Modals/ConsistencyDetailsModal';
+import { ReactionNoticesInfoModal } from '../Modals/ReactionNoticesInfoModal';
 
 interface SettingsPanelProps {
   settings: Settings;
   setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
-  chatData: MessengerThread | null;
+  chatData?: MessengerThread | null;
   selectedPerspective: string;
   setSelectedPerspective: (name: string) => void;
   onOpenFolder: () => Promise<void>;
   rootHandle: ReadableDirectoryHandle | null;
   onAttachmentBookmarkingChange: (enabled: boolean) => Promise<boolean>;
+  chatEntries: ChatListEntry[];
+  onSelectChat: (entry: ChatListEntry) => Promise<void>;
 }
 
 function ToggleRow({ id, label, checked, onChange, disabled }: {
@@ -131,19 +139,34 @@ function PerspectiveDropdown({
 
 export function SettingsPanel({
   settings, setSetting,
-  chatData, selectedPerspective, setSelectedPerspective,
+  chatData: providedThread, selectedPerspective, setSelectedPerspective,
   onOpenFolder, rootHandle,
   onAttachmentBookmarkingChange,
+  chatEntries, onSelectChat,
 }: SettingsPanelProps) {
+  const chatData = useThreadData(providedThread);
   const participants = getParticipantNames(chatData);
+  const reactionFeature = useReactionContext();
   const fsSupported = isFileSystemAccessSupported();
   const [showEnableModal, setShowEnableModal] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showFilenamePlaceholdersModal, setShowFilenamePlaceholdersModal] = useState(false);
   const [bookmarkPermissionError, setBookmarkPermissionError] = useState(false);
   const [showDisableOfflineModal, setShowDisableOfflineModal] = useState(false);
+  const [showConsistencyDetails, setShowConsistencyDetails] = useState(false);
+  const [showReactionNoticesInfo, setShowReactionNoticesInfo] = useState(false);
   const [offlineSupportBusy, setOfflineSupportBusy] = useState(false);
   const [offlineSupportError, setOfflineSupportError] = useState<string | null>(null);
+  const inconsistentChats = useMemo(() => {
+    const entries = new Map(chatEntries.map(entry => [reactionConversationId(entry.source, entry.folderName), entry]));
+    return (reactionFeature.consistency.inconsistentChats || []).flatMap(issue => {
+      const entry = entries.get(issue.id);
+      return entry ? [{ entry, issue }] : [];
+    });
+  }, [chatEntries, reactionFeature.consistency.inconsistentChats]);
+  const consistencyPercent = reactionFeature.consistency.notices
+    ? `${((reactionFeature.consistency.candidates || 0) / reactionFeature.consistency.notices * 100).toFixed(1)}%`
+    : null;
 
   const handleDeletionToggle = (val: boolean) => {
     if (val) {
@@ -226,6 +249,34 @@ export function SettingsPanel({
           <span id="tips" className="footer">Messages from the selected participant appear on the right side as "me".</span>
         </div>
       )}
+
+      <div className="settings-section">
+        <div className="settings-section-heading"><strong>Reaction notices</strong><button type="button" className="settings-info-button" aria-label="Open reaction notices information" onClick={() => setShowReactionNoticesInfo(true)}><Info size={17} /></button></div>
+        <ToggleRow id="hideLikelyReactionNotices" label="Hide reaction notices" checked={settings.hideLikelyReactionNotices} disabled={!reactionFeature.applicable} onChange={v => setSetting('hideLikelyReactionNotices', v)} />
+        <label htmlFor="reactionTimestampGuessingMode">Reaction timestamp matching</label>
+        <ReactionGuessingDropdown value={settings.reactionTimestampGuessingMode} onChange={v => setSetting('reactionTimestampGuessingMode', v)} disabled={!reactionFeature.applicable} />
+        {!reactionFeature.applicable ? <p className="browser-notice">Does not apply to this Messenger export.</p> : <>
+          <div className="reaction-guessing-status">
+            <p className="browser-notice" role="status">{settings.reactionTimestampGuessingMode === 'off' ? reactionFeature.hasCache ? 'Guesses cached' : 'No guesses cached' : reactionFeature.status === 'ready' ? 'Guesses Available' : reactionFeature.reason || (reactionFeature.status === 'checking' ? 'Checking reaction notices…' : 'Select a Facebook or Instagram export.')}</p>
+            {settings.reactionTimestampGuessingMode === 'off'
+              ? <button type="button" className="btn btn-secondary reaction-refresh-control" onClick={reactionFeature.clear} disabled={!reactionFeature.canClear}>Clear</button>
+              : ['checking', 'failed', 'unavailable', 'ready'].includes(reactionFeature.status) && <button type="button" className="btn btn-secondary reaction-refresh-control" onClick={reactionFeature.retry}>Refresh</button>}
+          </div>
+          <div className="reaction-guessing-status">
+            <p className="browser-notice">Full archive consistency check</p>
+            {reactionFeature.consistency.status === 'checking'
+              ? <button type="button" className="btn btn-secondary reaction-refresh-control" onClick={reactionFeature.cancelArchiveCheck}>Cancel</button>
+              : <button type="button" className="btn btn-secondary reaction-refresh-control" onClick={reactionFeature.checkArchive} disabled={!reactionFeature.canCheckArchive}>{reactionFeature.consistency.status === 'idle' ? 'Check archive' : 'Check again'}</button>}
+          </div>
+          {reactionFeature.consistency.status !== 'idle' && <p className="browser-notice" role="status">{reactionFeature.consistency.status === 'checking' ? 'Full archive consistency check running. ' : consistencyPercent ? `Full archive consistency check: ${consistencyPercent} passed. ` : 'Full archive consistency check was inconclusive. '}{reactionFeature.consistency.reason}</p>}
+          {reactionFeature.consistency.status === 'inconsistent' && <>
+            <button type="button" className="settings-shortcuts-btn" onClick={() => setShowConsistencyDetails(true)}>
+              <span>View inconsistent matches</span>
+              <ChevronRight size={16} />
+            </button>
+          </>}
+        </>}
+      </div>
 
       <div className="settings-section">
         <strong>Customization</strong>
@@ -383,6 +434,14 @@ export function SettingsPanel({
 
       {showShortcutsModal && (
         <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />
+      )}
+
+      {showConsistencyDetails && (
+        <ConsistencyDetailsModal chats={inconsistentChats} onOpenChat={onSelectChat} onClose={() => setShowConsistencyDetails(false)} />
+      )}
+
+      {showReactionNoticesInfo && (
+        <ReactionNoticesInfoModal onClose={() => setShowReactionNoticesInfo(false)} />
       )}
 
       {showFilenamePlaceholdersModal && (

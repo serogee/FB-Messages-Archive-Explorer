@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { storageGet, storageSet } from '../services/storage';
+import type { ReactionGuessingMode } from '../services/reactions';
 
 export interface Settings {
   darkMode: boolean;
   showMyName: boolean;
   showTheirName: boolean;
   showReactions: boolean;
+  hideLikelyReactionNotices: boolean;
+  reactionTimestampGuessingMode: ReactionGuessingMode;
   autoCollapseDateNav: boolean;
   dateAttachmentFilenames: boolean;
   attachmentFilenameTemplate: string;
@@ -24,6 +27,8 @@ const DEFAULTS: Settings = {
   showMyName: false,
   showTheirName: true,
   showReactions: true,
+  hideLikelyReactionNotices: true,
+  reactionTimestampGuessingMode: 'aggressive',
   autoCollapseDateNav: true,
   dateAttachmentFilenames: true,
   attachmentFilenameTemplate: '{-chat}_{date}_{time}_{ms}',
@@ -51,6 +56,7 @@ function loadSettings(): Settings {
         (settings as Record<keyof Settings, unknown>)[key] = n;
       }
     } else if (typeof defaultVal === 'string') {
+      if (key === 'reactionTimestampGuessingMode' && !['off', 'near', 'aggressive'].includes(stored)) continue;
       let storedValue = stored;
       if (key === 'attachmentFilenameTemplate') {
         storedValue = storedValue.replace(/\.?\{ext\}\s*$/g, '');

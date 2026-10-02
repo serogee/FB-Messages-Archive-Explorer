@@ -1,7 +1,9 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useSettings } from './hooks/useSettings';
+import { ReactionFeatureContext, useReactionFeature } from './hooks/useReactionFeature';
 import { useArchive } from './hooks/useArchive';
 import { useChat } from './hooks/useChat';
+import { ThreadDataContext } from './hooks/useThreadData';
 import { useSearch } from './hooks/useSearch';
 import { useResizable } from './hooks/useResizable';
 import { sortSelectableItemsNewestFirst, useSelection } from './hooks/useSelection';
@@ -49,7 +51,18 @@ export default function App() {
     () => [...archive.inboxList, ...archive.archivedList, ...archive.requestsList],
     [archive.inboxList, archive.archivedList, archive.requestsList]
   );
-  const search = useSearch(chat.chatData, archiveList);
+  const showAllReactionNotices = useCallback(() => setSetting('hideLikelyReactionNotices', false), [setSetting]);
+  const reactionFeature = useReactionFeature({
+    root: archive.rootHandle, revision: archive.reactionSourceRevision, standalone: archive.standaloneMessenger,
+    archiveLoading: archive.loading || archive.reactionMutationPending, chatLoading: chat.loading, chatData: chat.chatData, entry: chat.activeEntry,
+    mode: settings.reactionTimestampGuessingMode, hide: settings.hideLikelyReactionNotices, showAll: showAllReactionNotices,
+  });
+  const search = useSearch(chat.chatData, archiveList, settings.hideLikelyReactionNotices, archive.standaloneMessenger);
+  const { clearWideSearchCache, clearSearch } = search;
+  useEffect(() => {
+    clearWideSearchCache();
+    clearSearch();
+  }, [archive.reactionSourceRevision, clearWideSearchCache, clearSearch]);
   const selection = useSelection();
   const attachments = useAttachments(chat.chatData, chat.mediaState);
   const sharedLinks = useSharedLinks(chat.chatData);
@@ -373,6 +386,8 @@ export default function App() {
   const selectedItems = selection.getSelectedItems(selectableItemsNewestFirst);
 
   return (
+    <ReactionFeatureContext.Provider value={reactionFeature}>
+    <ThreadDataContext.Provider value={chat.chatData}>
     <div className={`container ${settings.infoPanelOpen ? 'info-open' : ''}`}>
       <Sidebar
         settings={settings}
@@ -395,7 +410,6 @@ export default function App() {
         onOpenFolder={handleOpenFolder}
         onDeleteChat={handleDeleteRequest}
         search={search}
-        chatData={chat.chatData}
         mediaState={chat.mediaState}
         selectedPerspective={chat.selectedPerspective}
         setSelectedPerspective={chat.setSelectedPerspective}
@@ -421,7 +435,6 @@ export default function App() {
 
       <ChatView
         ref={chatViewRef}
-        chatData={chat.chatData}
         activeEntry={chat.activeEntry}
         mediaState={chat.mediaState}
         msgProgress={chat.msgProgress}
@@ -472,7 +485,6 @@ export default function App() {
           />
         ) : (
           <InfoPanel
-            chatData={chat.chatData}
             activeEntry={chat.activeEntry}
             mediaState={chat.mediaState}
             selectedPerspective={chat.selectedPerspective}
@@ -581,5 +593,7 @@ export default function App() {
       </div>
       <TrustModal settings={settings} setSetting={setSetting} />
     </div>
+    </ThreadDataContext.Provider>
+    </ReactionFeatureContext.Provider>
   );
 }

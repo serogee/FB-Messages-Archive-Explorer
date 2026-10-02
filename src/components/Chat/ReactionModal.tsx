@@ -1,18 +1,16 @@
 import { useState, useMemo } from 'react';
 import type { MessengerMessage } from '../../types/messenger';
-import { getReactionTimestamp } from '../../services/reactions';
+import { formatReactionTime } from '../../services/reactions';
+import { useReactionContext } from '../../hooks/useReactionFeature';
 
 interface ReactionModalProps {
   reactions: NonNullable<MessengerMessage['reactions']>;
   onClose: () => void;
+  messageIndex: number;
 }
 
-function getReactionTimeText(ts: number): string {
-  if (!ts) return '';
-  return new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-export function ReactionModal({ reactions, onClose }: ReactionModalProps) {
+export function ReactionModal({ reactions, onClose, messageIndex }: ReactionModalProps) {
+  const feature = useReactionContext();
   const [activeTab, setActiveTab] = useState<string>('All');
 
   const { counts, uniqueEmojis } = useMemo(() => {
@@ -26,8 +24,7 @@ export function ReactionModal({ reactions, onClose }: ReactionModalProps) {
   }, [reactions]);
 
   const filteredReactions = useMemo(() => {
-    if (activeTab === 'All') return reactions;
-    return reactions.filter(r => r.reaction === activeTab);
+    return reactions.map((reaction, index) => ({ reaction, index })).filter(({ reaction }) => activeTab === 'All' || reaction.reaction === activeTab);
   }, [reactions, activeTab]);
 
   return (
@@ -57,14 +54,14 @@ export function ReactionModal({ reactions, onClose }: ReactionModalProps) {
         </div>
 
         <div className="reaction-modal-list">
-          {filteredReactions.map((r, i) => {
-            const reactionTs = getReactionTimestamp(r);
-            const timeText = getReactionTimeText(reactionTs);
+          {filteredReactions.map(({ reaction: r, index: i }) => {
+            const time = feature.time(r, messageIndex, i);
+            const timeText = formatReactionTime(time.timestamp, time.method);
             return (
               <div key={i} className="reaction-modal-item">
                 <span className="modal-emoji">{r.reaction}</span>
                 <div className="modal-actor-info">
-                  <span className="modal-actor">{r.actor}</span>
+                  <span className={`modal-actor${timeText ? ' has-time-info' : ''}`} title={timeText || undefined}>{r.actor}</span>
                   {timeText && <span className="modal-time">{timeText}</span>}
                 </div>
               </div>

@@ -39,7 +39,7 @@ interface SidebarProps {
     onOpenFolder: () => Promise<void>;
     onDeleteChat: (entry: ChatListEntry | ChatListEntry[]) => void;
     search: ReturnType<typeof useSearch>;
-    chatData: MessengerThread | null;
+    chatData?: MessengerThread | null;
     mediaState: MediaState;
     selectedPerspective: string;
     setSelectedPerspective: (name: string) => void;
@@ -341,6 +341,8 @@ export function Sidebar({
                         onOpenFolder={onOpenFolder}
                         rootHandle={originalRootHandle || rootHandle}
                         onAttachmentBookmarkingChange={onAttachmentBookmarkingChange}
+                        chatEntries={allChats}
+                        onSelectChat={onSelectChat}
                     />
                 )}
 
