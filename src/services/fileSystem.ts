@@ -14,7 +14,7 @@ const FACEBOOK_MESSAGES_ROOT_PATHS = [
   ACCOUNTS_CENTER_MESSAGES_DIRECTORY,
   INSTAGRAM_MESSAGES_DIRECTORY,
 ] as const;
-const FACEBOOK_CONVERSATION_SECTIONS = ['inbox', 'archived_threads', 'message_requests'] as const;
+const FACEBOOK_CONVERSATION_SECTIONS = ['inbox', 'archived_threads', 'message_requests', 'e2ee_cutover'] as const;
 
 function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
@@ -187,6 +187,9 @@ export async function listChatFolders(
 }
 
 
+const loadedReactionFiles = new WeakMap<MessengerThread, File[]>();
+export const getLoadedReactionFiles = (data: MessengerThread): File[] | undefined => loadedReactionFiles.get(data);
+
 export async function loadChatMessages(
   chatDirHandle: ReadableDirectoryHandle,
   onProgress?: (progress: number, statusText: string) => void,
@@ -207,13 +210,14 @@ export async function loadChatMessages(
   }
 
   const files: File[] = [];
+  let complete = true;
   for (let i = 0; i < orderedNames.length; i++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const name = orderedNames[i];
     try {
       const fileHandle = await chatDirHandle.getFileHandle(name);
       files.push(await fileHandle.getFile());
-    } catch { /* Keep loading the remaining message files. */ }
+    } catch { complete = false; /* Keep readable messages; estimates require the full inventory. */ }
     onProgress?.(0.05 * (i + 1) / orderedNames.length, "Preparing files...");
   }
 
@@ -242,7 +246,12 @@ export async function loadChatMessages(
     worker.onmessage = (e) => {
       if (signal) signal.removeEventListener('abort', abortHandler);
       if (e.data.type === 'success') {
-        resolve(e.data.data);
+        const data = e.data.data as MessengerThread;
+        delete data._reactionSnapshot;
+        data._reactionInputComplete = complete && e.data.complete !== false;
+        data._standaloneMessenger = false;
+        loadedReactionFiles.set(data, files);
+        resolve(data);
       } else {
         reject(new Error(e.data.error || 'Worker parsing failed'));
       }
