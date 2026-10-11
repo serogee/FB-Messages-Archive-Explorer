@@ -1,9 +1,11 @@
-import type { MediaItem, MediaState, MediaEntry, MessengerMessage } from '../types/messenger';
+import type { MediaItem, MediaState, MediaEntry, MessengerMessage, MessengerThread } from '../types/messenger';
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../types/fileSystem';
 import { blobCache } from './blobCache';
 import { imageThumbnailCache } from './imageThumbnailCache';
 import { chatImagePreviewCache } from './chatImagePreviewCache';
 import { chatVideoPosterCache, videoPosterCache } from './videoPosterCache';
+import { normalizeAttachmentPath } from './attachmentIdentity';
+import { readMp4MediaType } from './mp4MediaType';
 
 
 function normalizeMediaPath(path: string): string {
@@ -160,7 +162,8 @@ export function resolveMessageMediaItems(
     const mediaPath = getMediaReferencePath(media);
     const ext = mediaPath.split('.').pop()?.toLowerCase() || '';
     const mediaFile = findMediaFile(mediaState, mediaPath);
-    const detectedType = preferredType || (
+    const effectivePreferredType = ext === 'mp4' && mediaFile?.type === 'audio' ? 'audio' : preferredType;
+    const detectedType = effectivePreferredType || (
       ext === 'mp4' || ext === 'webm'
         ? 'video'
         : mediaFile?.type || getMediaType(mediaPath)
@@ -168,7 +171,7 @@ export function resolveMessageMediaItems(
     const mediaType = detectedType === 'image' || detectedType === 'video' || detectedType === 'audio'
       ? detectedType
       : 'unknown';
-    return { media, preferredType, mediaPath, mediaFile, mediaType, isSticker };
+    return { media, preferredType: effectivePreferredType, mediaPath, mediaFile, mediaType, isSticker };
   });
 }
 
@@ -191,13 +194,17 @@ function getMediaTypeFromDirectory(path: string): 'image' | 'video' | 'audio' | 
 }
 
 export function getMessageAttachmentReferences(
-  msg: MessengerMessage
+  msg: MessengerMessage,
+  mediaState?: MediaState,
 ): Array<{ path: string; category: string; shared?: boolean }> {
   const refs: Array<{ path: string; category: string; shared?: boolean }> = [];
   const seen = new Set<string>();
   const addRef = (item: MediaItem, category: string, shared = false) => {
     const path = getMediaReferencePath(item);
-    const key = `${category}:${path.toLowerCase()}`;
+    if (category === 'videos' && /\.mp4$/i.test(path) && mediaState && findMediaFile(mediaState, path)?.type === 'audio') {
+      category = 'audio';
+    }
+    const key = `${category}:${normalizeAttachmentPath(path)}`;
     if (!path || seen.has(key)) return;
     seen.add(key);
     refs.push(shared ? { path, category, shared: true } : { path, category });
@@ -215,6 +222,44 @@ export function getMessageAttachmentReferences(
   });
   if (msg?.sticker) addRef(msg.sticker, 'stickers', true);
   return refs;
+}
+
+const mp4TypeCache = new WeakMap<ReadableFileHandle, 'audio' | 'video'>();
+
+export async function classifyChatMp4Attachments(
+  thread: MessengerThread,
+  state: MediaState,
+  signal?: AbortSignal,
+): Promise<void> {
+  const entries = new Set<MediaEntry>();
+  for (const message of thread.messages) {
+    if (signal?.aborted) return;
+    for (const { path } of getMessageAttachmentReferences(message)) {
+      if (!/\.mp4$/i.test(path)) continue;
+      const entry = findMediaFile(state, path);
+      if (entry?.handle) entries.add(entry);
+    }
+  }
+  const pending = [...entries];
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
+    while (next < pending.length && !signal?.aborted) {
+      const entry = pending[next++];
+      const handle = entry.handle!;
+      try {
+        const type = mp4TypeCache.get(handle) ?? await readMp4MediaType(await handle.getFile(), signal);
+        if (signal?.aborted) return;
+        if (type) {
+          mp4TypeCache.set(handle, type);
+          entry.type = type;
+        }
+      } catch { /* Keep the export's type when a file cannot be inspected. */ }
+    }
+  }));
+  if (signal?.aborted) return;
+  for (const [path, entry] of state.lookup) {
+    if (entries.has(entry)) state.types[path] = entry.type;
+  }
 }
 
 export function getFacebookStickerFileName(path: string): string | null {

@@ -67,6 +67,27 @@ describe('video poster cache', () => {
 });
 
 describe('video poster creation', () => {
+  it('does not generate a blank video poster for an audio-only container', async () => {
+    class AudioOnlyVideo extends EventTarget {
+      preload = ''; muted = false; playsInline = false; src = '';
+      readyState = 0; duration = 20; videoWidth = 0; videoHeight = 0;
+      load() {
+        if (!this.src) return;
+        queueMicrotask(() => {
+          this.readyState = 4;
+          this.dispatchEvent(new Event('loadedmetadata'));
+        });
+      }
+      pause() {}
+      removeAttribute() { this.src = ''; }
+    }
+    const createElement = vi.fn(() => new AudioOnlyVideo());
+    vi.stubGlobal('HTMLMediaElement', { HAVE_METADATA: 1, HAVE_CURRENT_DATA: 2 });
+    vi.stubGlobal('document', { createElement });
+    await expect(createVideoPoster('blob:audio-only-mp4')).resolves.toBeNull();
+    expect(createElement).toHaveBeenCalledExactlyOnceWith('video');
+  });
+
   it('checks later parts of a video when an early frame is unusable', () => {
     expect(getPosterCandidateTimes(10)).toEqual([1, 2.5, 5]);
     expect(getPosterCandidateTimes(null)).toEqual([0]);
@@ -197,7 +218,10 @@ describe('video poster creation', () => {
     expect(video.loadCalls).toBe(2);
   });
 
-  it('moves to a later candidate when the first sampled frame is black', async () => {
+  it.each([
+    { name: 'moves to a later candidate when the first sampled frame is black', darkFrames: 1, expectedFrames: 2, expectedTime: 5 },
+    { name: 'keeps a decoded poster when all sampled frames are black', darkFrames: 3, expectedFrames: 3, expectedTime: 10 },
+  ])('$name', async ({ darkFrames, expectedFrames, expectedTime }) => {
     class FakeVideo extends EventTarget {
       preload = '';
       muted = false;
@@ -240,7 +264,7 @@ describe('video poster creation', () => {
         getImageData: () => {
           const data = new Uint8ClampedArray(canvas.width * canvas.height * 4);
           for (let index = 3; index < data.length; index += 4) data[index] = 255;
-          if (framesDrawn > 1) data.fill(220);
+          if (framesDrawn > darkFrames) data.fill(220);
           return { data };
         },
       })),
@@ -251,7 +275,7 @@ describe('video poster creation', () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:visible-poster');
 
     await expect(createVideoPoster('blob:source')).resolves.toBe('blob:visible-poster');
-    expect(framesDrawn).toBe(2);
-    expect(video.currentTime).toBe(5);
+    expect(framesDrawn).toBe(expectedFrames);
+    expect(video.currentTime).toBe(expectedTime);
   });
 });
