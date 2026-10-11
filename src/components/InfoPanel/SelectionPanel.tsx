@@ -12,6 +12,7 @@ import { getAudioMetadata, type AudioMetadata } from '../../services/audioMetada
 import type { Settings } from '../../hooks/useSettings';
 import type { BookmarksController } from '../../hooks/useBookmarks';
 import { MediaFileSize } from '../MediaFileSize';
+import { UnavailableAttachment } from '../UnavailableAttachment';
 
 interface SelectionPanelProps {
   activeEntry: ChatListEntry | null;
@@ -118,13 +119,16 @@ function SelectionVisualThumbnail({
   basename: string;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const isVideo = attachment.category === 'videos';
   const isSticker = attachment.category === 'stickers';
 
   useEffect(() => {
+    setThumbnailFailed(false);
     const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
     if (!entry) {
       setUrl(null);
+      setThumbnailFailed(true);
       return;
     }
 
@@ -137,16 +141,25 @@ function SelectionVisualThumbnail({
     if (cached) return;
 
     if (isVideo) {
-      return videoPosterCache.subscribe(entry, details => setUrl(details?.url ?? null));
+      return videoPosterCache.subscribe(entry, details => {
+        setUrl(details?.url ?? null);
+        setThumbnailFailed(!details);
+      });
     }
 
     if (!isSticker) {
-      return imageThumbnailCache.subscribe(entry, setUrl);
+      return imageThumbnailCache.subscribe(entry, thumbnailUrl => {
+        setUrl(thumbnailUrl);
+        setThumbnailFailed(!thumbnailUrl);
+      });
     }
 
     let mounted = true;
     void blobCache.getOrCreate(entry).then(thumbnailUrl => {
-      if (mounted) setUrl(thumbnailUrl);
+      if (mounted) {
+        setUrl(thumbnailUrl);
+        setThumbnailFailed(!thumbnailUrl);
+      }
     });
     return () => { mounted = false; };
   }, [attachment, isSticker, isVideo, mediaState]);
@@ -154,10 +167,10 @@ function SelectionVisualThumbnail({
   return (
     <>
       {url ? (
-        <img src={url} alt={basename} className="gallery-thumb-img" />
+        <img src={url} alt={basename} className="gallery-thumb-img" onError={() => { setUrl(null); setThumbnailFailed(true); }} />
       ) : (
         <div className="gallery-thumb-placeholder">
-          {isVideo ? <Film size={24} /> : <ImageIcon size={24} />}
+          {thumbnailFailed ? <UnavailableAttachment label={`Preview unavailable: ${basename}`} /> : isVideo ? <Film size={24} /> : <ImageIcon size={24} />}
         </div>
       )}
       {isVideo && <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>}
@@ -375,7 +388,7 @@ export function SelectionPanel({
                     <div className="select-checkbox"><Check size={14} /></div>
                     <LinkIcon size={24} className="gallery-link-icon" />
                     <strong className="gallery-link-host">{hostname}</strong>
-                    <span className="gallery-link-url">{item.label || item.url}</span>
+                    <span className="gallery-link-url" data-url={!item.label || item.label === item.url}>{item.label || item.url}</span>
                     <span className="gallery-link-meta">
                       <span className="gallery-link-sender" title={`Sent by ${item.sender}`}>
                         <UserRound size={12} />
@@ -408,6 +421,7 @@ export function SelectionPanel({
               const key = `${att.category}:${att.mediaPath}`;
               const basename = att.mediaPath.split('/').pop() || 'file';
               const cat = att.category;
+              const missingFile = !(att.mediaEntry || findMediaFile(mediaState, att.mediaPath));
 
               return (
                 <div
@@ -440,13 +454,13 @@ export function SelectionPanel({
                     />
                   ) : cat === 'audio' ? (
                     <>
-                      <div className="gallery-thumb-icon"><Music size={24} /></div>
+                      <div className="gallery-thumb-icon">{missingFile ? <UnavailableAttachment label={`Audio not found: ${basename}`} /> : <Music size={24} />}</div>
                       <div className="gallery-thumb-name">{basename}</div>
                       <SelectedAudioMetadata attachment={att} mediaState={mediaState} />
                     </>
                   ) : (
                     <>
-                      <div className="gallery-thumb-icon"><FileText size={24} /></div>
+                      <div className="gallery-thumb-icon">{missingFile ? <UnavailableAttachment label={`File not found: ${basename}`} /> : <FileText size={24} />}</div>
                       <div className="gallery-thumb-name">{basename}</div>
                       <div className="gallery-file-meta gallery-author-size-meta gallery-even-metadata-spacing">
                         <MediaFileSize

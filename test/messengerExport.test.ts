@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isConversationJsonContent } from '../src/services/messengerExport/messengerExportDetector';
+import { getMessageAttachmentReferences } from '../src/services/media';
 import {
   getMessengerExportLastMessage,
   parseMessengerExportJson,
@@ -65,6 +66,31 @@ describe('Messenger export parser and detector', () => {
     }));
 
     expect(getMessengerExportLastMessage(thread)?.text).toBe('dated');
+  });
+
+  it('preserves every failed download without treating errors as file references', () => {
+    const thread = parseMessengerExportJson(JSON.stringify({
+      threadName: 'Chat',
+      participants: ['Alice'],
+      messages: [
+        {
+          senderName: 'Alice', timestamp: 1, text: '',
+          media: [
+            { uri: 'Failed to download media' },
+            { uri: 'media/photo.jpg' },
+            { uri: 'Failed to download media' },
+            { uri: 'Some other invalid status' },
+          ],
+        },
+        { senderName: 'Alice', timestamp: 2, media: [{ uri: 'Failed to download media' }] },
+      ],
+    }));
+    expect(thread.messages).toHaveLength(2);
+    expect(thread.messages.map(message => message.failedMediaCount)).toEqual([2, 1]);
+    expect(thread.messages[0].photos).toEqual([{ uri: 'media/photo.jpg' }]);
+    expect(thread.messages[0].files).toBeUndefined();
+    expect(getMessageAttachmentReferences(thread.messages[0])).toEqual([{ path: 'media/photo.jpg', category: 'photos' }]);
+    expect(getMessageAttachmentReferences(thread.messages[1])).toEqual([]);
   });
 
   it('repairs encoded Messenger export display fields', () => {

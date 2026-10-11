@@ -21,6 +21,7 @@ import { formatMessageDateTime } from '../../services/dateTime';
 import { ReactionModal } from './ReactionModal';
 import { registerChatAnchorCandidate, stabilizeChatScrollAnchor } from './chatScrollAnchoring';
 import { MediaFileSize } from '../MediaFileSize';
+import { UnavailableAttachment } from '../UnavailableAttachment';
 import { FileText, Image as ImageIcon, Info, Link as LinkIcon, Music2, Pause, Play, Video, Volume2, VolumeX } from 'lucide-react';
 
 const lazyMediaVisibleCallbacks = new Map<Element, (inside: boolean) => void>();
@@ -189,7 +190,7 @@ function formatPlayerTime(seconds: number): string {
     : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
 }
 
-function InlineAudioPlayer({ src }: { src: string }) {
+function InlineAudioPlayer({ src, onFailed }: { src: string; onFailed: () => void }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -227,6 +228,7 @@ function InlineAudioPlayer({ src }: { src: string }) {
         ref={audioRef}
         src={src}
         preload="metadata"
+        onError={onFailed}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
@@ -330,13 +332,13 @@ function ChatImageAttachment({
         >
           {state !== 'failed'
             ? <MediaLoadingPlaceholder active={state === 'loading'} label="Loading image" icon={<ImageIcon aria-hidden="true" size={24} />} />
-            : <span className="placeholder">[ Image not found ]</span>}
+            : <UnavailableAttachment label="Image not found or unreadable" className="placeholder media-unavailable-placeholder" onActivate={onActivate} />}
         </div>
       );
     }
     return state !== 'failed'
       ? <MediaLoadingPlaceholder active={state === 'loading'} label={isSticker ? 'Loading sticker' : 'Loading image'} icon={<ImageIcon aria-hidden="true" size={24} />} />
-      : <span className="placeholder">[ Image not found ]</span>;
+      : <UnavailableAttachment label={isSticker ? 'Sticker not found or unreadable' : 'Image not found or unreadable'} className={`placeholder media-unavailable-placeholder${isSticker ? ' media-unavailable-sticker' : ''}`} onActivate={onActivate} />;
   }
 
   return (
@@ -368,21 +370,29 @@ function ChatVideoAttachment({
   onActivate,
   onReady,
   onFailed,
+  hasFile,
 }: {
   url: string | null;
   state: MediaLoadState;
   dimensions: Pick<ChatImagePreview, 'sourceWidth' | 'sourceHeight'> | null;
-  onActivate: () => void;
+  onActivate?: () => void;
+  hasFile: boolean;
   onReady: () => void;
   onFailed: () => void;
 }) {
   if (!url) {
-    return state !== 'failed'
+    const placeholder = state !== 'failed'
       ? <MediaLoadingPlaceholder active={state === 'loading'} label="Loading video" icon={<Video aria-hidden="true" size={24} />} />
-      : <button type="button" className="placeholder chat-video-fallback" onClick={onActivate}>
-          <Video aria-hidden="true" size={24} />
-          <span>Open video</span>
-        </button>;
+      : <UnavailableAttachment
+          label={hasFile ? 'Video preview unavailable. Open video' : 'Video not found'}
+          className="placeholder media-unavailable-placeholder"
+          onActivate={onActivate}
+        />;
+    return dimensions ? (
+      <div className="media-preview media-preview-reserved" style={getMediaPreviewReservationStyle(dimensions)}>
+        {placeholder}
+      </div>
+    ) : placeholder;
   }
 
   return (
@@ -392,7 +402,7 @@ function ChatVideoAttachment({
       onKeyDown={event => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();
-        onActivate();
+        onActivate?.();
       }}
       role="button"
       tabIndex={0}
@@ -413,16 +423,16 @@ function ChatVideoAttachment({
   );
 }
 
-function ChatAudioAttachment({ url, state, onOpenViewer }: { url: string | null; state: MediaLoadState; onOpenViewer?: () => void }) {
+function ChatAudioAttachment({ url, state, onOpenViewer, onFailed }: { url: string | null; state: MediaLoadState; onOpenViewer?: () => void; onFailed: () => void }) {
   if (!url) {
     return state !== 'failed'
       ? <MediaLoadingPlaceholder active={state === 'loading'} label="Loading audio" icon={<Music2 aria-hidden="true" size={20} />} audio />
-      : <span className="placeholder audio-placeholder">[ Audio not found ]</span>;
+      : <UnavailableAttachment label="Audio not found or unreadable" className="placeholder media-unavailable-placeholder audio-placeholder" onActivate={onOpenViewer} />;
   }
 
   return (
     <div className="media-audio-wrap">
-      <InlineAudioPlayer src={url} />
+      <InlineAudioPlayer src={url} onFailed={onFailed} />
       {onOpenViewer && <button className="media-audio-expand" onClick={onOpenViewer} aria-label="Open audio in viewer" title="Open in viewer"><Info size={15} /></button>}
     </div>
   );
@@ -434,7 +444,17 @@ function ChatFileAttachment({ mediaPath, mediaFile, onOpenViewer }: {
   onOpenViewer?: () => void;
 }) {
   const filename = mediaPath.split('/').pop() || 'File attachment';
-  if (!mediaFile) return <span className="placeholder" style={{ width: 'auto', padding: '8px 12px' }}>[ File not found ]</span>;
+  if (!mediaFile) {
+    const Card = onOpenViewer ? 'button' : 'div';
+    return (
+      <Card className="media-file-card media-file-missing" title={`File not found: ${filename}`}
+        type={onOpenViewer ? 'button' : undefined} onClick={onOpenViewer}
+        aria-label={onOpenViewer ? `File not found: ${filename}` : undefined}>
+        <UnavailableAttachment label={`File not found: ${filename}`} />
+        <span className="media-file-name">{filename}</span>
+      </Card>
+    );
+  }
 
   return (
     <div className="media-file-card">
@@ -482,7 +502,7 @@ function LazyMedia({
   const [reservedSize, setReservedSize] = useState<{ width: number; height: number } | null>(null);
   const mediaRef = useRef<HTMLElement | null>(null);
   const prevHeight = useRef<number | null>(null);
-  const activateVideo = onMediaClick || (() => openMediaEntryInNewTab(mediaFile));
+  const activateVideo = onMediaClick || (mediaFile ? () => openMediaEntryInNewTab(mediaFile) : undefined);
   const cachedDimensions = useSyncExternalStore(
     React.useCallback(listener => subscribeMediaDimensions(mediaFile, listener), [mediaFile]),
     React.useCallback(() => getCachedMediaDimensions(mediaFile), [mediaFile]),
@@ -795,11 +815,12 @@ function LazyMedia({
       state={loadState}
       dimensions={attachmentDimensions}
       onActivate={activateVideo}
+      hasFile={!!mediaFile}
       onReady={() => setLoadState('ready')}
       onFailed={() => { setFileURL(null); setLoadState('failed'); }}
     />;
   } else if (mediaType === 'audio') {
-    content = <ChatAudioAttachment url={fileURL} state={loadState} onOpenViewer={onMediaClick} />;
+    content = <ChatAudioAttachment url={fileURL} state={loadState} onOpenViewer={onMediaClick} onFailed={() => { setFileURL(null); setLoadState('failed'); }} />;
   } else {
     content = <ChatFileAttachment mediaPath={mediaPath} mediaFile={mediaFile} onOpenViewer={onMediaClick} />;
   }
@@ -870,7 +891,7 @@ export const MessageBubble = memo(function MessageBubble({
     ...link,
     label: link.label ? fixEncoding(link.label) : undefined,
   }));
-  const isMediaOnly = hasMediaPreview && !rawText && messageLinks.length === 0 && otherMediaItems.length === 0;
+  const isMediaOnly = hasMediaPreview && !rawText && messageLinks.length === 0 && otherMediaItems.length === 0 && !msg.failedMediaCount;
 
   const showName = isMe ? showMyName : showTheirName;
   const reactionFeature = useReactionContext();
@@ -950,6 +971,15 @@ export const MessageBubble = memo(function MessageBubble({
                 preferredType={preferredType}
                 isSticker={isSticker}
                 onMediaClick={onMediaClick ? () => onMediaClick(mediaPath, msgIndex) : undefined}
+              />
+            ))}
+
+            {Array.from({ length: msg.failedMediaCount || 0 }, (_, index) => (
+              <UnavailableAttachment
+                key={`failed-download:${index}`}
+                label="Failed to download media. Attachment type unknown."
+                failedDownload
+                className="placeholder media-unavailable-placeholder media-download-failed"
               />
             ))}
 

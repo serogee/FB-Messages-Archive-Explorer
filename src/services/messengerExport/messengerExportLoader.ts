@@ -35,7 +35,7 @@ function describeLastMessage(thread: MessengerThread): { lastMessage?: string; l
       (lastMsg.audio?.length || lastMsg.audio_files?.length) ? 'an audio message' :
       lastMsg.gifs?.length ? 'a GIF' :
       lastMsg.files?.length ? 'a file' :
-      lastMsg.media?.length ? 'an attachment' : null;
+      (lastMsg.media?.length || lastMsg.failedMediaCount) ? 'an attachment' : null;
     if (attachType) {
       lastMessage = isGroup ? `${firstName} sent ${attachType}` : `Sent ${attachType}`;
     }

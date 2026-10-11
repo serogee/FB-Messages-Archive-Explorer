@@ -868,10 +868,15 @@
     color: var(--muted);
     font-size: 10px;
     line-height: 1.4;
+    text-align: center;
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     overflow-wrap: anywhere;
+    text-wrap: balance;
+}
+.gallery-link-url[data-url="true"] {
+    word-break: break-all;
 }
 
 .gallery-link-card-square .gallery-link-sender,

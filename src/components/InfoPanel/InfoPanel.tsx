@@ -65,9 +65,11 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
   let photos = 0, videos = 0, audio = 0, gifs = 0, files = 0, stickers = 0, stickersFound = 0, totalReported = 0;
   let links = 0;
   let loadedChatAttachments = 0;
+  let failedDownloads = 0;
 
   for (const msg of messages) {
     visibleCount++;
+    failedDownloads += msg.failedMediaCount || 0;
 
     const ts = getMessageTimestamp(msg);
     if (ts !== null) {
@@ -114,7 +116,7 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
 
   return {
     visibleCount, minTs, maxTs, memberStats, memberCounts,
-    attachments: { photos, videos, audio, gifs, files, stickers, stickersFound, foundTotal, reported: totalReported, mediaFound },
+    attachments: { photos, videos, audio, gifs, files, stickers, stickersFound, foundTotal, failedDownloads, reported: totalReported + failedDownloads, mediaFound },
     links,
   };
 }
@@ -211,9 +213,15 @@ export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, s
                   <span>Media files</span>
                   <span className="attachment-count">
                     <ResponsiveNumber value={stats.attachments.mediaFound} />
-                    <span className="attachment-found"> / <ResponsiveNumber value={stats.attachments.foundTotal} /></span>
+                    <span className="attachment-found"> / <ResponsiveNumber value={stats.attachments.foundTotal + stats.attachments.failedDownloads} /></span>
                   </span>
                 </div>
+                {stats.attachments.failedDownloads > 0 && (
+                  <div className="info-row info-failed-media" title="Attachments the exporter could not download. Their media type is unknown.">
+                    <span>Failed downloads</span>
+                    <span className="attachment-count"><ResponsiveNumber value={stats.attachments.failedDownloads} /></span>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -8,6 +8,7 @@ import type { MediaState } from '../../types/messenger';
 import type { useSelection } from '../../hooks/useSelection';
 import { downloadSingle, getAttachmentDownloadName } from '../../services/saveAttachments';
 import { MediaFileSize } from '../MediaFileSize';
+import { UnavailableAttachment } from '../UnavailableAttachment';
 import { findNextNavigableIndex } from './mediaViewerNavigation';
 
 interface MediaViewerProps {
@@ -99,6 +100,7 @@ export function MediaViewer({
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [menuOpen, setMenuOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [filenameCopiedFor, setFilenameCopiedFor] = useState<ResolvedAttachment | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const mediaElementRef = useRef<HTMLMediaElement | null>(null);
@@ -108,7 +110,7 @@ export function MediaViewer({
   const bookmarkToggleRef = useRef(onToggleBookmark);
   const bookmarkingEnabledRef = useRef(attachmentBookmarkingEnabled);
   const closeRef = useRef(onClose);
-  const linkCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeViewer = useCallback(() => {
     const media = mediaElementRef.current;
     if (media) {
@@ -120,11 +122,16 @@ export function MediaViewer({
 
   const item = items[currentIndex] || null;
   const attachment = item && item.category !== 'links' ? item : null;
+  const filename = attachment?.mediaPath.split('/').pop() || 'Attachment';
+  const filenameCopied = !!attachment && filenameCopiedFor === attachment;
   const link = item?.category === 'links' ? item : null;
   const mediaEntry = attachment
     ? attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath)
     : null;
   const { url, status: urlStatus } = useResolvedUrl(attachment, mediaState);
+  // Track the item identity so an error cannot carry over when navigating.
+  const [failedItem, setFailedItem] = useState<SelectableItem | null>(null);
+  const decodeFailed = failedItem === item;
   const displayType = attachment ? getDisplayType(attachment) : 'file';
   const isSelected = !!(item && selection?.isSelected(item));
   const bookmarked = !!(item && isAttachmentBookmarked?.(item));
@@ -149,12 +156,13 @@ export function MediaViewer({
 
   useEffect(() => {
     setLinkCopied(false);
-    if (linkCopyTimerRef.current != null) {
-      clearTimeout(linkCopyTimerRef.current);
-      linkCopyTimerRef.current = null;
+    setFilenameCopiedFor(null);
+    if (copyTimerRef.current != null) {
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
     }
     return () => {
-      if (linkCopyTimerRef.current != null) clearTimeout(linkCopyTimerRef.current);
+      if (copyTimerRef.current != null) clearTimeout(copyTimerRef.current);
     };
   }, [currentIndex]);
 
@@ -199,15 +207,30 @@ export function MediaViewer({
     try {
       await navigator.clipboard.writeText(link.url);
       setLinkCopied(true);
-      if (linkCopyTimerRef.current != null) clearTimeout(linkCopyTimerRef.current);
-      linkCopyTimerRef.current = setTimeout(() => {
-        linkCopyTimerRef.current = null;
+      if (copyTimerRef.current != null) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => {
+        copyTimerRef.current = null;
         setLinkCopied(false);
       }, 1800);
     } catch {
       window.prompt('Copy link:', link.url);
     }
   }, [link]);
+
+  const handleCopyFilename = useCallback(async () => {
+    if (!attachment) return;
+    try {
+      await navigator.clipboard.writeText(filename);
+      setFilenameCopiedFor(attachment);
+      if (copyTimerRef.current != null) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => {
+        copyTimerRef.current = null;
+        setFilenameCopiedFor(null);
+      }, 1800);
+    } catch {
+      window.prompt('Copy filename:', filename);
+    }
+  }, [attachment, filename]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -289,7 +312,6 @@ export function MediaViewer({
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
 
-  const filename = attachment?.mediaPath.split('/').pop() || 'Attachment';
   const linkHostname = link ? (() => {
     try { return new URL(link.url).hostname.replace(/^www\./i, '') || link.url; }
     catch { return link.url; }
@@ -405,6 +427,12 @@ export function MediaViewer({
                     Download
                   </button>
                 )}
+                {attachment && (
+                  <button className="media-viewer-menu-item" onClick={() => void handleCopyFilename()}>
+                    {filenameCopied ? <Check size={16} className="media-viewer-menu-icon" /> : <Copy size={16} className="media-viewer-menu-icon" />}
+                    <span aria-live="polite">{filenameCopied ? 'Filename copied' : 'Copy filename'}</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -445,7 +473,7 @@ export function MediaViewer({
           <div className="media-viewer-link-card">
             <LinkIcon size={48} className="media-viewer-link-icon" />
             <strong className="media-viewer-link-host">{linkHostname}</strong>
-            <span className="media-viewer-link-text">{link.label || link.url}</span>
+            <span className="media-viewer-link-text" data-url={!link.label || link.label === link.url}>{link.label || link.url}</span>
             <span className="media-viewer-item-sender" title={`Sent by ${link.sender}`}>
               <UserRound size={12} />
               <span>{link.sender}</span>
@@ -474,11 +502,16 @@ export function MediaViewer({
             <div className="media-viewer-file-name">{filename}</div>
             <div className="media-viewer-file-status">Loading attachment…</div>
           </div>
-        ) : !url ? (
+        ) : !url || decodeFailed ? (
           <div className="media-viewer-placeholder">
-            <div className="media-viewer-file-icon"><Paperclip size={48} /></div>
+            <div className="media-viewer-file-icon"><UnavailableAttachment label={decodeFailed ? 'Attachment could not be displayed' : 'File not found'} /></div>
             <div className="media-viewer-file-name">{filename}</div>
-            <div className="media-viewer-file-status">File not found</div>
+            <div className="media-viewer-file-status">{decodeFailed ? 'Attachment could not be displayed' : 'File not found'}</div>
+            {url && (
+              <a href={url} target="_blank" rel="noreferrer" className="media-viewer-download-btn">
+                <ExternalLink size={16} /> Open file
+              </a>
+            )}
           </div>
         ) : displayType === 'image' ? (
           <img
@@ -487,6 +520,7 @@ export function MediaViewer({
             alt={filename}
             className={`media-viewer-image${attachment?.category === 'stickers' ? ' media-viewer-sticker' : ''}`}
             draggable={false}
+            onError={() => setFailedItem(item)}
           />
         ) : displayType === 'video' ? (
           <video
@@ -496,6 +530,7 @@ export function MediaViewer({
             controls
             autoPlay
             className="media-viewer-video"
+            onError={() => setFailedItem(item)}
           />
         ) : displayType === 'audio' ? (
           <div className="media-viewer-audio-wrap">
@@ -515,6 +550,7 @@ export function MediaViewer({
               autoPlay
               src={url}
               className="media-viewer-audio"
+              onError={() => setFailedItem(item)}
             />
           </div>
         ) : (

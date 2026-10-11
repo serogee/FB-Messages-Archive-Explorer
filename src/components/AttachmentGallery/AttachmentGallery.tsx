@@ -12,6 +12,7 @@ import { getAudioMetadata, type AudioMetadata } from '../../services/audioMetada
 import { formatFileSize } from '../../services/storage';
 import { MediaViewer } from '../MediaViewer/MediaViewer';
 import { MediaFileSize } from '../MediaFileSize';
+import { UnavailableAttachment } from '../UnavailableAttachment';
 import { calculateGalleryLayout, getStickyMonth, type GalleryGroup, type GalleryItem, type GalleryLayoutRow } from './galleryLayout';
 import { applyGalleryFilters, getGallerySenderOptions, getGallerySenderSearchResults, parseGallerySenderSearch, shouldClearFiltersForGalleryJump, useGalleryFilters, type GalleryBookmarkFilter } from '../../hooks/useGalleryFilters';
 import { BulkSelectionConfirmModal } from '../Modals/BulkSelectionConfirmModal';
@@ -225,8 +226,10 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
 }: GalleryThumbnailProps) {
   const [url, setUrl] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
 
   useEffect(() => {
+    setThumbnailFailed(false);
     if (attachment.category !== 'photos' && attachment.category !== 'gifs' && attachment.category !== 'videos' && attachment.category !== 'stickers') {
       setUrl(null);
       setVideoDuration(null);
@@ -237,6 +240,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
     if (!entry) {
       setUrl(null);
       setVideoDuration(null);
+      setThumbnailFailed(true);
       return;
     }
 
@@ -252,7 +256,10 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
       setUrl(null);
       setVideoDuration(null);
       void blobCache.getOrCreate(entry).then(stickerUrl => {
-        if (mounted) setUrl(stickerUrl);
+        if (mounted) {
+          setUrl(stickerUrl);
+          setThumbnailFailed(!stickerUrl);
+        }
       });
       return () => { mounted = false; };
     }
@@ -268,6 +275,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
       setUrl(null);
       setVideoDuration(null);
       return videoPosterCache.subscribe(entry, details => {
+        setThumbnailFailed(!details);
         if (details) {
           setUrl(details.url);
           setVideoDuration(details.duration);
@@ -283,12 +291,14 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
       return;
     }
     return imageThumbnailCache.subscribe(entry, thumbnailUrl => {
+      setThumbnailFailed(!thumbnailUrl);
       if (thumbnailUrl) setUrl(thumbnailUrl);
     });
   }, [attachment, mediaState]);
 
   const category = attachment.category;
   const filename = attachment.mediaPath.split('/').pop() || 'File';
+  const missingFile = !(attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath));
 
   const activate = (event: React.MouseEvent | React.KeyboardEvent) => {
     event.preventDefault();
@@ -327,26 +337,30 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
 
       {(category === 'photos' || category === 'gifs' || category === 'stickers') ? (
         url
-          ? <img src={url} alt={filename} className="gallery-thumb-img" />
-          : <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
+          ? <img src={url} alt={filename} className="gallery-thumb-img" onError={() => { setUrl(null); setThumbnailFailed(true); }} />
+          : thumbnailFailed
+            ? <UnavailableAttachment label={`${missingFile ? 'File not found' : 'Preview unavailable'}: ${filename}`} className="gallery-thumb-placeholder" />
+            : <div className="gallery-thumb-placeholder"><ImageIcon size={24} /></div>
       ) : category === 'videos' ? (
         <>
           {url
-            ? <img src={url} alt={filename} className="gallery-thumb-img" />
-            : <div className="gallery-thumb-placeholder"><Film size={24} /></div>}
+            ? <img src={url} alt={filename} className="gallery-thumb-img" onError={() => { setUrl(null); setThumbnailFailed(true); }} />
+            : thumbnailFailed
+              ? <UnavailableAttachment label={`${missingFile ? 'Video not found' : 'Video preview unavailable'}: ${filename}`} className="gallery-thumb-placeholder" />
+              : <div className="gallery-thumb-placeholder"><Film size={24} /></div>}
           {videoDuration !== null && <div className="gallery-video-duration">{formatAudioDuration(videoDuration)}</div>}
           <div className="gallery-thumb-play"><Play fill="currentColor" size={24} /></div>
         </>
       ) : category === 'audio' ? (
         <>
-          <div className="gallery-thumb-icon"><Music size={24} /></div>
+          <div className="gallery-thumb-icon">{missingFile ? <UnavailableAttachment label={`Audio not found: ${filename}`} /> : <Music size={24} />}</div>
           <div className="gallery-thumb-name">{filename}</div>
           {compactAudioCard && <AudioCardMetadata attachment={attachment} mediaState={mediaState} />}
           {showAuthorAndSize && <AudioAuthorDurationAndSize attachment={attachment} mediaState={mediaState} />}
         </>
       ) : (
         <>
-          <div className="gallery-thumb-icon"><FileText size={24} /></div>
+          <div className="gallery-thumb-icon">{missingFile ? <UnavailableAttachment label={`File not found: ${filename}`} /> : <FileText size={24} />}</div>
           <div className="gallery-thumb-name">{filename}</div>
           {showAuthorAndSize
             ? <AttachmentAuthorAndSize attachment={attachment} mediaState={mediaState} />
@@ -480,7 +494,7 @@ const GalleryLinkCard = memo(function GalleryLinkCard({
     <>
       <LinkIcon size={24} className="gallery-link-icon" />
       <strong className="gallery-link-host">{hostname}</strong>
-      <span className="gallery-link-url">{link.label || link.url}</span>
+      <span className="gallery-link-url" data-url={!link.label || link.label === link.url}>{link.label || link.url}</span>
       <span className="gallery-link-meta">
         <span className="gallery-link-sender" title={`Sent by ${link.sender}`}>
           <UserRound size={12} />
