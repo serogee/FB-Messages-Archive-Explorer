@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { useAttachments, useSharedLinks } from '../src/hooks/useAttachments';
 import { addMediaToIndex, createMediaState } from '../src/services/media';
 import type { MediaState, MessengerThread } from '../src/types/messenger';
+import { parseMessengerExportJson } from '../src/services/messengerExport/messengerExportParser';
 
 afterEach(cleanup);
 
@@ -18,6 +19,40 @@ function makeThread(): MessengerThread {
 }
 
 describe('shared attachment scans', () => {
+  it('opens repeated Messenger paths at their own message while keeping the gallery deduplicated', () => {
+    const path = './media/52c20a89-be1a-4dd2-bf46-83c8f260ec80.jpeg';
+    const data = parseMessengerExportJson(JSON.stringify({
+      threadName: 'Chat', participants: ['Alice', 'Geevoi Plaza'], messages: [
+        { senderName: 'Alice', timestamp: 1791261704038, media: [{ uri: path }] },
+        { senderName: 'Geevoi Plaza', timestamp: 1791547299971, media: [{ uri: path }] },
+      ],
+    }));
+    const media = createMediaState();
+    const { result, rerender } = renderHook(({ media }: { media: MediaState }) => ({
+      chat: useAttachments(data, media, { includeRepeated: true }),
+      gallery: useAttachments(data, media),
+    }), { initialProps: { media } });
+    expect(result.current.gallery.all).toHaveLength(1);
+    expect(result.current.chat.all).toHaveLength(2);
+    for (const index of [0, 1]) {
+      const attachmentIndex = result.current.chat.findIndex(path, index);
+      expect(attachmentIndex).toBe(index);
+      expect(result.current.chat.all[attachmentIndex].messageIndex).toBe(index);
+      expect(result.current.chat.all[attachmentIndex].mediaEntry).toBeNull();
+    }
+    expect(result.current.chat.all[1].sender).toBe('Geevoi Plaza');
+    expect(result.current.chat.all[1].timestamp).toBe(1791547299971);
+    expect(result.current.chat.findIndex(path, 2)).toBe(-1);
+
+    const loadedMedia = createMediaState();
+    const entry = { type: 'image', url: 'blob:photo' };
+    addMediaToIndex(loadedMedia, path, entry);
+    rerender({ media: loadedMedia });
+    expect(result.current.gallery.all).toHaveLength(1);
+    expect(result.current.chat.all.map(item => item.mediaEntry)).toEqual([entry, entry]);
+    expect(result.current.chat.findIndex(path, 1)).toBe(1);
+  });
+
   it('resolves newly indexed media after a missing-file scan', () => {
     const data = makeThread();
     const initialMedia = createMediaState();

@@ -69,9 +69,10 @@ export interface MessageListHandle {
 }
 
 function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages: Messages, visibility: Uint8Array, previous: Int32Array): number {
-  let visibleCount = 0, mediaCount = 0, separatorCount = 0;
+  let visibleCount = 0, mediaCount = 0, separatorCount = 0, failedMediaCount = 0;
   messages.forEach((msg, localIdx) => {
     if (visibility[chunkIndex * CHUNK_SIZE + localIdx]) return;
+    if (!msg.is_unsent) failedMediaCount += msg.failedMediaCount || 0;
     visibleCount++;
     const mediaItems = getMessageMediaItems(msg);
     let previewCount = 0;
@@ -96,6 +97,8 @@ function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages
   return Math.max(160,
     visibleCount * CHUNK_ESTIMATED_MESSAGE_HEIGHT +
     mediaCount * CHUNK_ESTIMATED_MEDIA_HEIGHT +
+    // Failed downloads use a fixed 110px slot with 4px margins above and below.
+    failedMediaCount * 118 +
     separatorCount * CHUNK_ESTIMATED_SEPARATOR_HEIGHT
   );
 }

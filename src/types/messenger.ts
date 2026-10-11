@@ -40,6 +40,8 @@ export interface MessengerMessage {
   gifs?: MediaItem[];
   files?: MediaItem[];
   media?: MediaItem[];
+  /** Attachments the standalone Messenger exporter could not download; their type is unknown. */
+  failedMediaCount?: number;
   sticker?: StickerItem;
   share?: SharedLink;
   reactions?: Reaction[];

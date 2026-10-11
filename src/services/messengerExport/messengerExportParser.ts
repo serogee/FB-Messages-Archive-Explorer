@@ -54,25 +54,26 @@ function categorizeMediaItem(item: MediaItem): 'photos' | 'videos' | 'audio' | '
   return 'files';
 }
 
-function normalizeMediaItems(items: MediaItem[] | undefined): MediaItem[] {
-  if (!Array.isArray(items)) return [];
-  return items.map(item => {
+function normalizeMediaItems(items: MediaItem[] | undefined): { media: MediaItem[]; failedMediaCount: number } {
+  const media: MediaItem[] = [];
+  let failedMediaCount = 0;
+  for (const item of Array.isArray(items) ? items : []) {
     const normalized = { ...item };
     (['uri', 'filename', 'path', 'name'] as const).forEach(field => {
       if (typeof normalized[field] === 'string') normalized[field] = fixEncoding(normalized[field]);
     });
-    return normalized;
-  }).filter(item => {
-    const path = String(item?.uri || item?.filename || item?.path || item?.name || '');
-    return !!path && isUsableMediaUri(path);
-  });
+    const path = String(normalized.uri || normalized.filename || normalized.path || normalized.name || '');
+    if (path.trim().toLowerCase() === 'failed to download media') failedMediaCount++;
+    else if (path && isUsableMediaUri(path)) media.push(normalized);
+  }
+  return { media, failedMediaCount };
 }
 
 function normalizeMessage(raw: RawMessengerExportMessage): MessengerMessage {
   const sender = fixEncoding(String(raw.senderName || raw.sender_name || ''));
   const text = fixEncoding(String(raw.text ?? raw.content ?? ''));
   const timestamp = Number(raw.timestamp_ms ?? raw.timestamp ?? 0);
-  const media = normalizeMediaItems(raw.media);
+  const { media, failedMediaCount } = normalizeMediaItems(raw.media);
 
   const message: MessengerMessage = {
     sender_name: sender,
@@ -82,6 +83,7 @@ function normalizeMessage(raw: RawMessengerExportMessage): MessengerMessage {
     content: text,
     text,
     media,
+    ...(failedMediaCount ? { failedMediaCount } : {}),
     share: raw.share ? {
       link: raw.share.link,
       href: raw.share.href,

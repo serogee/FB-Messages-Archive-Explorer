@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
-async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'messenger', failMessengerMediaOnce = false) {
-  await page.addInitScript(({ selectedFormat, shouldFailMessengerMediaOnce }) => {
+async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'messenger', failMessengerMediaOnce = false, unavailableMedia = false) {
+  await page.addInitScript(({ selectedFormat, shouldFailMessengerMediaOnce, includeUnavailableMedia }) => {
     let failBlockedMedia = shouldFailMessengerMediaOnce;
     const makeFile = (name: string, initialContents: string | number[], persistKey?: string) => {
       let contents = initialContents;
@@ -89,6 +89,17 @@ async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'me
                   : 'photos/photo.jpg' }],
               },
               { sender_name: 'Tester', timestamp_ms: 10, content: 'first message', share: { link: 'https://example.com/report', share_text: 'Shared report' } },
+              ...(includeUnavailableMedia ? [{
+                sender_name: 'Alice', timestamp_ms: 30,
+                photos: [{ uri: 'photos/missing.jpg' }], videos: [{ uri: 'videos/grid.mp4' }],
+                audio_files: [{ uri: 'audio/missing.ogg' }], files: [{ uri: 'files/missing.pdf' }],
+                sticker: { uri: 'stickers/missing.webp' },
+              }, {
+                sender_name: 'Tester', timestamp_ms: 40,
+                photos: [{ uri: 'photos/missing.jpg' }, { uri: 'photos/photo.jpg' }], videos: [{ uri: 'videos/grid.mp4' }],
+                audio_files: [{ uri: 'audio/missing.ogg' }], files: [{ uri: 'files/missing.pdf' }],
+                sticker: { uri: 'stickers/missing.webp' },
+              }] : []),
             ],
           })),
           photos: makeDirectory('photos', { 'photo.jpg': makeFile('photo.jpg', [1, 2, 3]) }),
@@ -122,6 +133,17 @@ async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'me
             { uri: 'media/blocked.jpg' },
             { uri: 'media/shared.jpg' },
           ] },
+          ...(includeUnavailableMedia ? [
+            { senderName: 'Alice', text: '', timestamp: 30, media: [{ uri: 'media/missing.jpg' }] },
+            { senderName: 'Alice', text: '', timestamp: 40, media: [{ uri: 'Failed to download media' }, { uri: 'Failed to download media' }] },
+            { senderName: 'Alice', text: '', timestamp: 50, media: [{ uri: 'media/missing.ogg' }, { uri: 'media/missing.pdf' }] },
+            { senderName: 'Alice', text: '', timestamp: 60, media: [{ uri: 'media/grid.jpg' }, { uri: 'media/grid.mp4' }] },
+            { senderName: 'Alice', text: '', timestamp: 70, media: [{ uri: 'media/dimensions.png' }] },
+            { senderName: 'Tester', text: '', timestamp: 80, media: [
+              { uri: 'media/missing.jpg' }, { uri: 'media/photo.jpg' }, { uri: 'media/grid.mp4' },
+              { uri: 'media/missing.ogg' }, { uri: 'media/missing.pdf' },
+            ] },
+          ] : []),
         ],
       })),
       'group.json': makeFile('group.json', JSON.stringify({
@@ -133,6 +155,10 @@ async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'me
         'photo.jpg': makeFile('photo.jpg', [1, 2, 3]),
         'blocked.jpg': makeFile('blocked.jpg', [4, 5, 6]),
         'shared.jpg': makeFile('shared.jpg', [7, 8, 9]),
+        ...(includeUnavailableMedia ? {
+          // A readable 100 x 200 PNG header with no image data: sizing succeeds, decoding fails.
+          'dimensions.png': makeFile('dimensions.png', [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 100, 0, 0, 0, 200]),
+        } : {}),
       }),
     });
 
@@ -144,7 +170,193 @@ async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'me
       value: async () => selectedFormat === 'facebook' ? facebook : selectedFormat === 'instagram' ? instagram : messenger,
     });
     Object.defineProperty(window, '__testArchives', { configurable: true, value: { facebook, messenger } });
-  }, { selectedFormat: format, shouldFailMessengerMediaOnce: failMessengerMediaOnce });
+  }, { selectedFormat: format, shouldFailMessengerMediaOnce: failMessengerMediaOnce, includeUnavailableMedia: unavailableMedia });
+}
+
+test('wraps long viewer filenames and copies the original filename from options', async ({ page }) => {
+  await installArchive(page, 'messenger');
+  await page.goto('');
+  const stem = 'a_very_long_original_attachment_filename_with_no_spaces_'.repeat(5);
+  const filenames = [`${stem}missing.pdf`, `${stem}document.pdf`, `${stem}recording.wav`,
+    `${stem}missing.jpg`, `${stem}missing.mp4`, `${stem}missing.gif`];
+  await page.evaluate(async names => {
+    const root = (window as unknown as { __testArchives: { messenger: FileSystemDirectoryHandle } }).__testArchives.messenger;
+    const conversation = await root.getFileHandle('alice.json');
+    const writable = await conversation.createWritable();
+    await writable.write(JSON.stringify({ threadName: 'Messenger Alice', participants: ['Alice', 'Tester'],
+      messages: [{ senderName: 'Alice', timestamp: 10, media: names.map(name => ({ uri: `./media/${name}` })) }],
+    }));
+    await writable.close();
+    const media = await root.getDirectoryHandle('media');
+    const file = await media.getFileHandle(names[1], { create: true });
+    const fileWriter = await file.createWritable();
+    await fileWriter.write('A document');
+    await fileWriter.close();
+    // A short, silent PCM WAV lets the audio card render without a decode failure.
+    const bytes = new Uint8Array(44 + 8000);
+    const view = new DataView(bytes.buffer);
+    const text = (offset: number, value: string) => Array.from(value).forEach((char, i) => view.setUint8(offset + i, char.charCodeAt(0)));
+    text(0, 'RIFF'); view.setUint32(4, bytes.length - 8, true); text(8, 'WAVE'); text(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, 8000, true); view.setUint32(28, 16000, true); view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, 8000, true);
+    const audio = await media.getFileHandle(names[2], { create: true });
+    const audioWriter = await audio.createWritable();
+    await audioWriter.write(bytes);
+    await audioWriter.close();
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value: string) => sessionStorage.setItem('__copiedFilename', value),
+    } });
+  }, filenames);
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  await page.locator('.chat-list-item').filter({ hasText: 'Messenger Alice' }).click();
+  await page.locator('#chat').getByRole('button', { name: 'Image not found or unreadable' }).first().click();
+  const viewer = page.getByRole('dialog', { name: 'Attachment viewer' });
+  // Typed visual media, audio, and GIFs are indexed before generic file attachments.
+  const viewerFilenames = [filenames[3], filenames[4], filenames[2], filenames[5], filenames[0], filenames[1]];
+  for (let i = 0; i < viewerFilenames.length; i++) {
+    const name = viewer.locator('.media-viewer-file-name');
+    await expect(name).toHaveText(viewerFilenames[i]);
+    if (i === 2) await expect(viewer.locator('.media-viewer-audio')).toBeVisible();
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expect(name).toHaveCSS('white-space', 'normal');
+      const layout = await name.evaluate(element => {
+        const name = element as HTMLElement;
+        const card = name.parentElement!;
+        const bounds = name.getBoundingClientRect();
+        return { height: bounds.height, lineHeight: parseFloat(getComputedStyle(name).lineHeight),
+          left: bounds.left, right: bounds.right, width: name.clientWidth, scrollWidth: name.scrollWidth,
+          cardWidth: card.clientWidth, cardScrollWidth: card.scrollWidth };
+      });
+      expect(layout.height).toBeGreaterThan(layout.lineHeight * 2);
+      expect(layout.left).toBeGreaterThanOrEqual(0);
+      expect(layout.right).toBeLessThanOrEqual(width);
+      expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width + 1);
+      expect(layout.cardScrollWidth).toBeLessThanOrEqual(layout.cardWidth + 1);
+    }
+    await viewer.getByRole('button', { name: 'More options' }).click();
+    await expect(viewer.locator('.media-viewer-menu-item').last()).toHaveText('Copy filename');
+    await viewer.getByRole('button', { name: 'Copy filename' }).click();
+    await expect(viewer.getByRole('button', { name: 'Filename copied' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem('__copiedFilename'))).toBe(viewerFilenames[i]);
+    if (i < viewerFilenames.length - 1) await viewer.getByRole('button', { name: 'Next item' }).click();
+  }
+});
+
+test('unavailable media retains slot geometry and shows failed counts in red', async ({ page }) => {
+  await installArchive(page, 'messenger', false, true);
+  await page.goto('');
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  await page.locator('.chat-list-item').filter({ hasText: 'Messenger Alice' }).click();
+  const chat = page.locator('#chat');
+  const failed = chat.getByRole('img', { name: 'Failed to download media. Attachment type unknown.' });
+  await expect(failed).toHaveCount(2);
+  for (const placeholder of await failed.all()) {
+    const bounds = await placeholder.boundingBox();
+    expect(bounds?.width).toBe(150);
+    expect(bounds?.height).toBe(110);
+    await expect(placeholder.locator('svg')).toHaveAttribute('width', '24');
+  }
+  const singleImage = chat.locator('.message[data-msg-index="2"] .unavailable-attachment');
+  await expect(singleImage).toBeVisible();
+  expect((await singleImage.boundingBox())?.height).toBe(110);
+  const audio = chat.locator('.message[data-msg-index="4"]').getByRole('button', { name: 'Audio not found or unreadable' });
+  expect((await audio.boundingBox())?.height).toBe(34);
+  const file = chat.locator('.message[data-msg-index="4"] .media-file-missing');
+  expect((await file.boundingBox())?.height).toBe(54);
+  const grid = chat.locator('.message[data-msg-index="5"] .message-media-grid');
+  await expect(grid.locator('.unavailable-attachment')).toHaveCount(2);
+  for (const cell of await grid.locator('.lazy-media-wrapper').all()) {
+    const bounds = await cell.boundingBox();
+    const iconSlot = await cell.locator('.unavailable-attachment').boundingBox();
+    expect(bounds!.width).toBeCloseTo(bounds!.height, 0);
+    expect(iconSlot!.height).toBeCloseTo(bounds!.height, 0);
+  }
+  const sizedImage = chat.locator('.message[data-msg-index="6"]');
+  await expect(sizedImage.locator('.unavailable-attachment')).toBeVisible();
+  expect((await sizedImage.locator('.media-preview-reserved').boundingBox())?.height).toBe(200);
+  expect((await sizedImage.locator('.unavailable-attachment').boundingBox())?.height).toBe(200);
+  await page.getByRole('button', { name: 'Toggle chat info panel' }).click();
+  const failureRow = page.locator('.info-failed-media');
+  await expect(failureRow).toBeVisible();
+  await expect(failureRow.locator('.responsive-full')).toHaveText('2');
+  await expect(failureRow.locator('span').first()).toHaveCSS('color', 'rgb(255, 138, 128)');
+  await expect(failureRow.locator('.attachment-count')).toHaveCSS('color', 'rgb(255, 138, 128)');
+  await page.evaluate(() => document.documentElement.classList.remove('dark'));
+  await expect(failureRow.locator('span').first()).toHaveCSS('color', 'rgb(180, 35, 24)');
+  await expect(failureRow.locator('.attachment-count')).toHaveCSS('color', 'rgb(180, 35, 24)');
+  const mediaRow = failureRow.locator('xpath=preceding-sibling::div[1]');
+  await expect(mediaRow).toContainText('Media files');
+  await expect(mediaRow.locator('.responsive-full')).toHaveText(['4', '11']);
+  // File presence, rather than successful decoding, is what the loaded count measures.
+  await expect(chat.locator('.message[data-msg-index="1"] .unavailable-attachment')).toHaveCount(3);
+  await expect(chat.locator('.message[data-msg-index="1"] .unavailable-attachment').first()).toBeVisible();
+});
+
+for (const format of ['facebook', 'instagram', 'messenger'] as const) {
+  test(`opens missing attachments from ${format} chat with mouse and keyboard`, async ({ page }) => {
+    await installArchive(page, format, false, true);
+    await page.goto('');
+    await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+    await page.locator('.chat-list-item').filter({ hasText: format === 'messenger' ? 'Messenger Alice' : 'Alice Chat' }).click();
+    const chat = page.locator('#chat');
+    const cases = [
+      { target: chat.locator('.message[data-msg-index="2"]').getByRole('button', { name: 'Image not found or unreadable' }), filename: 'missing.jpg' },
+      { target: chat.locator(`.message[data-msg-index="${format === 'messenger' ? 5 : 2}"]`).getByRole('button', { name: 'Video not found' }), filename: 'grid.mp4', key: 'Enter' },
+      { target: chat.locator(`.message[data-msg-index="${format === 'messenger' ? 4 : 2}"]`).getByRole('button', { name: 'Audio not found or unreadable' }), filename: 'missing.ogg', key: ' ' },
+      { target: chat.locator(`.message[data-msg-index="${format === 'messenger' ? 4 : 2}"]`).getByRole('button', { name: 'File not found: missing.pdf' }), filename: 'missing.pdf' },
+      ...(format !== 'messenger' ? [{ target: chat.locator('.message[data-msg-index="2"]').getByRole('button', { name: 'Sticker not found or unreadable' }), filename: 'missing.webp' }] : []),
+    ];
+    for (const { target, filename, key } of cases) {
+      await expect(target).toBeVisible();
+      if (key) await target.press(key);
+      else await target.click();
+      const viewer = page.getByRole('dialog', { name: 'Attachment viewer' });
+      await expect(viewer).toBeVisible();
+      await expect(viewer).toContainText(filename);
+      await expect(viewer).toContainText('File not found');
+      await page.keyboard.press('Escape');
+      await expect(viewer).toHaveCount(0);
+    }
+  });
+
+  test(`opens repeated attachments from ${format} chat at the clicked message`, async ({ page }) => {
+    await installArchive(page, format, false, true);
+    await page.goto('');
+    await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+    await page.locator('.chat-list-item').filter({ hasText: format === 'messenger' ? 'Messenger Alice' : 'Alice Chat' }).click();
+    const messageIndex = format === 'messenger' ? 7 : 3;
+    const message = page.locator(`#chat .message[data-msg-index="${messageIndex}"]`);
+    const cases = [
+      { target: message.getByRole('button', { name: 'Image not found or unreadable' }).nth(0), filename: 'missing.jpg', missing: true },
+      { target: message.getByRole('button', { name: 'Image not found or unreadable' }).nth(1), filename: 'photo.jpg', missing: false },
+      { target: message.getByRole('button', { name: 'Video not found' }), filename: 'grid.mp4', missing: true },
+      { target: message.getByRole('button', { name: 'Audio not found or unreadable' }), filename: 'missing.ogg', missing: true },
+      { target: message.getByRole('button', { name: 'File not found: missing.pdf' }), filename: 'missing.pdf', missing: true },
+      ...(format !== 'messenger' ? [{ target: message.getByRole('button', { name: 'Sticker not found or unreadable' }), filename: 'missing.webp', missing: true }] : []),
+    ];
+    for (const { target, filename, missing } of cases) {
+      await target.click();
+      const viewer = page.getByRole('dialog', { name: 'Attachment viewer' });
+      await expect(viewer).toBeVisible();
+      await expect(viewer).toContainText(filename);
+      await expect(viewer.locator('.media-viewer-sender')).toHaveText('Tester');
+      await expect(viewer).toContainText(missing ? 'File not found' : 'Attachment could not be displayed');
+      await viewer.getByRole('button', { name: 'More options' }).click();
+      await viewer.getByRole('button', { name: 'Jump to message' }).click();
+      await expect(viewer).toHaveCount(0);
+      await expect(message).toHaveClass(/highlight-target/);
+    }
+    // A jump from the repeated chat occurrence targets the gallery's first file entry.
+    await cases[0].target.click();
+    const viewer = page.getByRole('dialog', { name: 'Attachment viewer' });
+    await viewer.getByRole('button', { name: 'More options' }).click();
+    await viewer.getByRole('button', { name: 'Jump to attachment' }).click();
+    await expect(page.getByRole('heading', { name: 'Attachments' })).toBeVisible();
+    await expect(page.locator('.gallery-thumb[title="missing.jpg"]')).toHaveCount(1);
+    await expect(page.locator('.gallery-thumb[title="missing.jpg"]')).toHaveClass(/jump-highlight/);
+  });
 }
 
 test('opens a Facebook archive and wires chat, search, gallery, and pinning', async ({ page }) => {
