@@ -114,7 +114,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
     setGalleryThread(previous => galleryOpen && chatData ? chatData : previous === chatData ? previous : null);
   }, [chatData, galleryOpen]);
   const galleryMounted = !!chatData && (galleryOpen || galleryThread === chatData);
-  const attachments = useAttachments(chatData, mediaState);
+  const attachments = useAttachments(chatData, mediaState, { includeRepeated: true });
   const links = useSharedLinks(chatData);
   const bookmarkRecords = bookmarks.attachmentBookmarks;
   const bookmarkLookup = bookmarks.isItemBookmarked;
@@ -163,11 +163,14 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   }, [galleryOpen, onCloseGallery]);
 
   const handleViewerAttachmentJump = useCallback((item: SelectableItem) => {
-    const targetTab = getAttachmentJumpTab(galleryDefaultTab, item.category);
-    setAttachmentJumpTarget({ ...item, tab: targetTab });
+    const target = item.category === 'links' ? item : attachments.all.find(attachment => (
+      attachment.category === item.category && attachment.mediaPath.toLowerCase() === item.mediaPath.toLowerCase()
+    )) || item;
+    const targetTab = getAttachmentJumpTab(galleryDefaultTab, target.category);
+    setAttachmentJumpTarget({ ...target, tab: targetTab });
     setViewerState(previous => ({ ...previous, open: false, index: 0 }));
     onOpenGallery(targetTab);
-  }, [galleryDefaultTab, onOpenGallery]);
+  }, [attachments.all, galleryDefaultTab, onOpenGallery]);
 
   useImperativeHandle(ref, () => ({
     scrollToBottom: () => {

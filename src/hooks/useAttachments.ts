@@ -10,7 +10,11 @@ export type GalleryCategory = AttachmentCategory | 'links';
 // Imported threads are immutable during browsing. Share scans between the app,
 // chat header and gallery; weak keys release a closed thread naturally.
 const linksCache = new WeakMap<MessengerThread, ResolvedLink[]>();
-const attachmentsCache = new WeakMap<MessengerThread, { mediaState: MediaState; all: ResolvedAttachment[] }>();
+const attachmentsCache = new WeakMap<MessengerThread, {
+  mediaState: MediaState;
+  all: ResolvedAttachment[];
+  occurrences: ResolvedAttachment[];
+}>();
 
 export function useSharedLinks(chatData: MessengerThread | null): ResolvedLink[] {
   return useMemo(() => {
@@ -40,19 +44,21 @@ export function useSharedLinks(chatData: MessengerThread | null): ResolvedLink[]
 
 export function useAttachments(
   chatData: MessengerThread | null,
-  mediaState: MediaState
+  mediaState: MediaState,
+  { includeRepeated = false }: { includeRepeated?: boolean } = {},
 ): {
   all: ResolvedAttachment[];
   byCategory: Record<Exclude<AttachmentCategory, 'all'>, ResolvedAttachment[]>;
   getFiltered: (category: AttachmentCategory) => ResolvedAttachment[];
   findIndex: (mediaPath: string, messageIndex: number) => number;
 } {
-  const all = useMemo<ResolvedAttachment[]>(() => {
-    if (!chatData) return [];
+  const scan = useMemo(() => {
+    if (!chatData) return { all: [], occurrences: [] };
     const cached = attachmentsCache.get(chatData);
-    if (cached?.mediaState === mediaState) return cached.all;
+    if (cached?.mediaState === mediaState) return cached;
 
     const result: ResolvedAttachment[] = [];
+    const occurrences: ResolvedAttachment[] = [];
     const seen = new Set<string>();
 
     for (let i = 0; i < chatData.messages.length; i++) {
@@ -64,10 +70,7 @@ export function useAttachments(
 
       for (const { path, category, shared } of refs) {
         const key = `${category}:${path.toLowerCase()}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-
-        result.push({
+        const attachment: ResolvedAttachment = {
           mediaPath: path,
           category: category as ResolvedAttachment['category'],
           messageIndex: i,
@@ -75,13 +78,22 @@ export function useAttachments(
           sender: msg.senderName || msg.sender_name || 'Unknown',
           mediaEntry: findMediaFile(mediaState, path),
           shared,
-        });
+        };
+        occurrences.push(attachment);
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push(attachment);
+        }
       }
     }
 
-    attachmentsCache.set(chatData, { mediaState, all: result });
-    return result;
+    const scanned = { mediaState, all: result, occurrences };
+    attachmentsCache.set(chatData, scanned);
+    return scanned;
   }, [chatData, mediaState]);
+  // Chat actions need the sender, date, and jump target of every occurrence.
+  // Galleries continue to show one entry per file and category.
+  const all = includeRepeated ? scan.occurrences : scan.all;
 
   const byCategory = useMemo(() => {
     const groups: Record<Exclude<AttachmentCategory, 'all'>, ResolvedAttachment[]> = {
