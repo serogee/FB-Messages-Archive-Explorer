@@ -82,6 +82,7 @@ Before you begin, you need a Facebook, Instagram, or Messenger export in **JSON 
 - View inbox, archived threads, and message request conversations separately
 - Read messages in a Messenger-like layout with chat bubbles and date headers
 - View images, videos, GIFs, audio messages, and file attachments inline
+- Audio-only MP4 attachments are detected from their tracks and shown as audio in chat and gallery counts
 - See emoji reactions on messages
 
 **Searching and Navigating**
@@ -98,6 +99,7 @@ Before you begin, you need a Facebook, Instagram, or Messenger export in **JSON 
 - View per-chat statistics: message count, member count, date range, and attachment counts by type
 - See how many messages each member sent, with percentage bars
 - Browse all attachments in a filterable gallery (photos, videos, audio, GIFs, files)
+- Reused attachment paths appear at every message occurrence, with a link icon and usage count. Selecting or bookmarking one links all its uses within that chat; gallery and selection counts, and saved files, count it once. This applies to Facebook, Instagram, and standalone Messenger JSON exports. Identical files with different paths remain separate.
 - Select attachments and save them to a folder (Chromium browsers) or download as a ZIP file (all browsers)
 
 ZIP downloads support at most 65,535 files and 4 GiB. In Chromium browsers, use **Save to folder** for a larger selection.
