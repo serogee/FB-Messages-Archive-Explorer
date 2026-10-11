@@ -3,6 +3,7 @@ import { parseMessengerJsonContent, getOrderedMessageFileNames, getMessageTimest
 import { processMediaFromDirectory, createMediaState } from './media';
 import type { MediaState } from '../types/messenger';
 import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../types/fileSystem';
+import { getMessageBump } from './messageBump';
 
 const SELECTED_MESSAGES_DIRECTORY = [] as const;
 const FACEBOOK_EXPORT_MESSAGES_DIRECTORY = ['messages'] as const;
@@ -128,7 +129,11 @@ export async function listChatFolders(
         const senderFull = (lastMsg.senderName || lastMsg.sender_name || '').trim();
         const firstName = senderFull.split(/\s+/)[0] || senderFull;
 
-        if (textContent) {
+        const bump = getMessageBump(lastMsg);
+        if (bump) {
+          lastMessage = bump.label;
+          if (isGroup) lastMessage = bump.text ? `${firstName} bumped a message` : `${firstName}: ${bump.label}`;
+        } else if (textContent) {
           lastMessage = isGroup ? `${firstName}: ${textContent.slice(0, 100)}` : textContent.slice(0, 100);
         } else {
           const attachType =

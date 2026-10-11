@@ -305,6 +305,7 @@ export async function createVideoPosterDetails(
     if (signal.aborted) return null;
 
     const duration = Number.isFinite(video.duration) ? video.duration : null;
+    if (!video.videoWidth || !video.videoHeight) return null;
     const sourceWidth = video.videoWidth || POSTER_WIDTH;
     const sourceHeight = video.videoHeight || POSTER_WIDTH;
     const scale = posterHeight
@@ -318,7 +319,6 @@ export async function createVideoPosterDetails(
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    let foundVisibleFrame = false;
     for (const targetTime of getPosterCandidateTimes(duration)) {
       if (targetTime !== video.currentTime) {
         const seeked = waitForVideoEvent(video, 'seeked', signal);
@@ -330,11 +330,11 @@ export async function createVideoPosterDetails(
 
       ctx.drawImage(video, 0, 0, width, height);
       if (!isVideoFrameMostlyBlack(ctx, width, height)) {
-        foundVisibleFrame = true;
         break;
       }
     }
-    if (!foundVisibleFrame) return null;
+    // A decoded dark frame is still a valid preview. Prefer a brighter sample,
+    // but keep the last frame when the clip stays dark instead of marking it failed.
 
     const blob = await new Promise<Blob | null>(resolve => {
       canvas.toBlob(resolve, 'image/webp', 0.86);

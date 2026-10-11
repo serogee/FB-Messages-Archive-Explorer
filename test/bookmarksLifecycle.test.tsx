@@ -2,7 +2,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useBookmarks } from '../src/hooks/useBookmarks';
-import { createPinnedChatBookmark } from '../src/services/bookmarks';
+import { createAttachmentBookmark, createPinnedChatBookmark } from '../src/services/bookmarks';
 import type { ChatListEntry, ResolvedAttachment } from '../src/types/messenger';
 import { createMockDirectoryHandle } from './helpers/mockFileSystem';
 
@@ -32,6 +32,43 @@ const item: ResolvedAttachment = {
 afterEach(() => vi.restoreAllMocks());
 
 describe('bookmark hook lifecycle', () => {
+  it('preserves and removes video bookmarks when an MP4 is recognized as audio', async () => {
+    const root = createMockDirectoryHandle('messages', {});
+    const entry = chat(root);
+    const video: ResolvedAttachment = { ...item, category: 'videos', mediaPath: 'media/voice.mp4' };
+    const bookmark = createAttachmentBookmark(entry, video);
+    const directory = await root.getDirectoryHandle('fb-mae', { create: true });
+    const writable = await (await directory.getFileHandle('bookmarks.json', { create: true })).createWritable();
+    await writable.write(JSON.stringify({ version: 2, bookmarks: [bookmark], pinnedChats: [] }));
+    await writable.close();
+    const audio = { ...video, category: 'audio' as const };
+    const { result } = renderHook(() => useBookmarks(root));
+    await waitFor(() => expect(result.current.attachmentBookmarks).toHaveLength(1));
+    expect(result.current.isItemBookmarked(entry, audio)).toBe(true);
+    await act(async () => { await result.current.setItemBookmarks(entry, [audio], true); });
+    expect(result.current.attachmentBookmarks).toHaveLength(1);
+    await act(async () => { await result.current.toggleItemBookmark(entry, audio); });
+    expect(result.current.attachmentBookmarks).toHaveLength(0);
+  });
+
+  it('shares a single persisted bookmark across repeated uses and removes it from every use', async () => {
+    const root = createMockDirectoryHandle('messages', {});
+    const entry = chat(root);
+    const repeat = { ...item, mediaPath: './PHOTOS/photo.jpg', messageIndex: 7, sender: 'Bob' };
+    const { result } = renderHook(() => useBookmarks(root));
+    await act(async () => { await result.current.setItemBookmarks(entry, [item, repeat], true); });
+    expect(result.current.attachmentBookmarks).toHaveLength(1);
+    expect(result.current.isItemBookmarked(entry, item)).toBe(true);
+    expect(result.current.isItemBookmarked(entry, repeat)).toBe(true);
+
+    const reloaded = renderHook(() => useBookmarks(root));
+    await waitFor(() => expect(reloaded.result.current.attachmentBookmarks).toHaveLength(1));
+    expect(reloaded.result.current.isItemBookmarked(entry, repeat)).toBe(true);
+    await act(async () => { await reloaded.result.current.toggleItemBookmark(entry, repeat); });
+    expect(reloaded.result.current.isItemBookmarked(entry, item)).toBe(false);
+    expect(reloaded.result.current.isItemBookmarked(entry, repeat)).toBe(false);
+  });
+
   it('rolls back an optimistic bookmark when directory preparation fails and succeeds after retry', async () => {
     const root = createMockDirectoryHandle('messages', {});
     const original = root.getDirectoryHandle.bind(root);

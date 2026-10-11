@@ -19,7 +19,27 @@ function makeThread(): MessengerThread {
 }
 
 describe('shared attachment scans', () => {
-  it('opens repeated Messenger paths at their own message while keeping the gallery deduplicated', () => {
+  it('keeps repeated audio-only MP4s in Audio with one unique count', () => {
+    const path = './media/voice.mp4';
+    const data = parseMessengerExportJson(JSON.stringify({
+      threadName: 'Chat', participants: ['Alice'], messages: [
+        { senderName: 'Alice', timestamp: 1, media: [{ uri: path }] },
+        { senderName: 'Alice', timestamp: 2, media: [{ uri: path }] },
+      ],
+    }));
+    const media = createMediaState();
+    addMediaToIndex(media, path, { type: 'audio' });
+    const { result } = renderHook(() => ({
+      unique: useAttachments(data, media),
+      occurrences: useAttachments(data, media, { includeRepeated: true }),
+    }));
+    expect(result.current.unique.byCategory.audio).toHaveLength(1);
+    expect(result.current.unique.byCategory.videos).toHaveLength(0);
+    expect(result.current.occurrences.byCategory.audio).toHaveLength(2);
+    expect(result.current.occurrences.all.map(item => item.usageCount)).toEqual([2, 2]);
+  });
+
+  it('opens repeated Messenger paths at their own message while keeping unique counts', () => {
     const path = './media/52c20a89-be1a-4dd2-bf46-83c8f260ec80.jpeg';
     const data = parseMessengerExportJson(JSON.stringify({
       threadName: 'Chat', participants: ['Alice', 'Geevoi Plaza'], messages: [
@@ -34,6 +54,8 @@ describe('shared attachment scans', () => {
     }), { initialProps: { media } });
     expect(result.current.gallery.all).toHaveLength(1);
     expect(result.current.chat.all).toHaveLength(2);
+    expect(result.current.chat.all.map(item => item.usageCount)).toEqual([2, 2]);
+    expect(result.current.gallery.all[0].usageCount).toBe(2);
     for (const index of [0, 1]) {
       const attachmentIndex = result.current.chat.findIndex(path, index);
       expect(attachmentIndex).toBe(index);
@@ -51,6 +73,24 @@ describe('shared attachment scans', () => {
     expect(result.current.gallery.all).toHaveLength(1);
     expect(result.current.chat.all.map(item => item.mediaEntry)).toEqual([entry, entry]);
     expect(result.current.chat.findIndex(path, 1)).toBe(1);
+  });
+
+  it('links normalized paths in Facebook and Instagram media categories without merging different files', () => {
+    const data: MessengerThread = {
+      ...makeThread(),
+      messages: [
+        { sender_name: 'Alice', timestamp_ms: 1, photos: [{ uri: './photos/A.jpg' }, { uri: 'photos/a.jpg' }], sticker: { uri: 'stickers/a.webp' } },
+        { sender_name: 'Bob', timestamp_ms: 2, photos: [{ uri: 'photos\\a.JPG' }], sticker: { uri: 'stickers/a.webp' } },
+        { sender_name: 'Bob', timestamp_ms: 3, photos: [{ uri: 'other/a.jpg' }] },
+      ],
+    };
+    const { result } = renderHook(() => ({
+      unique: useAttachments(data, createMediaState()),
+      occurrences: useAttachments(data, createMediaState(), { includeRepeated: true }),
+    }));
+    expect(result.current.unique.all).toHaveLength(3);
+    expect(result.current.occurrences.all.map(item => item.usageCount)).toEqual([2, 2, 2, 2, 1]);
+    expect(result.current.occurrences.findIndex('./photos/a.jpg', 1)).toBe(2);
   });
 
   it('resolves newly indexed media after a missing-file scan', () => {

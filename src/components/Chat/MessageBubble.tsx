@@ -18,6 +18,7 @@ import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
 import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
 import { formatMessageDateTime } from '../../services/dateTime';
+import { getMessageBump } from '../../services/messageBump';
 import { ReactionModal } from './ReactionModal';
 import { registerChatAnchorCandidate, stabilizeChatScrollAnchor } from './chatScrollAnchoring';
 import { MediaFileSize } from '../MediaFileSize';
@@ -858,6 +859,7 @@ export const MessageBubble = memo(function MessageBubble({
 
   const sender = msg.senderName || msg.sender_name || 'Unknown';
   const rawText = fixEncoding(msg?.text || msg?.content || '').trim();
+  const bumpedMessage = getMessageBump(msg);
   const timestamp = getMessageTimestamp(msg) || 0;
   const resolvedMediaItems = resolveMessageMediaItems(msg, mediaState);
 
@@ -891,7 +893,10 @@ export const MessageBubble = memo(function MessageBubble({
     ...link,
     label: link.label ? fixEncoding(link.label) : undefined,
   }));
-  const isMediaOnly = hasMediaPreview && !rawText && messageLinks.length === 0 && otherMediaItems.length === 0 && !msg.failedMediaCount;
+  const isMediaOnly = !bumpedMessage && hasMediaPreview && !rawText && messageLinks.length === 0 && otherMediaItems.length === 0 && !msg.failedMediaCount;
+  const isContentUnavailable = !bumpedMessage && !rawText && messageLinks.length === 0 && resolvedMediaItems.length === 0 && !(msg.failedMediaCount && msg.failedMediaCount > 0);
+  const exportedType = typeof msg.type === 'string' ? msg.type.trim() : '';
+  const unavailableType = exportedType ? exportedType.charAt(0).toUpperCase() + exportedType.slice(1) : 'Unknown';
 
   const showName = isMe ? showMyName : showTheirName;
   const reactionFeature = useReactionContext();
@@ -917,7 +922,22 @@ export const MessageBubble = memo(function MessageBubble({
           <span className="msg-unsent">Message unsent</span>
         ) : (
           <>
-            {rawText && (
+            {bumpedMessage && (
+              <>
+                <em className="msg-bump">{bumpedMessage.label}</em>
+                {bumpedMessage.text && (
+                  <blockquote className="message-bump-quote">
+                    <MessageText text={bumpedMessage.text} highlightQuery={highlightQuery} />
+                  </blockquote>
+                )}
+              </>
+            )}
+
+            {isContentUnavailable && (
+              <em className="msg-unavailable">Message Unavailable: {unavailableType}</em>
+            )}
+
+            {rawText && rawText !== bumpedMessage?.text && (
               <span className="message-text">
                 <MessageText text={rawText} highlightQuery={highlightQuery} />
               </span>

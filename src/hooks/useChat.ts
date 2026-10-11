@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, startTransition } from 'react';
 import type { ChatListEntry, MessengerThread, MediaState } from '../types/messenger';
 import type { ReadableDirectoryHandle } from '../types/fileSystem';
 import { loadChatMessages } from '../services/fileSystem';
-import { processMediaFromDirectory, processFacebookStickerReferences, createMediaState, revokeAllMedia } from '../services/media';
+import { processMediaFromDirectory, processFacebookStickerReferences, createMediaState, revokeAllMedia, classifyChatMp4Attachments } from '../services/media';
 import { loadMessengerExportChat, processMessengerExportMedia } from '../services/messengerExport';
 import { storageGet } from '../services/storage';
 import { getParticipantNames } from '../services/parser';
@@ -145,6 +145,10 @@ export function useChat(): {
 
       await attachmentTask;
       if (abortCtrl.signal.aborted) return;
+
+      await classifyChatMp4Attachments(data, newMediaState, abortCtrl.signal);
+      if (abortCtrl.signal.aborted) return;
+      setMediaState({ ...newMediaState });
 
       setMsgStatusText("Loading messages...");
       await new Promise(r => setTimeout(r, 10));

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
-async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'messenger', failMessengerMediaOnce = false, unavailableMedia = false) {
-  await page.addInitScript(({ selectedFormat, shouldFailMessengerMediaOnce, includeUnavailableMedia }) => {
+async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'messenger', failMessengerMediaOnce = false, unavailableMedia = false, bumpedMessages = false) {
+  await page.addInitScript(({ selectedFormat, shouldFailMessengerMediaOnce, includeUnavailableMedia, includeBumpedMessages }) => {
     let failBlockedMedia = shouldFailMessengerMediaOnce;
     const makeFile = (name: string, initialContents: string | number[], persistKey?: string) => {
       let contents = initialContents;
@@ -81,6 +81,14 @@ async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'me
             thread_path: 'inbox/alice_chat',
             participants: [{ name: 'Alice' }, { name: 'Tester' }],
             messages: [
+              ...(includeBumpedMessages ? [
+                { sender_name: 'Tester', timestamp_ms: 70,
+                  bumped_message_metadata: { is_bumped: true, bumped_message: '' } },
+                { sender_name: 'Tester', timestamp_ms: 60, content: 'Repeated bump body',
+                  bumped_message_metadata: { is_bumped: true, bumped_message: 'Repeated bump body' } },
+                { sender_name: 'Alice', timestamp_ms: 50,
+                  bumped_message_metadata: { is_bumped: true, bumped_message: 'Recovered bump quote\nSecond line https://example.com/bumped' } },
+              ] : []),
               {
                 sender_name: 'Alice', timestamp_ms: 20,
                 content: selectedFormat === 'instagram' ? 'needle from Instagram' : 'needle from Facebook',
@@ -170,8 +178,31 @@ async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'me
       value: async () => selectedFormat === 'facebook' ? facebook : selectedFormat === 'instagram' ? instagram : messenger,
     });
     Object.defineProperty(window, '__testArchives', { configurable: true, value: { facebook, messenger } });
-  }, { selectedFormat: format, shouldFailMessengerMediaOnce: failMessengerMediaOnce, includeUnavailableMedia: unavailableMedia });
+  }, { selectedFormat: format, shouldFailMessengerMediaOnce: failMessengerMediaOnce, includeUnavailableMedia: unavailableMedia, includeBumpedMessages: bumpedMessages });
 }
+
+test('renders bumped messages and searches their recovered quotes', async ({ page }) => {
+  await installArchive(page, 'facebook', false, false, true);
+  await page.goto('');
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  const chat = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
+  await expect(chat).toContainText('Bumped a message: Unknown');
+  await chat.click();
+  await expect(page.locator('#chat .msg-bump')).toHaveCount(3);
+  await expect(page.locator('#chat .msg-bump').filter({ hasText: 'Bumped a message: Unknown' })).toHaveCount(1);
+  await expect(page.locator('#chat .msg-bump').first()).toHaveCSS('font-style', 'italic');
+  await expect(page.locator('#chat blockquote')).toHaveCount(2);
+  await expect(page.locator('#chat').getByText('Repeated bump body', { exact: true })).toHaveCount(1);
+  const quote = page.locator('#chat blockquote').filter({ hasText: 'Recovered bump quote' });
+  await expect(quote).toContainText('Recovered bump quote\nSecond line');
+  await expect(quote.getByRole('link')).toHaveAttribute('href', 'https://example.com/bumped');
+  await expect(page.locator('#chat .msg-unavailable')).toHaveCount(0);
+  const search = page.getByRole('searchbox', { name: 'Search messages' });
+  await search.fill('Recovered bump quote');
+  await search.press('Enter');
+  await expect(page.getByRole('listbox', { name: 'Search results' })).toContainText('Recovered bump quote');
+  await expect(quote.locator('.search-highlight')).toHaveText('Recovered bump quote');
+});
 
 test('wraps long viewer filenames and copies the original filename from options', async ({ page }) => {
   await installArchive(page, 'messenger');
@@ -348,14 +379,52 @@ for (const format of ['facebook', 'instagram', 'messenger'] as const) {
       await expect(viewer).toHaveCount(0);
       await expect(message).toHaveClass(/highlight-target/);
     }
-    // A jump from the repeated chat occurrence targets the gallery's first file entry.
+    // A jump from chat highlights that exact occurrence in the gallery.
     await cases[0].target.click();
     const viewer = page.getByRole('dialog', { name: 'Attachment viewer' });
     await viewer.getByRole('button', { name: 'More options' }).click();
     await viewer.getByRole('button', { name: 'Jump to attachment' }).click();
     await expect(page.getByRole('heading', { name: 'Attachments' })).toBeVisible();
-    await expect(page.locator('.gallery-thumb[title="missing.jpg"]')).toHaveCount(1);
-    await expect(page.locator('.gallery-thumb[title="missing.jpg"]')).toHaveClass(/jump-highlight/);
+    const reused = page.locator('.gallery-thumb[title="missing.jpg"]');
+    await expect(reused).toHaveCount(2);
+    await expect(reused.first()).toHaveClass(/jump-highlight/);
+    await reused.first().click();
+    await expect(viewer.locator('.media-viewer-sender')).toHaveText('Tester');
+    await viewer.getByRole('button', { name: 'Close' }).click();
+    await expect(reused.locator('.gallery-reuse-indicator')).toHaveText(['2', '2']);
+
+    // Counts and selections refer to unique files, even with separate cards.
+    await page.locator('.gallery-tab').filter({ hasText: 'Audio' }).click();
+    await expect(page.locator('.gallery-tab.active .gallery-tab-count')).toHaveText('1');
+    const audio = page.locator('.gallery-thumb[title="missing.ogg"]');
+    await expect(audio).toHaveCount(2);
+    await page.getByRole('button', { name: 'Select attachments and links' }).click();
+    await audio.first().click();
+    await expect(page.locator('.gallery-thumb[title="missing.ogg"].selected')).toHaveCount(2);
+    await page.getByRole('button', { name: 'Toggle chat info panel' }).click();
+    await expect(page.locator('.selection-panel-header')).toContainText('1 Selected');
+    await expect(page.locator('.selection-grid .gallery-thumb')).toHaveCount(1);
+    await audio.last().click();
+    await expect(page.locator('.gallery-thumb[title="missing.ogg"].selected')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Select attachments and links' }).click();
+
+    // Bookmarking either use marks both; filtering keeps both occurrences.
+    await audio.first().click();
+    await page.getByRole('button', { name: 'Bookmark item' }).click();
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(audio.locator('.gallery-bookmark-indicator')).toHaveCount(2);
+    await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem('__e2eBookmarks')!).bookmarks.length)).toBe(1);
+    await page.getByRole('button', { name: 'Toggle attachment filters' }).click();
+    await page.getByRole('button', { name: 'Bookmark filter: all' }).click();
+    await expect(audio).toHaveCount(2);
+    await expect(page.getByLabel('1 of 1 items shown')).toBeVisible();
+    await page.getByRole('button', { name: 'Bookmark filter: bookmarked' }).click();
+    await expect(page.getByText('No matching attachments')).toBeVisible();
+    await page.getByRole('button', { name: 'Clear all attachment filters' }).click();
+    await audio.last().click();
+    await page.getByRole('button', { name: 'Remove bookmark' }).click();
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(audio.locator('.gallery-bookmark-indicator')).toHaveCount(0);
   });
 }
 

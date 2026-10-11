@@ -33,6 +33,12 @@ export interface MessengerMessage {
   timestamp?: number;
   content?: string;
   text?: string;
+  /** Exported message type, retained for messages whose content is unavailable. */
+  type?: string;
+  bumped_message_metadata?: {
+    bumped_message?: string;
+    is_bumped?: boolean;
+  };
   photos?: MediaItem[];
   videos?: MediaItem[];
   audio?: MediaItem[];
@@ -104,6 +110,8 @@ export interface ResolvedAttachment {
   sender: string;
   mediaEntry: MediaEntry | null;
   shared?: boolean;
+  // Number of occurrences of this attachment path and category in the thread.
+  usageCount?: number;
 }
 
 export interface ResolvedLink {

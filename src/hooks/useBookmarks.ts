@@ -5,6 +5,7 @@ import {
   createBookmark,
   getBookmarkChatId,
   getBookmarkItemId,
+  getBookmarkItemMatchIds,
   invalidateBookmarksDirectoryPreparation,
   loadBookmarks,
   prepareBookmarksDirectory,
@@ -135,17 +136,17 @@ export function useBookmarks(
   }, [persist]);
 
   const isItemBookmarked = useCallback((entry: ChatListEntry, item: SelectableItem) => {
-    const id = getBookmarkItemId(entry, item);
-    return dataRef.current.bookmarks.some(bookmark => bookmark.id === id);
+    const ids = getBookmarkItemMatchIds(entry, item);
+    return dataRef.current.bookmarks.some(bookmark => ids.includes(bookmark.id));
   }, []);
 
   const toggleItemBookmark = useCallback(async (entry: ChatListEntry, item: SelectableItem) => {
     await readyRef.current;
-    const id = getBookmarkItemId(entry, item);
+    const ids = getBookmarkItemMatchIds(entry, item);
     const current = dataRef.current;
-    const existing = current.bookmarks.some(bookmark => bookmark.id === id);
+    const existing = current.bookmarks.some(bookmark => ids.includes(bookmark.id));
     const bookmarks = existing
-      ? current.bookmarks.filter(bookmark => bookmark.id !== id)
+      ? current.bookmarks.filter(bookmark => !ids.includes(bookmark.id))
       : [...current.bookmarks, createBookmark(entry, item)];
     await replace({ ...current, bookmarks });
   }, [replace]);
@@ -156,15 +157,17 @@ export function useBookmarks(
     bookmarked: boolean
   ) => {
     await readyRef.current;
-    const ids = new Set(items.map(item => getBookmarkItemId(entry, item)));
+    const ids = new Set(items.flatMap(item => getBookmarkItemMatchIds(entry, item)));
     const current = dataRef.current;
+    const existingIds = new Set(current.bookmarks.map(bookmark => bookmark.id));
+    const additions = bookmarked ? items.filter(item => {
+      const id = getBookmarkItemId(entry, item);
+      if (getBookmarkItemMatchIds(entry, item).some(matchId => existingIds.has(matchId))) return false;
+      existingIds.add(id);
+      return true;
+    }).map(item => createBookmark(entry, item)) : [];
     const bookmarks = bookmarked
-      ? [
-          ...current.bookmarks,
-          ...items
-            .filter(item => !current.bookmarks.some(bookmark => bookmark.id === getBookmarkItemId(entry, item)))
-            .map(item => createBookmark(entry, item)),
-        ]
+      ? [...current.bookmarks, ...additions]
       : current.bookmarks.filter(bookmark => !ids.has(bookmark.id));
     if (bookmarks.length === current.bookmarks.length) return;
     await replace({ ...current, bookmarks });

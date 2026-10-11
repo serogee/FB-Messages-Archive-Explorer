@@ -5,6 +5,7 @@ import type { Settings } from '../../hooks/useSettings';
 import { useAttachments, useSharedLinks, type GalleryCategory } from '../../hooks/useAttachments';
 import { shouldConfirmBulkSelection, type useSelection } from '../../hooks/useSelection';
 import { findMediaFile } from '../../services/media';
+import { countUniqueSelectableItems, normalizeAttachmentPath } from '../../services/attachmentIdentity';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
 import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
@@ -81,7 +82,7 @@ function findFirstRow(rows: GalleryLayoutRow[], target: number): number {
 function getGalleryItemKey(item: SelectableItem): string {
   return item.category === 'links'
     ? `links:${item.messageIndex}:${item.url}`
-    : `${item.category}:${item.messageIndex}:${item.mediaPath.toLowerCase()}`;
+    : `${item.category}:${item.messageIndex}:${normalizeAttachmentPath(item.mediaPath)}`;
 }
 
 function groupByMonth(items: GalleryItem[]): GalleryGroup[] {
@@ -297,6 +298,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   }, [attachment, mediaState]);
 
   const category = attachment.category;
+  const usageCount = attachment.usageCount ?? 1;
   const filename = attachment.mediaPath.split('/').pop() || 'File';
   const missingFile = !(attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath));
 
@@ -314,7 +316,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
 
   return (
     <div
-      className={`gallery-thumb ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${category === 'stickers' ? 'gallery-thumb-sticker' : ''} ${compactFileCard ? 'gallery-thumb-file-compact' : ''} ${compactAudioCard ? 'gallery-thumb-audio-compact' : ''} ${isSelected ? 'selected' : ''} ${isJumpHighlighted ? 'jump-highlight' : ''}`}
+      className={`gallery-thumb ${usageCount > 1 ? 'has-reuses' : ''} ${category === 'audio' || category === 'files' ? 'gallery-thumb-file' : ''} ${category === 'stickers' ? 'gallery-thumb-sticker' : ''} ${compactFileCard ? 'gallery-thumb-file-compact' : ''} ${compactAudioCard ? 'gallery-thumb-audio-compact' : ''} ${isSelected ? 'selected' : ''} ${isJumpHighlighted ? 'jump-highlight' : ''}`}
       onClick={activate}
       onKeyDown={handleKeyDown}
       role="button"
@@ -428,6 +430,13 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         >
           <MessageSquare size={14} />
         </button>
+      )}
+
+      {usageCount > 1 && (
+        <span className="gallery-reuse-indicator" title={`Used ${usageCount} times in this chat`} aria-label={`Attachment used ${usageCount} times in this chat`}>
+          <LinkIcon size={14} />
+          <span>{usageCount.toLocaleString()}</span>
+        </span>
       )}
 
       {isBookmarked && (
@@ -602,7 +611,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
 }: AttachmentGalleryProps) {
   // ChatView mounts the gallery only when a loaded thread exists.
   const chatData = useThreadData(providedThread)!;
-  const { all, byCategory } = useAttachments(chatData, mediaState);
+  const { all, byCategory } = useAttachments(chatData, mediaState, { includeRepeated: true });
   const links = useSharedLinks(chatData);
   const allItems = useMemo<GalleryItem[]>(
     () => [...all, ...links].sort((left, right) => left.messageIndex - right.messageIndex),
@@ -674,6 +683,8 @@ const AttachmentGalleryBase = function AttachmentGallery({
       filters.searchQuery,
     ],
   );
+  const filteredItemCount = useMemo(() => countUniqueSelectableItems(filteredItems), [filteredItems]);
+  const currentItemCount = useMemo(() => countUniqueSelectableItems(currentItems), [currentItems]);
   const availableSenders = useMemo(() => {
     return getGallerySenderOptions(
       chatData.participants.map(participant => participant.name),
@@ -1075,19 +1086,19 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
   const handleAddAllToSelection = useCallback(() => {
     if (filteredItems.length === 0) return;
-    if (shouldConfirmBulkSelection(filteredItems.length)) {
+    if (shouldConfirmBulkSelection(filteredItemCount)) {
       setBulkSelectionConfirmationAction('select');
       return;
     }
     selection.selectMany(filteredItems);
-  }, [filteredItems, selection]);
+  }, [filteredItems, filteredItemCount, selection]);
 
   const allFilteredItemsSelected = filteredItems.length > 0
     && filteredItems.every(item => selection.isSelected(item));
 
   const handleToggleAllSelection = useCallback(() => {
     if (allFilteredItemsSelected) {
-      if (shouldConfirmBulkSelection(filteredItems.length)) {
+      if (shouldConfirmBulkSelection(filteredItemCount)) {
         setBulkSelectionConfirmationAction('deselect');
         return;
       }
@@ -1095,7 +1106,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
       return;
     }
     handleAddAllToSelection();
-  }, [allFilteredItemsSelected, filteredItems, handleAddAllToSelection, selection]);
+  }, [allFilteredItemsSelected, filteredItems, filteredItemCount, handleAddAllToSelection, selection]);
 
   const handleViewerJump = useCallback((messageIndex: number) => {
     saveScrollPosition();
@@ -1147,14 +1158,14 @@ const AttachmentGalleryBase = function AttachmentGallery({
   }, [layout.rows, scrollTop]);
 
   const tabCounts = useMemo<Record<GalleryCategory, number>>(() => ({
-    all: allItems.length,
-    photos: byCategory.photos.length,
-    videos: byCategory.videos.length,
-    audio: byCategory.audio.length,
-    gifs: byCategory.gifs.length,
-    files: byCategory.files.length,
+    all: countUniqueSelectableItems(allItems),
+    photos: countUniqueSelectableItems(byCategory.photos),
+    videos: countUniqueSelectableItems(byCategory.videos),
+    audio: countUniqueSelectableItems(byCategory.audio),
+    gifs: countUniqueSelectableItems(byCategory.gifs),
+    files: countUniqueSelectableItems(byCategory.files),
     links: links.length,
-    stickers: byCategory.stickers.length,
+    stickers: countUniqueSelectableItems(byCategory.stickers),
   }), [allItems, byCategory, links]);
 
   const visibleTabs = showStickers ? TABS : TABS.filter(tab => tab.key !== 'stickers');
@@ -1174,8 +1185,8 @@ const AttachmentGalleryBase = function AttachmentGallery({
             onClick={handleToggleAllSelection}
             disabled={filteredItems.length === 0}
             title={allFilteredItemsSelected
-              ? `Unselect all ${filteredItems.length.toLocaleString()} matching items`
-              : `Select all ${filteredItems.length.toLocaleString()} matching items`}
+              ? `Unselect all ${filteredItemCount.toLocaleString()} matching items`
+              : `Select all ${filteredItemCount.toLocaleString()} matching items`}
           >
             {allFilteredItemsSelected ? <ListMinus size={17} /> : <ListPlus size={17} />}
             <span>{allFilteredItemsSelected ? 'Unselect all' : 'Select all'}</span>
@@ -1458,10 +1469,10 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
           <span
             className="gallery-filter-count"
-            aria-label={`${filteredItems.length.toLocaleString()} of ${currentItems.length.toLocaleString()} items shown`}
-            title="Matching items / total items"
+            aria-label={`${filteredItemCount.toLocaleString()} of ${currentItemCount.toLocaleString()} items shown`}
+            title="Matching unique items / total unique items"
           >
-            {filteredItems.length.toLocaleString()} / {currentItems.length.toLocaleString()}
+            {filteredItemCount.toLocaleString()} / {currentItemCount.toLocaleString()}
           </span>
 
           {attachmentBookmarkingEnabled && (
@@ -1551,7 +1562,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
                     />
                   ) : (
                     <GalleryThumbnail
-                      key={`${item.category}:${item.mediaPath.toLowerCase()}`}
+                      key={getGalleryItemKey(item)}
                       attachment={item}
                       mediaState={mediaState}
                       onOpen={openViewer}
@@ -1598,7 +1609,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
 
       {bulkSelectionConfirmationAction && (
         <BulkSelectionConfirmModal
-          count={filteredItems.length}
+          count={filteredItemCount}
           action={bulkSelectionConfirmationAction}
           onConfirm={confirmBulkSelection}
           onCancel={closeBulkSelectionConfirmation}

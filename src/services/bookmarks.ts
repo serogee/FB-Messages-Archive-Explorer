@@ -1,5 +1,6 @@
 import type { ChatListEntry, ResolvedAttachment, SelectableItem } from '../types/messenger';
 import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../types/fileSystem';
+import { getAttachmentIdentity } from './attachmentIdentity';
 
 export const BOOKMARKS_DIRECTORY = 'fb-mae';
 export const LEGACY_BOOKMARKS_DIRECTORY = 'selected_messages';
@@ -64,10 +65,6 @@ function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
 }
 
-function normalizePath(path: string): string {
-  return path.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
-}
-
 function createChatSnapshot(entry: ChatListEntry): BookmarkChatSnapshot {
   return {
     title: entry.title,
@@ -87,12 +84,20 @@ export function getAttachmentBookmarkId(
   entry: ChatListEntry,
   attachment: Pick<ResolvedAttachment, 'category' | 'mediaPath'>
 ): string {
-  return `${getBookmarkChatId(entry)}:${attachment.category}:${normalizePath(attachment.mediaPath)}`;
+  return `${getBookmarkChatId(entry)}:${getAttachmentIdentity(attachment)}`;
 }
 
 export function getBookmarkItemId(entry: ChatListEntry, item: SelectableItem): string {
   if (item.category !== 'links') return getAttachmentBookmarkId(entry, item);
   return `${getBookmarkChatId(entry)}:links:${item.timestamp}:${item.sender.toLowerCase()}:${item.url}`;
+}
+
+export function getBookmarkItemMatchIds(entry: ChatListEntry, item: SelectableItem): string[] {
+  const id = getBookmarkItemId(entry, item);
+  // Audio-only MP4s were previously saved as videos. Preserve those bookmarks.
+  return item.category === 'audio' && /\.mp4$/i.test(item.mediaPath)
+    ? [id, getAttachmentBookmarkId(entry, { category: 'videos', mediaPath: item.mediaPath })]
+    : [id];
 }
 
 export function createAttachmentBookmark(

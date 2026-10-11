@@ -1,11 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import type { ResolvedAttachment, SelectableItem } from '../types/messenger';
-
-function getSelectionKey(item: SelectableItem): string {
-  return item.category === 'links'
-    ? `links:${item.messageIndex}:${item.url}`
-    : `${item.category}:${item.mediaPath.toLowerCase()}`;
-}
+import { getSelectableItemIdentity as getSelectionKey } from '../services/attachmentIdentity';
 
 export function addItemsToSelection(
   selectedKeys: Set<string>,
@@ -85,7 +80,7 @@ export function useSelection() {
   const getSelectedAttachments = useCallback(
     (allAttachments: ResolvedAttachment[]) => {
       return allAttachments.filter(att => {
-        const key = `${att.category}:${att.mediaPath.toLowerCase()}`;
+        const key = getSelectionKey(att);
         return keysRef.current.has(key);
       });
     },
