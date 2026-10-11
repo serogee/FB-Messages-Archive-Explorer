@@ -30,6 +30,17 @@ function conversationJson() {
 }
 
 describe('Messenger export parser and detector', () => {
+  it('retains bump metadata and repairs quoted text without substituting the message body', () => {
+    const message = parseMessengerExportJson(JSON.stringify({
+      threadName: 'Chat', participants: ['Alice'], messages: [{
+        senderName: 'Alice', timestamp: 1, text: '',
+        bumped_message_metadata: { is_bumped: true, bumped_message: 'caf\u00c3\u00a9 plans' },
+      }],
+    })).messages[0];
+    expect(message.content).toBe('');
+    expect(message.bumped_message_metadata).toEqual({ is_bumped: true, bumped_message: 'café plans' });
+  });
+
   it('detects conversation JSON content and rejects non-conversations', () => {
     expect(isConversationJsonContent(conversationJson())).toBe(true);
     expect(isConversationJsonContent(JSON.stringify({ settings: true }))).toBe(false);

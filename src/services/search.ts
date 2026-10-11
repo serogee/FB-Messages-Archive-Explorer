@@ -2,6 +2,7 @@ import type { MessengerMessage, SearchIndexEntry, SearchResult } from '../types/
 import { escapeHtml } from './storage';
 import { fixEncoding } from './parser';
 import { isReactionNoticeMessage } from './reactions';
+import { getMessageBump } from './messageBump';
 
 
 function buildNormalizedMap(original: string): { normalized: string; mapping: number[] } {
@@ -90,6 +91,11 @@ export function buildSearchIndex(
     const parts: string[] = [];
     const messageText = getMessageText(m);
     if (messageText) parts.push(messageText);
+    const bump = getMessageBump(m);
+    if (bump) {
+      parts.push(bump.label);
+      if (bump.text && bump.text !== messageText) parts.push(bump.text);
+    }
 
     const mediaArrays = [
       m.photos,

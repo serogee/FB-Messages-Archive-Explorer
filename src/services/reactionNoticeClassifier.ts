@@ -69,6 +69,7 @@ export function parseStrictReactionNoticeText(text: string): { reaction: string 
 export function isBroadReactionNoticeText(text: string): boolean { return wording.test(text.trim()); }
 export function hasProtectedReactionPayload(message: object): boolean {
   const raw = message as Record<string, unknown>;
+  if ((raw.bumped_message_metadata as { is_bumped?: unknown } | undefined)?.is_bumped === true) return true;
   if (/\bhttps?:\/\/\S+/i.test(String(raw.text || raw.content || ''))) return true;
   return ['photos', 'videos', 'audio', 'audio_files', 'gifs', 'files', 'media', 'sticker', 'share', 'links', 'link', 'href', 'reactions']
     .some(key => Object.hasOwn(raw, key) && (!Array.isArray(raw[key]) || raw[key].length > 0));

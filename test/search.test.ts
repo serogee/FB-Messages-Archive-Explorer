@@ -53,6 +53,25 @@ describe('search service', () => {
     expect(results).toHaveLength(1);
   });
 
+  it('finds bump notices and quoted text while preserving bump actions that resemble reaction notices', async () => {
+    const index = search.buildSearchIndex([
+      { sender_name: 'Alice', timestamp_ms: 1,
+        content: 'Alice reacted 👍 to your message',
+        bumped_message_metadata: { is_bumped: true, bumped_message: 'caf\u00c3\u00a9 plans' } },
+      { sender_name: 'Bob', timestamp_ms: 2,
+        bumped_message_metadata: { is_bumped: true, bumped_message: '' } },
+      { sender_name: 'Bob', timestamp_ms: 3, is_unsent: true,
+        bumped_message_metadata: { is_bumped: true, bumped_message: 'hidden quote' } },
+    ]);
+    expect((await search.performSearch('cafe', index)).map(result => result.item.idx)).toEqual([0]);
+    expect((await search.performSearch('bumped a message', index)).map(result => result.item.idx)).toEqual([0, 1]);
+    expect((await search.performSearch('bumped a message: unknown', index)).map(result => result.item.idx)).toEqual([1]);
+    expect(await search.performSearch('hidden quote', index)).toHaveLength(0);
+    expect(search.buildSearchIndex([{ sender_name: 'Alice', timestamp_ms: 1, content: 'Repeated body',
+      bumped_message_metadata: { is_bumped: true, bumped_message: 'Repeated body' },
+    }])[0].text).toBe('Repeated body Bumped a message');
+  });
+
   it('respects already-aborted signals', async () => {
     const index = search.buildSearchIndex([
       { sender_name: 'Alice', timestamp_ms: 1, content: 'hello' },

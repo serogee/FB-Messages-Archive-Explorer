@@ -7,7 +7,8 @@ import { MediaViewer } from '../src/components/MediaViewer/MediaViewer';
 import { addMediaToIndex, createMediaState } from '../src/services/media';
 import { parseMessengerExportJson } from '../src/services/messengerExport/messengerExportParser';
 import { chatVideoPosterCache } from '../src/services/videoPosterCache';
-import type { ChatListEntry, ResolvedAttachment, SelectableItem } from '../src/types/messenger';
+import type { ChatListEntry, MessengerMessage, ResolvedAttachment, SelectableItem } from '../src/types/messenger';
+import { parseMessengerJsonContent } from '../src/services/parser';
 
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
@@ -44,6 +45,114 @@ const bubbleProps = {
 };
 
 describe('unavailable attachments', () => {
+  it('renders an encoded Facebook bump quote with safe links, highlights, and reactions', () => {
+    const message = parseMessengerJsonContent(JSON.stringify({
+      title: 'Chat', thread_path: 'inbox/chat', participants: [], messages: [{
+        sender_name: 'Alice', timestamp_ms: 1,
+        bumped_message_metadata: { is_bumped: true, bumped_message: 'caf\u00c3\u00a9 plans\nhttps://example.com/report\n<img src=x onerror=alert(1)>' },
+        reactions: [{ actor: 'Bob', reaction: '👍' }],
+      }],
+    })).messages[0];
+    const { container } = render(<MessageBubble {...bubbleProps} msg={message} highlightQuery="cafe" showReactions />);
+    expect(screen.getByText('Bumped a message').tagName).toBe('EM');
+    const quote = container.querySelector('blockquote')!;
+    expect(quote.textContent).toContain('café plans\n');
+    expect(quote.querySelector('.search-highlight')?.textContent).toBe('café');
+    expect(screen.getByRole('link', { name: 'https://example.com/report' }).getAttribute('href')).toBe('https://example.com/report');
+    expect(quote.textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(quote.querySelector('img')).toBeNull();
+    expect(container.querySelector('.reaction-bubble')).toBeTruthy();
+    expect(screen.queryByText(/^Message Unavailable:/)).toBeNull();
+  });
+
+  it.each(['', ' \n\t ', undefined, '\u200b\u200e'])('marks the bumped message unknown when no visible quote is available: %j', bumped_message => {
+    const { container } = render(<MessageBubble {...bubbleProps} msg={{ sender_name: 'Alice', timestamp_ms: 1,
+      bumped_message_metadata: { is_bumped: true, bumped_message },
+    }} />);
+    expect(screen.getByText('Bumped a message: Unknown').tagName).toBe('EM');
+    expect(container.querySelector('blockquote')).toBeNull();
+    expect(screen.queryByText(/^Message Unavailable:/)).toBeNull();
+  });
+
+  it('keeps other message content and media alongside a bump notice', () => {
+    const { container } = render(<MessageBubble {...bubbleProps} msg={{ sender_name: 'Alice', timestamp_ms: 1,
+      content: 'Additional text', photos: [{ uri: 'missing.jpg' }],
+      bumped_message_metadata: { is_bumped: true, bumped_message: 'Quoted message' },
+    }} />);
+    expect(screen.getByText('Additional text')).toBeTruthy();
+    expect(screen.getByText('Quoted message')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Image not found or unreadable' })).toBeTruthy();
+    expect(container.querySelector('.media-only')).toBeNull();
+  });
+
+  it('displays the quote once when the export repeats it in the regular content', () => {
+    const { container } = render(<MessageBubble {...bubbleProps} msg={{ sender_name: 'Alice', timestamp_ms: 1,
+      content: 'Repeated body', bumped_message_metadata: { is_bumped: true, bumped_message: 'Repeated body' },
+    }} />);
+    expect(screen.getAllByText('Repeated body')).toHaveLength(1);
+    expect(container.querySelector('blockquote')?.textContent).toBe('Repeated body');
+    expect(container.querySelector('.message-text')).toBeNull();
+  });
+
+  it('does not expose a bump quote from an unsent message', () => {
+    const { container } = render(<MessageBubble {...bubbleProps} msg={{ sender_name: 'Alice', timestamp_ms: 1,
+      is_unsent: true, bumped_message_metadata: { is_bumped: true, bumped_message: 'Removed quote' },
+    }} />);
+    expect(screen.getByText('Message unsent')).toBeTruthy();
+    expect(screen.queryByText('Bumped a message')).toBeNull();
+    expect(container.querySelector('blockquote')).toBeNull();
+  });
+
+  it('requires the bump flag before interpreting metadata as a bump action', () => {
+    render(<MessageBubble {...bubbleProps} msg={{ sender_name: 'Alice', timestamp_ms: 1, content: 'Original content',
+      bumped_message_metadata: { is_bumped: false, bumped_message: 'Inactive quote' },
+    }} />);
+    expect(screen.getByText('Original content')).toBeTruthy();
+    expect(screen.queryByText('Bumped a message')).toBeNull();
+    expect(screen.queryByText('Inactive quote')).toBeNull();
+  });
+
+  it.each(['media', 'link', 'text'])('shows an italic unavailable label for an empty Messenger %s message', type => {
+    const message = parseMessengerExportJson(JSON.stringify({
+      threadName: 'Chat', participants: ['Mhel Emmie Plaza', 'Geevoi Plaza'],
+      messages: [{ isUnsent: false, senderName: 'Mhel Emmie Plaza', timestamp: 1772536636351,
+        text: '  ', media: [], reactions: [], type }],
+    })).messages[0];
+    render(<MessageBubble {...bubbleProps} msg={message} />);
+    const label = screen.getByText(`Message Unavailable: ${type.charAt(0).toUpperCase() + type.slice(1)}`);
+    expect(label.tagName).toBe('EM');
+    expect(label.classList.contains('msg-unavailable')).toBe(true);
+  });
+
+  it('retains the fallback for empty Facebook messages with reactions and an unusable link', () => {
+    const message = parseMessengerJsonContent(JSON.stringify({
+      title: 'Chat', participants: [{ name: 'Alice' }], thread_path: 'inbox/chat', messages: [
+        { sender_name: 'Alice', timestamp_ms: 1, type: 'link', share: { link: 'javascript:alert(1)' },
+          reactions: [{ actor: 'Bob', reaction: '❤' }] },
+      ],
+    })).messages[0];
+    const { container } = render(<MessageBubble {...bubbleProps} msg={message} showReactions />);
+    expect(screen.getByText('Message Unavailable: Link')).toBeTruthy();
+    expect(container.querySelector('.reaction-bubble')).toBeTruthy();
+    expect(container.querySelector('a')).toBeNull();
+  });
+
+  it('labels an empty message without a recorded type as unknown', () => {
+    render(<MessageBubble {...bubbleProps} msg={{ sender_name: 'Alice', timestamp_ms: 1, content: '\n\t' }} />);
+    expect(screen.getByText('Message Unavailable: Unknown')).toBeTruthy();
+  });
+
+  it.each<Partial<MessengerMessage>>([
+    { text: 'Visible text', type: 'text' },
+    { share: { link: 'https://example.com' }, type: 'link' },
+    { photos: [{ uri: 'missing.jpg' }], type: 'media' },
+    { failedMediaCount: 1, type: 'media' },
+    { is_unsent: true, type: 'media' },
+  ])('keeps existing content and unsent messages free of the empty-content label: %j', content => {
+    render(<MessageBubble {...bubbleProps} msg={{ sender_name: 'Alice', timestamp_ms: 1, ...content }} />);
+    expect(screen.queryByText(/^Message Unavailable:/)).toBeNull();
+  });
+
   it('counts repeated failures below media files without inflating known categories', () => {
     const mediaState = createMediaState();
     addMediaToIndex(mediaState, 'media/photo.jpg', { type: 'image', url: 'blob:photo' });

@@ -1,6 +1,7 @@
 import type { ChatListEntry, MessengerThread } from '../../types/messenger';
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../../types/fileSystem';
 import { getMessageTimestamp } from '../parser';
+import { getMessageBump } from '../messageBump';
 import {
   classifyMessengerExportJson,
   getMessengerExportLastMessage,
@@ -26,7 +27,11 @@ function describeLastMessage(thread: MessengerThread): { lastMessage?: string; l
   const isGroup = (thread.participants || []).length > 2;
 
   let lastMessage: string | undefined;
-  if (text) {
+  const bump = getMessageBump(lastMsg);
+  if (bump) {
+    lastMessage = bump.label;
+    if (isGroup) lastMessage = bump.text ? `${firstName} bumped a message` : `${firstName}: ${bump.label}`;
+  } else if (text) {
     lastMessage = isGroup ? `${firstName}: ${text.slice(0, 100)}` : text.slice(0, 100);
   } else {
     const attachType =

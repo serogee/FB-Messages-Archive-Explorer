@@ -14,6 +14,7 @@ interface RawMessengerExportMessage {
   share?: SharedLink;
   reactions?: Reaction[];
   type?: string;
+  bumped_message_metadata?: MessengerMessage['bumped_message_metadata'];
 }
 
 interface RawMessengerExportThread {
@@ -82,6 +83,14 @@ function normalizeMessage(raw: RawMessengerExportMessage): MessengerMessage {
     timestamp: Number.isFinite(timestamp) ? timestamp : 0,
     content: text,
     text,
+    ...(typeof raw.type === 'string' && raw.type.trim() ? { type: raw.type.trim() } : {}),
+    ...(raw.bumped_message_metadata && typeof raw.bumped_message_metadata === 'object' ? {
+      bumped_message_metadata: {
+        is_bumped: raw.bumped_message_metadata.is_bumped === true,
+        bumped_message: typeof raw.bumped_message_metadata.bumped_message === 'string'
+          ? fixEncoding(raw.bumped_message_metadata.bumped_message) : undefined,
+      },
+    } : {}),
     media,
     ...(failedMediaCount ? { failedMediaCount } : {}),
     share: raw.share ? {
