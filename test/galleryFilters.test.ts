@@ -12,6 +12,7 @@ import {
   type GalleryFilterState,
 } from '../src/hooks/useGalleryFilters';
 import { addItemsToSelection, removeItemsFromSelection, shouldConfirmBulkSelection, sortSelectableItemsNewestFirst } from '../src/hooks/useSelection';
+import { countUniqueSelectableItems } from '../src/services/attachmentIdentity';
 import type { ResolvedAttachment, ResolvedLink, SelectableItem } from '../src/types/messenger';
 
 function attachment(sender: string, index: number): ResolvedAttachment {
@@ -212,6 +213,18 @@ describe('bulk gallery selection', () => {
     expect(removeItemsFromSelection(selected, [photo, sharedLink])).toEqual(new Set([
       outsideCurrentFilter,
     ]));
+  });
+
+  it('counts and selects path variants once while keeping shared links independent', () => {
+    const photo = { ...attachment('Alice', 1), mediaPath: './photos/Photo.jpg' };
+    const repeat = { ...photo, messageIndex: 2, mediaPath: 'photos\\PHOTO.JPG' };
+    const firstLink = link('Alice', 3);
+    const repeatedLink = { ...firstLink, messageIndex: 4 };
+    const items = [photo, repeat, firstLink, repeatedLink];
+    expect(countUniqueSelectableItems(items)).toBe(3);
+    const selected = addItemsToSelection(new Set(), items);
+    expect(selected.size).toBe(3);
+    expect(removeItemsFromSelection(selected, [repeat])).toEqual(addItemsToSelection(new Set(), [firstLink, repeatedLink]));
   });
 
   it('requires confirmation only above the 500-item safety threshold', () => {

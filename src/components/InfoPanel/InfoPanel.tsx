@@ -10,6 +10,7 @@ import {
 import { getMessageTimestamp } from '../../services/parser';
 import { getMessageAttachmentReferences, isMediaReferenceFound } from '../../services/media';
 import { getMessageLinks } from '../../services/messageLinks';
+import { normalizeAttachmentPath } from '../../services/attachmentIdentity';
 import { useThreadData } from '../../hooks/useThreadData';
 
 interface InfoPanelProps {
@@ -82,10 +83,10 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
 
     links += getMessageLinks(msg).length;
 
-    const refs = getMessageAttachmentReferences(msg);
+    const refs = getMessageAttachmentReferences(msg, mediaState);
     for (const { path, category, shared } of refs) {
       if (!shared) totalReported++;
-      const key = `${category}:${path.toLowerCase()}`;
+      const key = `${category}:${normalizeAttachmentPath(path)}`;
       if (!seenAttachments.has(key)) {
         seenAttachments.add(key);
         const isFound = isMediaReferenceFound(mediaState, path);

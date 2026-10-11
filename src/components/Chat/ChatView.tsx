@@ -163,14 +163,11 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   }, [galleryOpen, onCloseGallery]);
 
   const handleViewerAttachmentJump = useCallback((item: SelectableItem) => {
-    const target = item.category === 'links' ? item : attachments.all.find(attachment => (
-      attachment.category === item.category && attachment.mediaPath.toLowerCase() === item.mediaPath.toLowerCase()
-    )) || item;
-    const targetTab = getAttachmentJumpTab(galleryDefaultTab, target.category);
-    setAttachmentJumpTarget({ ...target, tab: targetTab });
+    const targetTab = getAttachmentJumpTab(galleryDefaultTab, item.category);
+    setAttachmentJumpTarget({ ...item, tab: targetTab });
     setViewerState(previous => ({ ...previous, open: false, index: 0 }));
     onOpenGallery(targetTab);
-  }, [attachments.all, galleryDefaultTab, onOpenGallery]);
+  }, [galleryDefaultTab, onOpenGallery]);
 
   useImperativeHandle(ref, () => ({
     scrollToBottom: () => {

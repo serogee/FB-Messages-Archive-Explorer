@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { SelectableItem } from '../types/messenger';
+import { normalizeAttachmentPath } from '../services/attachmentIdentity';
 
 export type GalleryBookmarkFilter = 'all' | 'bookmarked' | 'not-bookmarked';
 
@@ -171,7 +172,7 @@ export function applyGalleryFilters<T extends SelectableItem>(
 function getGalleryFilterItemKey(item: SelectableItem): string {
   return item.category === 'links'
     ? `links:${item.messageIndex}:${item.url}`
-    : `${item.category}:${item.messageIndex}:${item.mediaPath.toLowerCase()}`;
+    : `${item.category}:${item.messageIndex}:${normalizeAttachmentPath(item.mediaPath)}`;
 }
 
 export function shouldClearFiltersForGalleryJump(
