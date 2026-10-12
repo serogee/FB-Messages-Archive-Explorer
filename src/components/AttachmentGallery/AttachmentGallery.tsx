@@ -9,6 +9,7 @@ import { shouldConfirmBulkSelection, type useSelection } from '../../hooks/useSe
 import { findMediaFile } from '../../services/media';
 import { countUniqueSelectableItems, normalizeAttachmentPath } from '../../services/attachmentIdentity';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
+import { AnimatedProgressLabel } from '../AnimatedProgressLabel';
 import { videoPosterCache } from '../../services/videoPosterCache';
 import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { getAudioMetadata, type AudioMetadata } from '../../services/audioMetadata';
@@ -1175,7 +1176,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
           <ArrowLeft size={18} />
         </button>
         <h3>Attachments</h3>
-        {indexingReferences && <span className="gallery-reference-status" role="status">Checking shared attachments…</span>}
+        {indexingReferences && <span className="gallery-reference-status" role="status"><AnimatedProgressLabel>Scanning for shared attachments</AnimatedProgressLabel></span>}
 
         {selectionMode && (
           <button
