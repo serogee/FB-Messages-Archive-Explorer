@@ -13,6 +13,7 @@ import type { Settings } from '../../hooks/useSettings';
 import type { BookmarksController } from '../../hooks/useBookmarks';
 import { MediaFileSize } from '../MediaFileSize';
 import { UnavailableAttachment } from '../UnavailableAttachment';
+import { AttachmentUsageIndicators } from '../AttachmentUsageIndicators';
 
 interface SelectionPanelProps {
   activeEntry: ChatListEntry | null;
@@ -439,6 +440,8 @@ export function SelectionPanel({
                   title={basename}
                 >
                   <div className="select-checkbox"><Check size={14} /></div>
+
+                  <AttachmentUsageIndicators attachment={att} />
 
                   {attachmentBookmarkingEnabled && activeEntry && bookmarks.isItemBookmarked(activeEntry, att) && (
                     <span className="gallery-bookmark-indicator" title="Bookmarked" aria-label="Bookmarked attachment">

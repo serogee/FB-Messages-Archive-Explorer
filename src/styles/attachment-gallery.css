@@ -615,11 +615,28 @@
     pointer-events: none;
 }
 
-.gallery-reuse-indicator {
+.gallery-reuse-indicators {
     position: absolute;
     left: 6px;
     bottom: 6px;
     z-index: 12;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    pointer-events: none;
+}
+
+.gallery-reference-status {
+    color: var(--muted);
+    font-size: 12px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gallery-reuse-indicator {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -633,13 +650,22 @@
     pointer-events: none;
 }
 
-.gallery-thumb.has-reuses .gallery-bookmark-indicator {
+.gallery-thumb:has(.gallery-reuse-indicators) .gallery-bookmark-indicator {
     bottom: 36px;
 }
 
-.gallery-thumb.gallery-thumb-file-compact.has-reuses,
-.gallery-thumb.gallery-thumb-audio-compact.has-reuses {
+.gallery-thumb:has(.gallery-cross-chat-indicator):has(.gallery-reuse-indicator:not(.gallery-cross-chat-indicator)) .gallery-bookmark-indicator {
+    bottom: 64px;
+}
+
+.gallery-thumb.gallery-thumb-file-compact:has(.gallery-reuse-indicators),
+.gallery-thumb.gallery-thumb-audio-compact:has(.gallery-reuse-indicators) {
     padding-bottom: 32px;
+}
+
+.gallery-thumb.gallery-thumb-file-compact:has(.gallery-cross-chat-indicator):has(.gallery-reuse-indicator:not(.gallery-cross-chat-indicator)),
+.gallery-thumb.gallery-thumb-audio-compact:has(.gallery-cross-chat-indicator):has(.gallery-reuse-indicator:not(.gallery-cross-chat-indicator)) {
+    padding-bottom: 60px;
 }
 
 .gallery-open-viewer-btn {
