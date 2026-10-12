@@ -705,7 +705,9 @@ test('shows gallery shared-video counts after scanning and blocks deleting their
   const alice = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
   const scanStatus = page.getByRole('status', { name: 'Shared attachment scan' });
   await expect(scanStatus).toContainText('Checking shared attachments');
-  await expect(scanStatus.locator('.calculation-progress-count')).toContainText('files checked');
+  await expect(scanStatus).toContainText('Scanning chat folders');
+  await expect(scanStatus).toContainText('folders checked');
+  await expect(scanStatus).toContainText('entries discovered');
   await expect(scanStatus.getByRole('progressbar')).toHaveCount(0);
   await alice.click();
   await page.getByRole('button', { name: 'Toggle chat info panel' }).click();

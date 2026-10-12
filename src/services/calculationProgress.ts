@@ -5,7 +5,7 @@ export interface CalculationProgress {
   label: string;
   done: number;
   total?: number;
-  unit: 'files' | 'chats';
+  unit: 'files' | 'chats' | 'folders';
   detail?: string;
 }
 

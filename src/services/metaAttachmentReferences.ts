@@ -23,6 +23,7 @@ const ATTACHMENT_FIELDS = ['photos', 'videos', 'audio', 'audio_files', 'gifs', '
 const PATH_FIELDS = ['uri', 'filename', 'path', 'name'];
 const SCAN_CONCURRENCY = 4;
 const REFERENCE_CACHE_LIMIT = 512;
+const ATTACHMENT_DIRECTORIES = new Set(['photos', 'videos', 'audio', 'audio_files', 'gifs', 'files', 'media', 'stickers', 'stickers_used']);
 
 /** Scan every conversation, including unreadable/unlisted chats and split files. */
 export async function buildMetaAttachmentReferenceIndex(
@@ -36,8 +37,14 @@ export async function buildMetaAttachmentReferenceIndex(
   };
   const warningKeys = new Set<string>();
   let checkedFiles = 0;
-  const reportFiles = (total?: number) => onProgress?.({ stage: 'ownership', label: 'Checking chat JSON', done: checkedFiles, total, unit: 'files' });
-  reportFiles();
+  let checkedFolders = 0;
+  let discoveredEntries = 0;
+  const reportDiscovery = (finished = false) => onProgress?.({
+    stage: 'ownership', label: 'Scanning chat folders', done: checkedFolders,
+    total: finished ? checkedFolders : undefined, unit: 'folders',
+    detail: `${checkedFiles.toLocaleString()} JSON files checked · ${discoveredEntries.toLocaleString()} entries discovered`,
+  });
+  reportDiscovery();
   const incomplete = (path: string, reason: string) => {
     index.complete = false;
     const key = `${path}:${reason}`;
@@ -55,9 +62,11 @@ export async function buildMetaAttachmentReferenceIndex(
     if (pendingYield) await pendingYield;
     throwIfAborted(signal);
   };
-  const directories: Array<{ handle: ReadableDirectoryHandle; path: string }> = [];
-  const scan = async (directory: ReadableDirectoryHandle, directoryPath: string): Promise<void> => {
+  const directories: Array<{ handle: ReadableDirectoryHandle; path: string; attachments: boolean }> = [];
+  const scan = async (directory: ReadableDirectoryHandle, directoryPath: string, attachments = false): Promise<void> => {
     throwIfAborted(signal);
+    const childDirectories: Array<{ handle: ReadableDirectoryHandle; path: string; name: string }> = [];
+    let isConversationDirectory = false;
     // Keep caches local to a chat: identical relative names in different chats
     // must still resolve to different files. Bound memory even in large chats.
     const referenceCaches = new Map<string, Map<string, { identity: string; filePath: string; folderId: string | null }>>();
@@ -65,12 +74,22 @@ export async function buildMetaAttachmentReferenceIndex(
     try {
       for await (const [name, handle] of directory.entries()) {
         throwIfAborted(signal);
+        discoveredEntries++;
+        if (discoveredEntries % 64 === 0) reportDiscovery();
+        await yieldIfNeeded();
         if (handle.kind === 'directory') {
           if (!directoryPath && name.toLowerCase() === 'stickers_used') continue;
-          directories.push({ handle, path: directoryPath ? `${directoryPath}/${name}` : name });
+          childDirectories.push({ handle, path: directoryPath ? `${directoryPath}/${name}` : name, name });
           continue;
         }
         if (!/\.json$/i.test(name)) continue;
+        // Ordinary JSON below a conversation's media folders is an attached
+        // document. Still inspect export-named JSON there: unusual retained
+        // conversations must not lose their ownership protection.
+        if (attachments && !/^message_\d+\.json$/i.test(name)) continue;
+        // A malformed or unreadable conversation must still protect retained
+        // files, even when its contents cannot confirm this folder's role.
+        if (/^message_\d+\.json$/i.test(name)) isConversationDirectory = true;
         try {
           const file = await handle.getFile();
           throwIfAborted(signal);
@@ -80,6 +99,7 @@ export async function buildMetaAttachmentReferenceIndex(
             if (/^message_\d+\.json$/i.test(name) || (raw && typeof raw === 'object' && 'messages' in raw)) incomplete(`${directoryPath}/${name}`, 'Malformed conversation');
             continue;
           }
+          isConversationDirectory = true;
           const chatId = directoryPath;
           const title = 'title' in raw && typeof raw.title === 'string' ? fixEncoding(raw.title) : chatId;
           index.chatTitles.set(chatId, title || chatId);
@@ -148,7 +168,7 @@ export async function buildMetaAttachmentReferenceIndex(
           incomplete(`${directoryPath}/${name}`, error instanceof Error ? error.message : 'Unreadable conversation');
         } finally {
           checkedFiles++;
-          reportFiles();
+          reportDiscovery();
         }
         await yieldIfNeeded();
       }
@@ -156,20 +176,30 @@ export async function buildMetaAttachmentReferenceIndex(
       throwIfAborted(signal);
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       incomplete(directoryPath, error instanceof Error ? error.message : 'Unreadable directory');
+    } finally {
+      checkedFolders++;
+      reportDiscovery();
+    }
+    // Decide after reading the parent's JSON: directory enumeration can list
+    // "files" before message_1.json. The attachment role continues through
+    // nested media folders, but top-level and unlisted chat sections stay open.
+    for (const child of childDirectories) {
+      directories.push({ handle: child.handle, path: child.path,
+        attachments: attachments || (isConversationDirectory && ATTACHMENT_DIRECTORIES.has(child.name.toLowerCase())),
+      });
     }
   };
-  // Enumerate the root first, then let a small worker pool drain the growing
-  // directory queue. Every directory is visited, including unexpected sections
-  // and media folders containing JSON; only four readers can be active at once.
+  // Enumerate the root first, then drain the growing directory queue. Keep
+  // unexpected conversation sections, but do not parse ordinary attached JSON.
   await scan(root, '');
   let nextDirectory = 0;
   while (nextDirectory < directories.length) {
     const batch = directories.slice(nextDirectory, nextDirectory + SCAN_CONCURRENCY);
     nextDirectory += batch.length;
-    await mapWithConcurrency(batch, SCAN_CONCURRENCY, directory => scan(directory.handle, directory.path), signal);
+    await mapWithConcurrency(batch, SCAN_CONCURRENCY, directory => scan(directory.handle, directory.path, directory.attachments), signal);
   }
   throwIfAborted(signal);
-  reportFiles(checkedFiles);
+  reportDiscovery(true);
   // Missing cross-folder files cannot be removed by deleting a folder. Keep
   // their usage counts, but exclude them from folder deletion dependencies.
   const crossFolderFiles = new Set([...index.folderReferences.values()].flatMap(identities => [...identities]));
