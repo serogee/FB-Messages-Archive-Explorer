@@ -4,6 +4,8 @@ import { ReactionFeatureContext, useReactionFeature } from './hooks/useReactionF
 import { useArchive } from './hooks/useArchive';
 import { useChat } from './hooks/useChat';
 import { ThreadDataContext } from './hooks/useThreadData';
+import { AttachmentReferencesContext } from './hooks/useAttachmentReferences';
+import { getMetaChatId } from './services/metaAttachmentPaths';
 import { useSearch } from './hooks/useSearch';
 import { useResizable } from './hooks/useResizable';
 import { sortSelectableItemsNewestFirst, useSelection } from './hooks/useSelection';
@@ -36,6 +38,7 @@ import {
   getDeleteRetryEntries,
 } from './services/deletionResults';
 import { createProgressThrottle } from './services/progressThrottle';
+import { CalculationProgressStore } from './services/calculationProgress';
 import { SingleFlightGuard } from './services/singleFlight';
 import { requestDirectoryWritePermission } from './types/fileSystem';
 
@@ -47,6 +50,12 @@ export default function App() {
   const { settings, setSetting } = useSettings();
   const archive = useArchive();
   const chat = useChat();
+  const attachmentReferences = useMemo(() => ({
+    index: archive.attachmentReferenceIndex,
+    standaloneMessenger: archive.standaloneMessenger,
+    indexing: archive.attachmentReferenceIndexLoading,
+    chatId: chat.activeEntry && !chat.activeEntry._messengerExport ? getMetaChatId(chat.activeEntry) : undefined,
+  }), [archive.attachmentReferenceIndex, archive.attachmentReferenceIndexLoading, archive.standaloneMessenger, chat.activeEntry]);
   const archiveList = useMemo(
     () => [...archive.inboxList, ...archive.archivedList, ...archive.requestsList],
     [archive.inboxList, archive.archivedList, archive.requestsList]
@@ -83,6 +92,7 @@ export default function App() {
   const [deleteToast, setDeleteToast] = useState<string | null>(null);
   const deleteInfoRequestRef = useRef(0);
   const deleteInfoAbortRef = useRef<AbortController | null>(null);
+  const deleteCalculationProgressRef = useRef<CalculationProgressStore | null>(null);
   const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deleteOperationGuardRef = useRef(new SingleFlightGuard());
 
@@ -116,29 +126,36 @@ export default function App() {
 
   const prepareDeleteTarget = useCallback((
     target: ChatListEntry | ChatListEntry[],
-    preserveResult = false
+    preserveResult = false,
+    skipSizes = false,
+    forceOwnershipCheck = false,
   ) => {
+    deleteCalculationProgressRef.current?.dispose();
     deleteInfoAbortRef.current?.abort();
     const abortCtrl = new AbortController();
     deleteInfoAbortRef.current = abortCtrl;
     const requestId = deleteInfoRequestRef.current + 1;
     deleteInfoRequestRef.current = requestId;
+    const progress = new CalculationProgressStore();
+    progress.report({ stage: 'ownership', label: 'Checking shared attachments', done: 0, unit: 'files' });
+    deleteCalculationProgressRef.current = progress;
     setDeleteTarget(target);
     if (!preserveResult) setDeleteResultNotice(null);
     setDeletePreparing(false);
     setDeleteBusy(false);
-    const entries = Array.isArray(target) ? target : [target];
-    const isMessenger = entries.some(entry => entry._messengerExport);
-    setDeletePreparation({ status: 'loading', calculatingSizes: !isMessenger });
+    setDeletePreparation(current => ({
+      status: 'loading', calculatingSizes: false, sizesSkipped: skipSizes,
+      info: preserveResult && 'info' in current ? current.info : undefined, progress,
+    }));
     archive.getDeleteInfo(target, abortCtrl.signal, ownershipInfo => {
       if (deleteInfoRequestRef.current !== requestId) return;
-      setDeletePreparation({ status: 'loading', info: ownershipInfo, calculatingSizes: true });
-    })
+      setDeletePreparation({ status: 'loading', info: ownershipInfo, calculatingSizes: !skipSizes, sizesSkipped: skipSizes, progress });
+    }, { skipSizes, forceOwnershipCheck, progress })
       .then(info => {
         if (deleteInfoRequestRef.current !== requestId) return;
-        setDeletePreparation({ status: 'ready', info });
-        if (!Array.isArray(target) && !target._messengerExport && target.folderSize <= 0) {
-          archive.updateFolderSize(target, info.totalSize);
+        setDeletePreparation(skipSizes ? { status: 'skipped', info } : { status: 'ready', info });
+        if (!skipSizes && !Array.isArray(target) && !target._messengerExport && target.folderSize <= 0) {
+          archive.updateFolderSize(target, info.totalSize - (info.stickerSize || 0));
         }
       })
       .catch(error => {
@@ -158,15 +175,17 @@ export default function App() {
             info: error.safeInfo,
           });
         } else {
-          setDeletePreparation({
+          setDeletePreparation(current => ({
             status: 'error',
             error: getErrorMessage(error),
             mediaSafetyUnavailable: false,
-          });
+            info: 'info' in current ? current.info : undefined,
+          }));
         }
         console.error('Failed to prepare delete details:', error);
       })
       .finally(() => {
+        progress.dispose();
         if (deleteInfoRequestRef.current !== requestId) return;
         if (deleteInfoAbortRef.current === abortCtrl) {
           deleteInfoAbortRef.current = null;
@@ -178,7 +197,7 @@ export default function App() {
     prepareDeleteTarget(target);
   }, [prepareDeleteTarget]);
 
-  const handleDeleteConfirm = useCallback(async (mode: 'normal' | 'json-only') => {
+  const handleDeleteConfirm = useCallback(async (mode: 'normal' | 'json-only' | 'override' | 'unchecked') => {
     if (!deleteTarget) return;
     const jsonOnly = mode === 'json-only';
     const operationToken = deleteOperationGuardRef.current.tryBegin();
@@ -188,6 +207,7 @@ export default function App() {
       75,
       progress => progress.stage
     );
+    deleteCalculationProgressRef.current?.dispose();
     deleteInfoAbortRef.current?.abort();
     deleteInfoAbortRef.current = null;
     setDeleteResultNotice(null);
@@ -213,7 +233,7 @@ export default function App() {
           })
         : await archive.deleteChats(targets, progress => {
             progressReporter.report(progress, progress.total > 0 && progress.done >= progress.total);
-          });
+          }, { allowSharedAttachmentLoss: mode === 'override', skipAttachmentCheck: mode === 'unchecked' });
       progressReporter.flush();
 
       let bookmarkCleanupError: string | undefined;
@@ -388,6 +408,7 @@ export default function App() {
   return (
     <ReactionFeatureContext.Provider value={reactionFeature}>
     <ThreadDataContext.Provider value={chat.chatData}>
+    <AttachmentReferencesContext.Provider value={attachmentReferences}>
     <div className={`container ${settings.infoPanelOpen ? 'info-open' : ''}`}>
       <Sidebar
         settings={settings}
@@ -401,6 +422,7 @@ export default function App() {
         loading={archive.loading}
         loadProgress={archive.loadProgress}
         sizeProgress={archive.sizeProgress}
+        attachmentReferenceScan={archive.attachmentReferenceScan}
         error={archive.error}
         sidebarView={sidebarView}
         setSidebarView={setSidebarView}
@@ -511,17 +533,23 @@ export default function App() {
       {deleteTarget && (
         <DeleteConfirmModal
           entry={deleteTarget}
-          onConfirm={() => handleDeleteConfirm('normal')}
+          onConfirm={() => handleDeleteConfirm(deletePreparation.status === 'unchecked' ? 'unchecked' : 'normal')}
+          onDeleteAnyway={() => handleDeleteConfirm('override')}
           onDeleteJsonOnly={() => handleDeleteConfirm('json-only')}
           onRetryCalculation={() => prepareDeleteTarget(deleteTarget, true)}
-          onSkipCalculation={() => {
+          onSkipCalculation={() => prepareDeleteTarget(deleteTarget, true, true)}
+          onCheckAttachments={() => prepareDeleteTarget(deleteTarget, false, true, true)}
+          onSkipCheck={() => {
+            deleteCalculationProgressRef.current?.dispose();
             deleteInfoAbortRef.current?.abort();
             deleteInfoAbortRef.current = null;
             deleteInfoRequestRef.current++;
-            setDeletePreparation({ status: 'skipped' });
+            setDeleteResultNotice(null);
+            setDeletePreparation({ status: 'unchecked' });
           }}
           onCancel={() => {
             if (!deleteProgress && !deleteBusy) {
+              deleteCalculationProgressRef.current?.dispose();
               deleteInfoAbortRef.current?.abort();
               deleteInfoAbortRef.current = null;
               setDeleteTarget(null);
@@ -593,6 +621,7 @@ export default function App() {
       </div>
       <TrustModal settings={settings} setSetting={setSetting} />
     </div>
+    </AttachmentReferencesContext.Provider>
     </ThreadDataContext.Provider>
     </ReactionFeatureContext.Provider>
   );

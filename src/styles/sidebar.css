@@ -1,4 +1,6 @@
 .sidebar-tabs { display:flex; gap:0; border-bottom:1px solid var(--border); margin-bottom:8px; flex-shrink:0; }
+.sidebar-attachment-scan { flex:0 0 auto; padding:10px 0 2px; margin-top:4px; border-top:1px solid var(--border); color:var(--muted); font-size:12px; line-height:1.4; }
+.sidebar-attachment-scan-heading { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
 .sidebar-tab {
   flex:1; padding:10px 0; text-align:center; font-size:14px; font-weight:500;
   color:var(--muted); cursor:pointer; border:none; background:none;

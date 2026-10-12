@@ -19,6 +19,13 @@ export function formatBatchDeleteResult(result: BatchDeleteResult, jsonOnly: boo
         ? 'Chat JSON deleted; media retained'
         : `${deletedCount} chat JSON files deleted; media retained`;
   }
-  if (failureCount > 0) return `${deletedCount} of ${result.requested} chats deleted; ${failureCount} failed`;
-  return `${deletedCount} ${deletedCount === 1 ? 'chat' : 'chats'} deleted`;
+  const cleanupWarning = result.sharedMediaCleanupFailures?.length
+    ? `; ${result.sharedMediaCleanupFailures.length} shared stickers could not be removed` : '';
+  const protectedCount = result.failed.filter(failure => failure.blocked).length;
+  if (protectedCount > 0) {
+    const actualFailures = failureCount - protectedCount;
+    return `${deletedCount} of ${result.requested} chats deleted; ${protectedCount} protected${actualFailures ? `; ${actualFailures} failed` : ''}${cleanupWarning}`;
+  }
+  if (failureCount > 0) return `${deletedCount} of ${result.requested} chats deleted; ${failureCount} failed${cleanupWarning}`;
+  return `${deletedCount} ${deletedCount === 1 ? 'chat' : 'chats'} deleted${cleanupWarning}`;
 }
