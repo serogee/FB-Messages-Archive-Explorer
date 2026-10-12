@@ -6,6 +6,8 @@ import { chatImagePreviewCache } from './chatImagePreviewCache';
 import { chatVideoPosterCache, videoPosterCache } from './videoPosterCache';
 import { normalizeAttachmentPath } from './attachmentIdentity';
 import { readMp4MediaType } from './mp4MediaType';
+import { getMetaAttachmentPath, getSharedStickerFileName, isRemoteAttachmentPath } from './metaAttachmentPaths';
+import { mapWithConcurrency } from './concurrency';
 
 
 function normalizeMediaPath(path: string): string {
@@ -81,17 +83,25 @@ export function addMediaToIndex(
 }
 
 export function isMediaReferenceFound(state: MediaState, path: string): boolean {
-  const normalizedPath = normalizeMediaPath(path);
-  const basename = getMediaBasename(path);
-  return (
-    (!!normalizedPath && state.pathIndex.has(normalizedPath)) ||
-    (!!basename && state.basenameIndex.has(basename))
-  );
+  return !!findMediaFile(state, path);
 }
 
 export function findMediaFile(state: MediaState, path: string): MediaEntry | null {
+  if (isRemoteAttachmentPath(path)) return null;
   const normalizedPath = normalizeMediaPath(path);
+  if (state.metaChatId) {
+    const relative = getMetaAttachmentPath(path, state.metaChatId)?.toLowerCase();
+    if (relative) {
+      const localPrefix = `${state.metaChatId.toLowerCase()}/`;
+      return state.lookup.get(relative)
+        || (relative.startsWith(localPrefix) ? state.lookup.get(relative.slice(localPrefix.length)) : null)
+        || null;
+    }
+    // Unsafe/unknown directory paths must not fall back to a local basename.
+    if (normalizedPath.includes('/') || normalizedPath.includes(':')) return null;
+  }
   const basename = getMediaBasename(path);
+  if (!normalizedPath.includes('/') && state.ambiguousBasenames.has(basename)) return null;
   return state.lookup.get(normalizedPath) || state.basenameLookup.get(basename) || null;
 }
 
@@ -263,14 +273,7 @@ export async function classifyChatMp4Attachments(
 }
 
 export function getFacebookStickerFileName(path: string): string | null {
-  const cleanPath = String(path || '').replace(/\\/g, '/').split(/[?#]/, 1)[0];
-  const parts = cleanPath.split('/').filter(Boolean);
-  const stickerDirectoryIndex = parts.findIndex(part => part.toLowerCase() === 'stickers_used');
-  if (stickerDirectoryIndex < 0 || stickerDirectoryIndex !== parts.length - 2) return null;
-
-  const fileName = parts[stickerDirectoryIndex + 1];
-  if (!fileName || !/\.(?:jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(fileName) || fileName === '.' || fileName === '..') return null;
-  return fileName;
+  return getSharedStickerFileName(String(path || ''));
 }
 
 export async function processFacebookStickerReferences(
@@ -316,6 +319,81 @@ export async function processFacebookStickerReferences(
       addMediaToIndex(state, `stickers_used/${fileName}`, entry);
     } catch { /* A missing shared sticker should remain visible as an unresolved reference. */ }
   }));
+}
+
+/** Resolve referenced Meta files from the messages root, without filename guessing. */
+export async function processMetaAttachmentReferences(
+  root: ReadableDirectoryHandle,
+  chatId: string,
+  messages: MessengerMessage[],
+  state: MediaState,
+  signal?: AbortSignal,
+): Promise<void> {
+  state.metaChatId = chatId;
+  const references = new Map<string, { relative: string; paths: Set<string>; category: string }>();
+  let lastYield = performance.now();
+  for (const message of messages) {
+    if (signal?.aborted) return;
+    for (const { path, category } of getMessageAttachmentReferences(message)) {
+      const relative = getMetaAttachmentPath(path, chatId, category);
+      if (!relative) continue;
+      const key = relative.toLowerCase();
+      let reference = references.get(key);
+      if (!reference) {
+        reference = { relative, paths: new Set(), category };
+        references.set(key, reference);
+      }
+      reference.paths.add(path);
+    }
+    if (performance.now() - lastYield > 16) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      lastYield = performance.now();
+    }
+  }
+  const directories = new Map<string, Promise<ReadableDirectoryHandle>>([['', Promise.resolve(root)]]);
+  const getDirectory = (path: string): Promise<ReadableDirectoryHandle> => {
+    let work = directories.get(path);
+    if (!work) {
+      const parts = path.split('/');
+      const name = parts.pop()!;
+      work = getDirectory(parts.join('/')).then(parent => {
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        return parent.getDirectoryHandle(name);
+      });
+      directories.set(path, work);
+    }
+    return work;
+  };
+  await mapWithConcurrency([...references.values()], 4, async ({ relative, paths, category }) => {
+    if (signal?.aborted) return;
+    try {
+      const normalized = relative.toLowerCase();
+      const localPrefix = `${chatId.toLowerCase()}/`;
+      let entry = state.lookup.get(normalized)
+        || (normalized.startsWith(localPrefix) ? state.lookup.get(normalized.slice(localPrefix.length)) : undefined);
+      if (!entry) {
+        const parts = relative.split('/');
+        const name = parts.pop()!;
+        const handle = await (await getDirectory(parts.join('/'))).getFileHandle(name);
+        if (signal?.aborted) return;
+        const directoryType = getMediaTypeFromDirectory(parts.at(-1) || '');
+        const type = directoryType || (category === 'stickers' ? 'image' : getMediaType(name));
+        entry = { handle, type };
+        state.mediaFileCount++;
+      }
+      addMediaToIndex(state, relative, entry);
+      for (const path of paths) {
+        // Bare names use the ambiguity-checked basename index, not an alias
+        // that can overwrite another physical file with the same name.
+        if (!normalizeMediaPath(path).includes('/')) continue;
+        state.types[path] = entry.type;
+        addMediaToIndex(state, path, entry);
+      }
+    } catch {
+      // Missing, unreadable and malformed paths remain unresolved. Exact Meta
+      // lookup above prevents a same-named local attachment from replacing them.
+    }
+  }, signal);
 }
 
 export async function processMediaFromDirectory(

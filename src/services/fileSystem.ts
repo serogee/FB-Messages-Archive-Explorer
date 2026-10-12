@@ -4,6 +4,7 @@ import { processMediaFromDirectory, createMediaState } from './media';
 import type { MediaState } from '../types/messenger';
 import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../types/fileSystem';
 import { getMessageBump } from './messageBump';
+import type { MetaArchivePlatform } from './metaAttachmentPaths';
 
 const SELECTED_MESSAGES_DIRECTORY = [] as const;
 const FACEBOOK_EXPORT_MESSAGES_DIRECTORY = ['messages'] as const;
@@ -36,13 +37,25 @@ async function containsFacebookConversations(handle: ReadableDirectoryHandle): P
 export async function resolveFacebookMessagesRoot(
   handle: ReadableDirectoryHandle
 ): Promise<ReadableDirectoryHandle | null> {
+  return (await resolveFacebookMessagesRootInfo(handle))?.handle || null;
+}
+
+export async function resolveFacebookMessagesRootInfo(
+  handle: ReadableDirectoryHandle
+): Promise<{ handle: ReadableDirectoryHandle; instagram: boolean; platform: MetaArchivePlatform } | null> {
   for (const path of FACEBOOK_MESSAGES_ROOT_PATHS) {
     try {
       let current = handle;
       for (const segment of path) {
         current = await current.getDirectoryHandle(segment);
       }
-      if (await containsFacebookConversations(current)) return current;
+      if (await containsFacebookConversations(current)) {
+        const activity = path[0] === 'your_instagram_activity' || path[0] === 'your_facebook_activity'
+          ? path[0] : handle.name;
+        const platform = activity === 'your_instagram_activity' ? 'instagram'
+          : activity === 'your_facebook_activity' ? 'facebook' : 'unknown';
+        return { handle: current, instagram: platform === 'instagram', platform };
+      }
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
     }

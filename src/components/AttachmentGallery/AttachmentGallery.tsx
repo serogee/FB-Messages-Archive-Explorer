@@ -3,10 +3,13 @@ import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink, Sel
 import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, CircleHelp, Info, ExternalLink, Link as LinkIcon, MessageSquare, UserRound, Bookmark, Filter, ListMinus, ListPlus, Minus, Plus, Search, X } from 'lucide-react';
 import type { Settings } from '../../hooks/useSettings';
 import { useAttachments, useSharedLinks, type GalleryCategory } from '../../hooks/useAttachments';
+import { AttachmentUsageIndicators } from '../AttachmentUsageIndicators';
+import { useAttachmentReferencesIndexing } from '../../hooks/useAttachmentReferences';
 import { shouldConfirmBulkSelection, type useSelection } from '../../hooks/useSelection';
 import { findMediaFile } from '../../services/media';
 import { countUniqueSelectableItems, normalizeAttachmentPath } from '../../services/attachmentIdentity';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
+import { AnimatedProgressLabel } from '../AnimatedProgressLabel';
 import { videoPosterCache } from '../../services/videoPosterCache';
 import { blobCache, openMediaEntryInNewTab } from '../../services/blobCache';
 import { getAudioMetadata, type AudioMetadata } from '../../services/audioMetadata';
@@ -432,12 +435,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         </button>
       )}
 
-      {usageCount > 1 && (
-        <span className="gallery-reuse-indicator" title={`Used ${usageCount} times in this chat`} aria-label={`Attachment used ${usageCount} times in this chat`}>
-          <LinkIcon size={14} />
-          <span>{usageCount.toLocaleString()}</span>
-        </span>
-      )}
+      <AttachmentUsageIndicators attachment={attachment} />
 
       {isBookmarked && (
         <span className="gallery-bookmark-indicator" title="Bookmarked" aria-label="Bookmarked attachment">
@@ -611,6 +609,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
 }: AttachmentGalleryProps) {
   // ChatView mounts the gallery only when a loaded thread exists.
   const chatData = useThreadData(providedThread)!;
+  const indexingReferences = useAttachmentReferencesIndexing();
   const { all, byCategory } = useAttachments(chatData, mediaState, { includeRepeated: true });
   const links = useSharedLinks(chatData);
   const allItems = useMemo<GalleryItem[]>(
@@ -1177,6 +1176,7 @@ const AttachmentGalleryBase = function AttachmentGallery({
           <ArrowLeft size={18} />
         </button>
         <h3>Attachments</h3>
+        {indexingReferences && <span className="gallery-reference-status" role="status"><AnimatedProgressLabel>Scanning for shared attachments</AnimatedProgressLabel></span>}
 
         {selectionMode && (
           <button

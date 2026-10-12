@@ -15,6 +15,8 @@ import { FolderPicker } from './FolderPicker';
 import { ChatList } from './ChatList';
 import { ArchivedList } from './ArchivedList';
 import { SettingsPanel } from './SettingsPanel';
+import { AttachmentScanStatus } from './AttachmentScanStatus';
+import type { AttachmentReferenceScan } from '../../services/attachmentReferenceIndex';
 
 interface SidebarProps {
     settings: Settings;
@@ -28,6 +30,7 @@ interface SidebarProps {
     loading: boolean;
     loadProgress: { done: number; total: number } | null;
     sizeProgress: { done: number; total: number } | null;
+    attachmentReferenceScan?: AttachmentReferenceScan | null;
     error: string | null;
     sidebarView: 'chats' | 'settings' | 'archived' | 'requests';
     setSidebarView: (
@@ -65,6 +68,7 @@ export function Sidebar({
     loading,
     loadProgress,
     sizeProgress,
+    attachmentReferenceScan,
     error,
     sidebarView,
     setSidebarView,
@@ -394,6 +398,10 @@ export function Sidebar({
                     />
                 )}
             </div>
+
+            {rootHandle && !loading && sidebarView !== 'settings' && attachmentReferenceScan?.status === 'checking' && (
+                <AttachmentScanStatus scan={attachmentReferenceScan} />
+            )}
 
             {selectionMode && (
                 <div className="sidebar-action-bar">

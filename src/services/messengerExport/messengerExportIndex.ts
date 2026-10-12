@@ -1,5 +1,6 @@
 import type { MessengerThread } from '../../types/messenger';
 import { getMessageAttachmentReferences } from '../media';
+import { addAttachmentOwner, createAttachmentReferenceIndex, removeChatAttachmentReferences, type AttachmentReferenceIndex } from '../attachmentReferenceIndex';
 
 export type MessengerExportIndexWarningReason =
   | 'unreadable'
@@ -11,11 +12,7 @@ export interface MessengerExportIndexWarning {
   reason: MessengerExportIndexWarningReason;
 }
 
-export interface MessengerExportReferenceIndex {
-  mediaOwners: Map<string, Set<string>>;
-  chatMedia: Map<string, Set<string>>;
-  mediaFiles: Map<string, string>;
-  complete: boolean;
+export interface MessengerExportReferenceIndex extends AttachmentReferenceIndex {
   warnings: MessengerExportIndexWarning[];
 }
 
@@ -56,10 +53,7 @@ export function getMessengerMediaBasename(path: string): string {
 
 export function createMessengerExportReferenceIndex(): MessengerExportReferenceIndex {
   return {
-    mediaOwners: new Map(),
-    chatMedia: new Map(),
-    mediaFiles: new Map(),
-    complete: true,
+    ...createAttachmentReferenceIndex(),
     warnings: [],
   };
 }
@@ -126,12 +120,7 @@ export function addConversationToChatIndex(
   index.jsonSizes.set(jsonFileName, fileSize);
 
   for (const identity of mediaIdentities) {
-    let owners = index.referenceIndex.mediaOwners.get(identity);
-    if (!owners) {
-      owners = new Set();
-      index.referenceIndex.mediaOwners.set(identity, owners);
-    }
-    owners.add(jsonFileName);
+    addAttachmentOwner(index.referenceIndex, identity, jsonFileName);
   }
 }
 
@@ -139,19 +128,7 @@ export function removeConversationFromReferenceIndex(
   index: MessengerExportReferenceIndex,
   jsonFileName: string
 ): void {
-  const media = index.chatMedia.get(jsonFileName);
-  if (media) {
-    for (const identity of media) {
-      const owners = index.mediaOwners.get(identity);
-      if (!owners) continue;
-      owners.delete(jsonFileName);
-      if (owners.size === 0) {
-        index.mediaOwners.delete(identity);
-        index.mediaFiles.delete(identity);
-      }
-    }
-  }
-  index.chatMedia.delete(jsonFileName);
+  removeChatAttachmentReferences(index, jsonFileName);
 }
 
 export function removeConversationFromChatIndex(
@@ -183,12 +160,7 @@ export function buildReferenceIndexFromChatMedia(
       } else if (!existingPath) {
         index.mediaFiles.set(identity, filePath);
       }
-      let owners = index.mediaOwners.get(identity);
-      if (!owners) {
-        owners = new Set();
-        index.mediaOwners.set(identity, owners);
-      }
-      owners.add(jsonFileName);
+      addAttachmentOwner(index, identity, jsonFileName);
     }
     index.chatMedia.set(jsonFileName, identities);
   }

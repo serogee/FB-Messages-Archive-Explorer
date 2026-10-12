@@ -181,4 +181,18 @@ describe('media service', () => {
     expect(findMediaFile(state, 'photo.jpg')).toBe(entry);
     expect(state.ambiguousBasenames).toEqual(new Set());
   });
+
+  it.each([false, true])('does not let a direct bare alias bypass basename ambiguity (alias first: %s)', aliasFirst => {
+    const state = createMediaState();
+    const photo: MediaEntry = { type: 'image' };
+    const file: MediaEntry = { type: 'unknown' };
+    if (aliasFirst) addMediaToIndex(state, 'same.png', photo);
+    addMediaToIndex(state, 'photos/same.png', photo);
+    addMediaToIndex(state, 'files/same.png', file);
+    if (!aliasFirst) addMediaToIndex(state, 'same.png', file);
+    expect(findMediaFile(state, 'same.png')).toBeNull();
+    expect(isMediaReferenceFound(state, 'same.png')).toBe(false);
+    expect(findMediaFile(state, 'photos/same.png')).toBe(photo);
+    expect(findMediaFile(state, 'files/same.png')).toBe(file);
+  });
 });
