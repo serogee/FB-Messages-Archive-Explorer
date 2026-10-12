@@ -13,6 +13,7 @@ import { createMediaState, addMediaToIndex, findMediaFile, processFacebookSticke
 import { formatBatchDeleteResult } from '../src/services/deletionResults';
 import { createMockDirectoryHandle } from './helpers/mockFileSystem';
 import type { ResolvedAttachment } from '../src/types/messenger';
+import { CalculationProgressStore } from '../src/services/calculationProgress';
 
 if (!File.prototype.text) {
   File.prototype.text = function text() {
@@ -337,6 +338,33 @@ describe('Meta cross-folder media deletion protection', () => {
 });
 
 describe('Meta ownership and cross-chat badges', () => {
+  it('calculates selected-folder sizes independently after skipping a pending ownership check', async () => {
+    const root = videoArchive();
+    const retained = await (await (await root.getDirectoryHandle('inbox')).getDirectoryHandle('b')).getFileHandle('message_1.json');
+    const read = retained.getFile.bind(retained);
+    let reads = 0;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(retained, 'getFile').mockImplementation(async () => { if (++reads > 1) await gate; return read(); });
+    const { result } = await open(root);
+    await waitFor(() => expect(result.current.attachmentReferenceScan?.status).toBe('checking'));
+    const selected = result.current.inboxList.find(entry => entry.folderName === 'a')!;
+    const progress = new CalculationProgressStore();
+    const ownershipReady = vi.fn();
+    const estimate = await result.current.getDeleteInfo(selected, undefined, ownershipReady, { skipAttachmentCheck: true, progress });
+    progress.dispose();
+    expect(estimate.mediaSize).toBe(3);
+    expect(estimate.totalSize).toBeGreaterThan(3);
+    expect(estimate.stickerCount).toBe(0);
+    expect(estimate.stickersPreservedForSafety).toBe(true);
+    expect(ownershipReady).not.toHaveBeenCalled();
+    expect(progress.getSnapshot()).toMatchObject({ stage: 'sizes', label: 'Calculating chat sizes' });
+    expect(progress.getSnapshot()?.jsonFound).toBeUndefined();
+    expect(result.current.attachmentReferenceScan?.status).toBe('checking');
+    await act(async () => { release(); });
+    await waitFor(() => expect(result.current.attachmentReferenceScan?.status).toBe('complete'));
+    expect(progress.getSnapshot()?.stage).toBe('sizes');
+  });
   it('counts shared videos using full export paths and keeps identical local basenames separate', async () => {
     const root = videoArchive();
     const index = await buildMetaAttachmentReferenceIndex(root);
@@ -363,7 +391,7 @@ describe('Meta ownership and cross-chat badges', () => {
         b: { 'message_1.json': JSON.stringify({ title: 'B', messages: [{ sticker: { uri: 'https://example.com/stickers_used/a.png' } }] }) },
       }, stickers_used: { 'a.png': 'local' },
     });
-    const index = await buildMetaAttachmentReferenceIndex(root);
+    const index = await buildMetaAttachmentReferenceIndex(root, undefined, 'facebook');
     expect(index.complete).toBe(true);
     expect(index.warnings).toEqual([]);
     expect(index.mediaOwners.get('stickers_used/a.png')).toEqual(new Set(['inbox/a']));
@@ -415,10 +443,78 @@ describe('Meta ownership and cross-chat badges', () => {
     const outcome = check.then(() => null, error => error);
 
     await waitFor(() => expect(result.current.attachmentReferenceScan?.status).toBe('checking'));
-    await act(async () => { controller.abort(); release(); await outcome; });
+    // Do not release the filesystem read until cancellation is observable.
+    await act(async () => { controller.abort(); await outcome; });
     expect(await outcome).toMatchObject({ name: 'AbortError' });
     await waitFor(() => expect(result.current.attachmentReferenceIndexLoading).toBe(false));
     expect(result.current.attachmentReferenceIndex).toBe(previousIndex);
     expect(result.current.attachmentReferenceScan?.status).toBe('complete');
+    await act(async () => { release(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(result.current.attachmentReferenceIndex).toBe(previousIndex);
+    expect(result.current.attachmentReferenceScan?.status).toBe('complete');
+  });
+
+  it('keeps the initial background scan running when a dialog check is canceled', async () => {
+    const root = videoArchive();
+    const file = await (await (await root.getDirectoryHandle('inbox')).getDirectoryHandle('b')).getFileHandle('message_1.json');
+    const read = file.getFile.bind(file);
+    let reads = 0;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(file, 'getFile').mockImplementation(async () => { if (++reads > 1) await gate; return read(); });
+    const { result } = await open(root);
+    await waitFor(() => expect(result.current.attachmentReferenceScan?.status).toBe('checking'));
+    const controller = new AbortController();
+    const check = result.current.getDeleteInfo(result.current.inboxList[0], controller.signal, undefined, { skipSizes: true, forceOwnershipCheck: true });
+    await act(async () => { controller.abort(); await expect(check).rejects.toMatchObject({ name: 'AbortError' }); });
+    expect(result.current.attachmentReferenceScan?.status).toBe('checking');
+    expect(result.current.attachmentReferenceIndexLoading).toBe(true);
+    await act(async () => { release(); });
+    await waitFor(() => expect(result.current.attachmentReferenceScan?.status).toBe('complete'));
+    expect(result.current.attachmentReferenceIndex?.mediaOwners.get('inbox/a/videos/shared.mp4')?.size).toBe(3);
+  });
+
+  it('resets the folder-protection override on a new check and on a different selection', async () => {
+    const { result } = await open(videoArchive());
+    const source = result.current.inboxList.find(entry => entry.folderName === 'a')!;
+    const info = await result.current.getDeleteInfo(source, undefined, undefined, { skipSizes: true });
+    const callbacks = { onConfirm: vi.fn(), onDeleteAnyway: vi.fn(), onCancel: vi.fn() };
+    const preparation = { status: 'skipped' as const, info };
+    const { rerender } = render(<DeleteConfirmModal entry={source} preparation={preparation} {...callbacks} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete anyway' }));
+    expect((screen.getByRole('button', { name: 'Delete permanently' }) as HTMLButtonElement).disabled).toBe(false);
+    rerender(<DeleteConfirmModal entry={source} preparation={{ status: 'loading', calculatingSizes: false, sizesSkipped: true }} {...callbacks} />);
+    rerender(<DeleteConfirmModal entry={source} preparation={{ status: 'skipped', info }} {...callbacks} />);
+    expect((screen.getByRole('button', { name: 'Deletion blocked' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete anyway' }));
+    const other = { ...source, folderName: 'different-source' };
+    rerender(<DeleteConfirmModal entry={other} preparation={preparation} {...callbacks} />);
+    expect((screen.getByRole('button', { name: 'Deletion blocked' }) as HTMLButtonElement).disabled).toBe(true);
+    rerender(<DeleteConfirmModal entry={source} preparation={preparation} {...callbacks} />);
+    expect((screen.getByRole('button', { name: 'Deletion blocked' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(callbacks.onDeleteAnyway).not.toHaveBeenCalled();
+  });
+
+  it('reports fresh verification in the deletion dialog before any folder mutation', async () => {
+    const root = videoArchive();
+    const { result } = await open(root);
+    await waitFor(() => expect(result.current.attachmentReferenceIndex?.complete).toBe(true));
+    const inbox = await root.getDirectoryHandle('inbox');
+    const source = result.current.inboxList.find(entry => entry.folderName === 'a')!;
+    const retained = await (await inbox.getDirectoryHandle('b')).getFileHandle('message_1.json');
+    const read = retained.getFile.bind(retained);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(retained, 'getFile').mockImplementation(async () => { await gate; return read(); });
+    const remove = vi.spyOn(inbox, 'removeEntry');
+    const verificationProgress = new CalculationProgressStore();
+    render(<DeleteConfirmModal entry={source} preparation={{ status: 'skipped' }} deleting verificationProgress={verificationProgress} onConfirm={() => {}} onCancel={() => {}} />);
+    const deletion = result.current.deleteChats([source], undefined, { verificationProgress });
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Deletion attachment verification' }).textContent).toContain('Scanning for shared attachments'));
+    expect(remove).not.toHaveBeenCalled();
+    await act(async () => { release(); await deletion; });
+    expect((await deletion).failed[0]).toMatchObject({ blocked: true });
+    expect(remove).not.toHaveBeenCalled();
+    verificationProgress.dispose();
   });
 });

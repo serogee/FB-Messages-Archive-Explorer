@@ -5,6 +5,7 @@ import { formatFileSize } from '../../services/storage';
 import { getMetaChatId } from '../../services/metaAttachmentPaths';
 import { MetaChatDeletionBlockedError } from '../../services/metaChatDeletion';
 import { CalculationProgressBar } from '../CalculationProgressBar';
+import type { CalculationProgressStore } from '../../services/calculationProgress';
 
 interface DeleteConfirmModalProps {
   entry: ChatListEntry | ChatListEntry[];
@@ -21,6 +22,7 @@ interface DeleteConfirmModalProps {
   resultNotice?: DeleteResultNotice | null;
   preparingDeletion?: boolean;
   deleting?: boolean;
+  verificationProgress?: CalculationProgressStore | null;
 }
 
 export function DeleteConfirmModal({
@@ -38,31 +40,54 @@ export function DeleteConfirmModal({
   resultNotice,
   preparingDeletion,
   deleting,
+  verificationProgress,
 }: DeleteConfirmModalProps) {
   const isMultiple = Array.isArray(entry);
   const title = isMultiple ? `Delete ${entry.length} Chats` : 'Delete Chat';
   const entries = isMultiple ? entry : [entry];
   const initialHeight = useRef(isMultiple ? 580 : 350).current;
   const [expandedHeight, setExpandedHeight] = useState<number | null>(null);
-  const [allowSharedAttachmentLoss, setAllowSharedAttachmentLoss] = useState(false);
+  const selectionKey = entries.map(item => `${item.source}:${item._jsonFileName || item.folderName}`).sort().join('\n');
+  const [override, setOverride] = useState<{ preparation: DeletePreparationState; selectionKey: string } | null>(null);
+  // Consent applies to exactly this selection and this check result. New
+  // checks invalidate it synchronously, before the next paint/click.
+  const allowSharedAttachmentLoss = override?.preparation === preparation && override.selectionKey === selectionKey;
+  useLayoutEffect(() => {
+    if (override && (override.preparation !== preparation || override.selectionKey !== selectionKey)) setOverride(null);
+  }, [override, preparation, selectionKey]);
   const cardRef = useRef<HTMLDivElement>(null);
   const hasExceptionalContent = preparation.status === 'error' || !!resultNotice
-    || preparation.status === 'unchecked'
+    || preparation.status === 'unchecked' || !!preparation.attachmentCheckSkipped
     || ('info' in preparation && !!preparation.info?.blockedChats?.length);
   const measuringExceptionalContent = hasExceptionalContent && expandedHeight === null;
 
   useLayoutEffect(() => {
-    if (!hasExceptionalContent || !cardRef.current) return;
-    const body = cardRef.current.querySelector<HTMLElement>('.delete-card-body');
-    const actions = cardRef.current.querySelector<HTMLElement>('.delete-actions');
-    const hiddenOverflow = Math.max(0, (body?.scrollHeight || 0) - (body?.clientHeight || 0))
-      + Math.max(0, (actions?.scrollHeight || 0) - (actions?.clientHeight || 0));
-    const viewportLimit = Math.max(0, window.innerHeight - 32);
-    const requiredHeight = Math.ceil(cardRef.current.getBoundingClientRect().height + hiddenOverflow);
-    setExpandedHeight(currentHeight => {
-      const nextHeight = Math.min(viewportLimit, Math.max(initialHeight, requiredHeight));
-      return currentHeight !== null && currentHeight >= nextHeight ? currentHeight : nextHeight;
-    });
+    const card = cardRef.current;
+    if (!card) return;
+    const body = card.querySelector<HTMLElement>('.delete-card-body');
+    const actions = card.querySelector<HTMLElement>('.delete-actions');
+    const footerNotice = card.querySelector<HTMLElement>('.delete-footer-notice');
+    const resize = () => {
+      const hiddenOverflow = Math.max(0, (body?.scrollHeight || 0) - (body?.clientHeight || 0))
+        + Math.max(0, (actions?.scrollHeight || 0) - (actions?.clientHeight || 0))
+        + Math.max(0, (footerNotice?.scrollHeight || 0) - (footerNotice?.clientHeight || 0));
+      const viewportLimit = Math.max(0, window.innerHeight - 32);
+      const requiredHeight = Math.ceil(card.getBoundingClientRect().height + hiddenOverflow);
+      setExpandedHeight(currentHeight => {
+        if (currentHeight === null && !hiddenOverflow && !hasExceptionalContent) return null;
+        const nextHeight = Math.min(viewportLimit, Math.max(initialHeight, requiredHeight));
+        return currentHeight !== null && currentHeight >= nextHeight ? currentHeight : nextHeight;
+      });
+    };
+    resize();
+    // Store-driven progress can wrap without rerendering this modal. Observe
+    // its content so that those changes grow the card before adding scrolling.
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null;
+    if (actions) observer?.observe(actions);
+    if (footerNotice) observer?.observe(footerNotice);
+    for (const child of body?.children || []) observer?.observe(child);
+    window.addEventListener('resize', resize);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', resize); };
   }, [hasExceptionalContent, initialHeight, preparation, resultNotice]);
 
   const cardStyle = {
@@ -72,10 +97,10 @@ export function DeleteConfirmModal({
   const isDeleting = !!deleting || !!progress;
   const isBusy = !!preparingDeletion || isDeleting;
   const info = 'info' in preparation ? preparation.info : undefined;
-  const unchecked = preparation.status === 'unchecked';
-  const sizesSkipped = unchecked || preparation.status === 'skipped' || (preparation.status === 'loading' && preparation.sizesSkipped);
-  const canSkipCalculation = preparation.status === 'loading' && !sizesSkipped && !isMessenger && !isBusy;
-  const canSkipCheck = preparation.status === 'loading' && sizesSkipped && !info && !isMessenger && !isBusy && !!onSkipCheck;
+  const unchecked = preparation.status === 'unchecked' || !!preparation.attachmentCheckSkipped;
+  const sizesSkipped = preparation.status === 'unchecked' || preparation.status === 'skipped' || (preparation.status === 'loading' && preparation.sizesSkipped);
+  const canSkipCalculation = preparation.status === 'loading' && preparation.calculatingSizes && !sizesSkipped && !isMessenger && !isBusy;
+  const canSkipCheck = preparation.status === 'loading' && !preparation.calculatingSizes && !unchecked && !isMessenger && !isBusy && !!onSkipCheck;
   const canCheckAttachmentsAfterSizeSkip = preparation.status === 'skipped'
     && !!info && !isMessenger && !isBusy && !!onCheckAttachments;
   const allChatsBlocked = info?.deletableChatCount === 0 && !!info.blockedChats?.length;
@@ -85,7 +110,7 @@ export function DeleteConfirmModal({
     || (preparation.status === 'skipped' && !!info)
     || (preparation.status === 'error' && (!isMessenger || (!preparation.mediaSafetyUnavailable && !!info)))
     || overrideEnabled
-    || (unchecked && !isMessenger)
+    || (preparation.status === 'unchecked' && !isMessenger)
   );
   const canDeleteJsonOnly = preparation.status === 'error'
     && preparation.mediaSafetyUnavailable
@@ -145,14 +170,17 @@ export function DeleteConfirmModal({
   );
   const preparationMessage = overrideEnabled ? 'Folder protection is overridden for this deletion.'
     : allChatsBlocked ? 'These chat folders will be kept to protect shared attachments.' : preparation.status === 'loading'
-    ? `${preparation.calculatingSizes ? 'Calculating sizes...' : 'Checking shared attachments...'}${info?.sharedMediaCount ? ` ${info.sharedMediaCount} shared media files will be kept.` : ''}`
+    ? null
+    : unchecked
+      ? sizesSkipped ? 'Shared attachment check and size calculation were skipped.'
+        : preparation.status === 'ready' ? 'Shared attachment check was skipped. Size calculation finished.' : null
     : preparation.status === 'ready'
       ? preparation.info.sharedMediaCount > 0
         ? `${preparation.info.sharedMediaCount} media files shared with other chats will be kept.`
         : 'Ready to delete.'
       : preparation.status === 'skipped'
         ? 'Size calculation was skipped. Shared attachments were checked.'
-        : unchecked ? 'Shared attachment check and size calculation were skipped.' : null;
+        : null;
   const stickerSafetyMessage = info?.stickersPreservedForSafety
     ? 'Shared stickers will be kept because their ownership or export format could not be verified.' : null;
 
@@ -217,17 +245,18 @@ export function DeleteConfirmModal({
           </div>
         ) : null}
 
-        {!progress && preparationMessage && <p className="delete-meta">{preparationMessage}</p>}
-        {!isBusy && preparation.status === 'loading' && preparation.progress && (
-          <CalculationProgressBar source={preparation.progress} label="Deletion calculation progress" />
+        {!isBusy && preparation.status !== 'loading' && preparationMessage && <p className="delete-meta">{preparationMessage}</p>}
+        {!isBusy && preparation.status === 'loading' && preparation.calculatingSizes && (info || unchecked) && (
+          <p className="delete-meta delete-calculation-summary">Shared Attachments: {unchecked ? 'Check skipped.' : `${info!.sharedMediaCount.toLocaleString()} shared media files will be kept.`}</p>
         )}
-        {!progress && stickerSafetyMessage && <p className="delete-meta">{stickerSafetyMessage}</p>}
-        {!progress && unchecked && (
-          <div className="delete-result-notice" role="alert" id="deleteUncheckedWarning">
-            <strong>Shared attachment protection is bypassed.</strong>
-            <div>“Delete permanently” will remove the selected chat folders without checking dependencies. Other chats may lose attachments. Shared stickers outside these folders will be kept.</div>
-          </div>
+        {!isBusy && preparation.status === 'loading' && (
+          <CalculationProgressBar source={preparation.progress} label="Deletion calculation progress"
+            fallbackLabel={preparation.calculatingSizes ? 'Calculating chat sizes' : 'Scanning for shared attachments'} />
         )}
+        {isBusy && verificationProgress && (
+          <CalculationProgressBar source={verificationProgress} label="Deletion attachment verification" />
+        )}
+        {!progress && stickerSafetyMessage && preparation.status !== 'loading' && <p className="delete-meta">{stickerSafetyMessage}</p>}
         {!progress && blockedChats.length > 0 && (
           <section className="delete-result-notice delete-dependencies" role="alert" aria-label="Shared attachment dependencies">
             <strong>{blockedChats.length} {blockedChats.length === 1 ? 'chat is' : 'chats are'} protected.</strong>
@@ -316,25 +345,31 @@ export function DeleteConfirmModal({
           </div>
         )}
         </div>
+        {!progress && unchecked && (
+          <div className="delete-result-notice delete-footer-notice" role="alert" id="deleteUncheckedWarning">
+            <strong>Shared attachment protection is bypassed.</strong>
+            <div>“Delete permanently” will remove the selected chat folders without checking dependencies. Other chats may lose attachments. Shared stickers outside these folders will be kept.</div>
+          </div>
+        )}
         <div className="delete-actions">
           <div className="delete-preparation-actions">
               {canSkipCalculation && (
                 <button className="btn-warning delete-skip-action" onClick={onSkipCalculation} disabled={!onSkipCalculation}>Skip calculation</button>
               )}
               {canDeleteAnyway && (
-                <button className="btn-warning delete-override-action" onClick={() => setAllowSharedAttachmentLoss(!overrideEnabled)}
+                <button className="btn-warning delete-override-action" onClick={() => setOverride(overrideEnabled ? null : { preparation, selectionKey })}
                   aria-pressed={overrideEnabled} aria-describedby="deleteOverrideWarning">
                   {overrideEnabled ? 'Keep protection' : 'Delete anyway'}
                 </button>
               )}
               {canSkipCheck && <button className="btn-warning delete-skip-check-action" onClick={onSkipCheck}>Skip check</button>}
-              {canCheckAttachmentsAfterSizeSkip && <button className="btn-warning" onClick={onCheckAttachments}>Check attachments</button>}
-              {unchecked && !isBusy && <button className="btn-warning" onClick={onRetryCalculation} disabled={!onRetryCalculation}>Check attachments</button>}
+              {canCheckAttachmentsAfterSizeSkip && <button className="btn-warning" onClick={() => { setOverride(null); onCheckAttachments?.(); }}>Check attachments</button>}
+              {unchecked && !isBusy && preparation.status !== 'loading' && <button className="btn-warning" onClick={() => { setOverride(null); (onCheckAttachments || onRetryCalculation)?.(); }} disabled={!onCheckAttachments && !onRetryCalculation}>Check attachments</button>}
           </div>
           <div className="delete-confirm-actions">
           {!isBusy && <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>}
           {preparation.status === 'error' && !isBusy && (
-            <button className="btn btn-secondary" onClick={onRetryCalculation} disabled={!onRetryCalculation}>
+            <button className="btn btn-secondary" onClick={() => { setOverride(null); onRetryCalculation?.(); }} disabled={!onRetryCalculation}>
               Retry calculation
             </button>
           )}
@@ -345,7 +380,7 @@ export function DeleteConfirmModal({
           )}
           {!canDeleteJsonOnly && (
             <button className="btn-danger delete-primary-action" onClick={() => {
-              if (overrideEnabled) { setAllowSharedAttachmentLoss(false); onDeleteAnyway?.(); }
+              if (overrideEnabled) { setOverride(null); onDeleteAnyway?.(); }
               else onConfirm();
             }} id="deleteConfirmBtn" disabled={!canConfirm} aria-describedby={unchecked ? 'deleteUncheckedWarning' : overrideEnabled ? 'deleteOverrideWarning' : undefined}>
               <span className="delete-primary-action-sizer" aria-hidden="true">Delete permanently</span>

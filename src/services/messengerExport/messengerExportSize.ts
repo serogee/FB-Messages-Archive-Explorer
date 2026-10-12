@@ -86,7 +86,7 @@ export async function buildMessengerExportMediaSizeIndex(
   const basenamePaths = new Map<string, string>();
   const ambiguousBasenames = new Set<string>();
   let done = 0;
-  const report = (finished = false) => onProgress?.({ stage: 'media-sizes', label: 'Calculating shared media sizes', done, total: finished ? done : undefined, unit: 'files' });
+  const report = (finished = false) => onProgress?.({ stage: 'media-sizes', label: 'Calculating chat sizes', done, total: finished ? done : undefined, unit: 'files' });
   report();
 
   try {

@@ -93,6 +93,7 @@ export default function App() {
   const deleteInfoRequestRef = useRef(0);
   const deleteInfoAbortRef = useRef<AbortController | null>(null);
   const deleteCalculationProgressRef = useRef<CalculationProgressStore | null>(null);
+  const [deleteVerificationProgress, setDeleteVerificationProgress] = useState<CalculationProgressStore | null>(null);
   const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deleteOperationGuardRef = useRef(new SingleFlightGuard());
 
@@ -129,6 +130,7 @@ export default function App() {
     preserveResult = false,
     skipSizes = false,
     forceOwnershipCheck = false,
+    skipAttachmentCheck = false,
   ) => {
     deleteCalculationProgressRef.current?.dispose();
     deleteInfoAbortRef.current?.abort();
@@ -137,23 +139,30 @@ export default function App() {
     const requestId = deleteInfoRequestRef.current + 1;
     deleteInfoRequestRef.current = requestId;
     const progress = new CalculationProgressStore();
-    progress.report({ stage: 'ownership', label: 'Checking shared attachments', done: 0, unit: 'files' });
+    const isMessenger = (Array.isArray(target) ? target : [target]).some(entry => entry._messengerExport);
+    progress.report(skipAttachmentCheck
+      ? { stage: 'sizes', label: 'Calculating chat sizes', done: 0, unit: 'files' }
+      : { stage: 'ownership', label: 'Scanning for shared attachments', done: 0,
+        unit: isMessenger ? 'files' : 'folders', jsonFound: isMessenger ? undefined : 0 });
     deleteCalculationProgressRef.current = progress;
     setDeleteTarget(target);
     if (!preserveResult) setDeleteResultNotice(null);
     setDeletePreparing(false);
     setDeleteBusy(false);
     setDeletePreparation(current => ({
-      status: 'loading', calculatingSizes: false, sizesSkipped: skipSizes,
-      info: preserveResult && 'info' in current ? current.info : undefined, progress,
+      status: 'loading', calculatingSizes: skipAttachmentCheck && !skipSizes, sizesSkipped: skipSizes,
+      attachmentCheckSkipped: skipAttachmentCheck,
+      info: !skipAttachmentCheck && preserveResult && 'info' in current ? current.info : undefined, progress,
     }));
     archive.getDeleteInfo(target, abortCtrl.signal, ownershipInfo => {
       if (deleteInfoRequestRef.current !== requestId) return;
       setDeletePreparation({ status: 'loading', info: ownershipInfo, calculatingSizes: !skipSizes, sizesSkipped: skipSizes, progress });
-    }, { skipSizes, forceOwnershipCheck, progress })
+    }, { skipSizes, forceOwnershipCheck, skipAttachmentCheck, progress })
       .then(info => {
         if (deleteInfoRequestRef.current !== requestId) return;
-        setDeletePreparation(skipSizes ? { status: 'skipped', info } : { status: 'ready', info });
+        setDeletePreparation(skipSizes
+          ? skipAttachmentCheck ? { status: 'unchecked', attachmentCheckSkipped: true } : { status: 'skipped', info }
+          : { status: 'ready', info, attachmentCheckSkipped: skipAttachmentCheck });
         if (!skipSizes && !Array.isArray(target) && !target._messengerExport && target.folderSize <= 0) {
           archive.updateFolderSize(target, info.totalSize - (info.stickerSize || 0));
         }
@@ -180,6 +189,7 @@ export default function App() {
             error: getErrorMessage(error),
             mediaSafetyUnavailable: false,
             info: 'info' in current ? current.info : undefined,
+            attachmentCheckSkipped: skipAttachmentCheck,
           }));
         }
         console.error('Failed to prepare delete details:', error);
@@ -213,6 +223,8 @@ export default function App() {
     setDeleteResultNotice(null);
     setDeletePreparing(true);
     setDeleteProgress({ stage: 'preparing', done: 0, total: 0 });
+    const verificationProgress = new CalculationProgressStore();
+    setDeleteVerificationProgress(mode === 'normal' || mode === 'override' ? verificationProgress : null);
     deleteInfoRequestRef.current++;
     const targets = Array.isArray(deleteTarget) ? deleteTarget : [deleteTarget];
     let retryTargets: ChatListEntry[] | null = null;
@@ -232,8 +244,9 @@ export default function App() {
             progressReporter.report(progress, progress.total > 0 && progress.done >= progress.total);
           })
         : await archive.deleteChats(targets, progress => {
+            setDeleteVerificationProgress(null);
             progressReporter.report(progress, progress.total > 0 && progress.done >= progress.total);
-          }, { allowSharedAttachmentLoss: mode === 'override', skipAttachmentCheck: mode === 'unchecked' });
+          }, { allowSharedAttachmentLoss: mode === 'override', skipAttachmentCheck: mode === 'unchecked', verificationProgress });
       progressReporter.flush();
 
       let bookmarkCleanupError: string | undefined;
@@ -287,6 +300,8 @@ export default function App() {
     } finally {
       if (sizeWorkSuspended) archive.resumeSizeWork();
       progressReporter.cancel();
+      verificationProgress.dispose();
+      setDeleteVerificationProgress(null);
       deleteOperationGuardRef.current.finish(operationToken);
       setDeletePreparing(false);
       setDeleteBusy(false);
@@ -533,20 +548,22 @@ export default function App() {
       {deleteTarget && (
         <DeleteConfirmModal
           entry={deleteTarget}
-          onConfirm={() => handleDeleteConfirm(deletePreparation.status === 'unchecked' ? 'unchecked' : 'normal')}
+          onConfirm={() => handleDeleteConfirm(deletePreparation.status === 'unchecked' || deletePreparation.attachmentCheckSkipped ? 'unchecked' : 'normal')}
           onDeleteAnyway={() => handleDeleteConfirm('override')}
           onDeleteJsonOnly={() => handleDeleteConfirm('json-only')}
           onRetryCalculation={() => prepareDeleteTarget(deleteTarget, true)}
-          onSkipCalculation={() => prepareDeleteTarget(deleteTarget, true, true)}
-          onCheckAttachments={() => prepareDeleteTarget(deleteTarget, false, true, true)}
-          onSkipCheck={() => {
+          onSkipCalculation={() => {
             deleteCalculationProgressRef.current?.dispose();
             deleteInfoAbortRef.current?.abort();
             deleteInfoAbortRef.current = null;
             deleteInfoRequestRef.current++;
             setDeleteResultNotice(null);
-            setDeletePreparation({ status: 'unchecked' });
+            setDeletePreparation(current => current.attachmentCheckSkipped
+              ? { status: 'unchecked', attachmentCheckSkipped: true }
+              : { status: 'skipped', info: 'info' in current ? current.info : undefined });
           }}
+          onCheckAttachments={() => prepareDeleteTarget(deleteTarget, false, deletePreparation.status === 'skipped', true)}
+          onSkipCheck={() => prepareDeleteTarget(deleteTarget, false, false, false, true)}
           onCancel={() => {
             if (!deleteProgress && !deleteBusy) {
               deleteCalculationProgressRef.current?.dispose();
@@ -563,6 +580,7 @@ export default function App() {
           resultNotice={deleteResultNotice}
           preparingDeletion={deletePreparing}
           deleting={deleteBusy}
+          verificationProgress={deleteVerificationProgress}
         />
       )}
       {selectedViewer && (

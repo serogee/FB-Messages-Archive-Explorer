@@ -367,10 +367,10 @@ export async function getMessengerExportDeletionInfo(
   throwIfAborted(signal);
   const resolvedMediaSizeIndex = mediaSizeIndex || await buildMessengerExportMediaSizeIndex(rootHandle, signal);
   throwIfAborted(signal);
-  onProgress?.({ stage: 'chat-data', label: 'Calculating chat data sizes', done: 0, total: 1, unit: 'chats' });
+  onProgress?.({ stage: 'chat-data', label: 'Calculating chat sizes', done: 0, total: 1, unit: 'chats' });
   const jsonSize = await getJsonSize(rootHandle, jsonFileName, chatIndex);
   throwIfAborted(signal);
-  onProgress?.({ stage: 'chat-data', label: 'Calculating chat data sizes', done: 1, total: 1, unit: 'chats' });
+  onProgress?.({ stage: 'chat-data', label: 'Calculating chat sizes', done: 1, total: 1, unit: 'chats' });
   const chatMedia = referenceIndex.chatMedia.get(jsonFileName) || new Set<string>();
   const plan = buildMessengerExportDeletionPlan([entry], index, resolvedMediaSizeIndex);
   const mediaFiles = plan.chats[0]?.mediaFiles || [];
@@ -408,7 +408,7 @@ export async function getMessengerExportBatchDeletionInfo(
   const referencedMedia = new Set<string>();
   let jsonSize = 0;
   let chatFileCount = 0;
-  const report = () => onProgress?.({ stage: 'chat-data', label: 'Calculating chat data sizes', done: chatFileCount, total: entries.length, unit: 'chats' });
+  const report = () => onProgress?.({ stage: 'chat-data', label: 'Calculating chat sizes', done: chatFileCount, total: entries.length, unit: 'chats' });
   report();
 
   for (const entry of entries) {

@@ -242,6 +242,19 @@ describe('Facebook shared sticker ownership', () => {
 });
 
 describe('archive shared attachment integration', () => {
+  it('preserves global stickers when a directly selected messages folder has no platform evidence', async () => {
+    const root = createMockDirectoryHandle('messages', {
+      inbox: { a: { 'message_1.json': conversation(['stickers_used/a.png']) } },
+      stickers_used: { 'a.png': 'keep' },
+    });
+    const { result } = await openArchive(root);
+    const info = await result.current.getDeleteInfo(result.current.inboxList);
+    expect(info).toMatchObject({ stickerCount: 0, stickersPreservedForSafety: true });
+    await act(async () => { await result.current.deleteChats(result.current.inboxList); });
+    await expect((await root.getDirectoryHandle('stickers_used')).getFileHandle('a.png')).resolves.toBeDefined();
+    expect(result.current.inboxList).toEqual([]);
+  });
+
   it('preserves shared stickers in a recognized Instagram export even with bare reference paths', async () => {
     const root = createMockDirectoryHandle('instagram-export', {
       your_instagram_activity: { messages: {

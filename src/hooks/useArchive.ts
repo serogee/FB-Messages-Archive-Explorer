@@ -43,6 +43,7 @@ import {
 import { buildMetaAttachmentReferenceIndex, type MetaAttachmentReferenceIndex } from '../services/metaAttachmentReferences';
 import { buildMetaChatDeletionPlan, getMetaFolderDeletionBlock, MetaChatDeletionBlockedError } from '../services/metaChatDeletion';
 import { CalculationProgressStore, followCalculationProgress, type CalculationProgress } from '../services/calculationProgress';
+import type { MetaArchivePlatform } from '../services/metaAttachmentPaths';
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -127,7 +128,7 @@ export async function computeFacebookDeleteInfo(
   let doneChats = 0;
   let doneFiles = 0;
   const report = (finished = false) => onProgress?.({
-    stage: 'sizes', label: 'Calculating attachment sizes',
+    stage: 'sizes', label: 'Calculating chat sizes',
     done: entries.length > 1 ? doneChats : doneFiles,
     total: entries.length > 1 ? entries.length : finished ? doneFiles : undefined,
     unit: entries.length > 1 ? 'chats' : 'files',
@@ -251,7 +252,7 @@ export function useArchive(): {
   const facebookReferenceIndexCacheRef = useRef(
     new GenerationScopedAsyncCache<ReadableDirectoryHandle, MetaAttachmentReferenceIndex>()
   );
-  const facebookStickerDeletionSupportedRef = useRef(true);
+  const metaArchivePlatformRef = useRef<MetaArchivePlatform>('unknown');
   const sizeComputationPromisesRef = useRef<Map<string, Promise<number>>>(new Map());
   const sizeWorkLifecycleRef = useRef(new SizeWorkLifecycle());
   const sizeWorkPlanRef = useRef<SizeWorkPlan | null>(null);
@@ -269,7 +270,8 @@ export function useArchive(): {
     handle: ReadableDirectoryHandle,
     generation: number,
     signal: AbortSignal | undefined,
-    supported: boolean,
+    platform: MetaArchivePlatform,
+    verificationProgress?: CalculationProgressStore,
   ): Promise<MetaAttachmentReferenceIndex> => {
     const revision = facebookReferenceRevisionRef.current;
     const isCurrent = () => archiveGenerationRef.current === generation && facebookReferenceRevisionRef.current === revision;
@@ -277,17 +279,19 @@ export function useArchive(): {
     if (!isCurrent()) throw new DOMException('Aborted', 'AbortError');
     const progress = new CalculationProgressStore();
     referenceProgressRef.current = progress;
+    const stopProgress = followCalculationProgress(progress, verificationProgress);
     let status: AttachmentReferenceScan['status'] = 'failed';
     setAttachmentReferenceIndexLoading(true);
     setAttachmentReferenceScan({ status: 'checking', progress });
     try {
       // Let scan status and the chat list paint before reading the archive.
       await new Promise(resolve => setTimeout(resolve, 0));
-      const index = await buildMetaAttachmentReferenceIndex(handle, signal, supported, progress.report);
+      const index = await buildMetaAttachmentReferenceIndex(handle, signal, platform, progress.report);
       status = index.complete ? 'complete' : 'incomplete';
       return index;
     } finally {
       progress.dispose();
+      stopProgress();
       if (isCurrent()) {
         setAttachmentReferenceIndexLoading(false);
         setAttachmentReferenceScan({ status, progress });
@@ -303,7 +307,7 @@ export function useArchive(): {
     const archiveSignal = abortControllerRef.current?.signal;
     const revision = facebookReferenceRevisionRef.current;
     const isCurrent = () => archiveGenerationRef.current === generation && facebookReferenceRevisionRef.current === revision;
-    const supported = facebookStickerDeletionSupportedRef.current;
+    const platform = metaArchivePlatformRef.current;
     const work = facebookReferenceIndexCacheRef.current.getOrCreate(handle, generation, async () => {
       const controller = new AbortController();
       facebookReferenceAbortRef.current = controller;
@@ -311,7 +315,7 @@ export function useArchive(): {
       if (archiveSignal?.aborted) abort();
       else archiveSignal?.addEventListener('abort', abort, { once: true });
       try {
-        const index = await runMetaReferenceScan(handle, generation, controller.signal, supported);
+        const index = await runMetaReferenceScan(handle, generation, controller.signal, platform);
         if (isCurrent()) setAttachmentReferenceIndex(index);
         return index;
       } finally {
@@ -330,34 +334,47 @@ export function useArchive(): {
     // Keep the completed index available to the gallery while an optional
     // manual recheck runs. It becomes the fallback if the user cancels it.
     const previousIndex = facebookReferenceIndexCacheRef.current.get(handle, generation);
+    // A dialog waiting for the initial scan does not own that background work.
+    if (!previousIndex) return getFacebookReferenceIndexForRoot(handle, generation, signal);
+    throwIfAborted(signal);
     const revision = facebookReferenceRevisionRef.current + 1;
     facebookReferenceRevisionRef.current = revision;
     facebookReferenceAbortRef.current?.abort();
     const isCurrent = () => archiveGenerationRef.current === generation
       && facebookReferenceRevisionRef.current === revision;
+    const controller = new AbortController();
+    facebookReferenceAbortRef.current = controller;
+    const archiveSignal = abortControllerRef.current?.signal;
+    const abort = () => {
+      controller.abort();
+      if (!isCurrent()) return;
+      // Invalidate publication now, even if getFile()/entries() cannot abort.
+      facebookReferenceRevisionRef.current++;
+      referenceProgressRef.current?.dispose();
+      setAttachmentReferenceIndex(previousIndex);
+      setAttachmentReferenceIndexLoading(false);
+      setAttachmentReferenceScan({ status: previousIndex.complete ? 'complete' : 'incomplete' });
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    archiveSignal?.addEventListener('abort', abort, { once: true });
     try {
-      const index = await runMetaReferenceScan(
+      const index = await waitForPromiseWithAbort(runMetaReferenceScan(
         handle,
         generation,
-        signal,
-        facebookStickerDeletionSupportedRef.current,
-      );
+        controller.signal,
+        metaArchivePlatformRef.current,
+      ), controller.signal);
       if (isCurrent()) {
         facebookReferenceIndexCacheRef.current.set(handle, generation, index);
         setAttachmentReferenceIndex(index);
       }
       return index;
-    } catch (error) {
-      if (isCurrent() && signal?.aborted) {
-        setAttachmentReferenceIndex(previousIndex || null);
-        setAttachmentReferenceIndexLoading(false);
-        setAttachmentReferenceScan(previousIndex
-          ? { status: previousIndex.complete ? 'complete' : 'incomplete' }
-          : null);
-      }
-      throw error;
+    } finally {
+      signal?.removeEventListener('abort', abort);
+      archiveSignal?.removeEventListener('abort', abort);
+      if (facebookReferenceAbortRef.current === controller) facebookReferenceAbortRef.current = null;
     }
-  }, [runMetaReferenceScan]);
+  }, [getFacebookReferenceIndexForRoot, runMetaReferenceScan]);
 
   const getMessengerMediaSizeIndexForRoot = useCallback((
     handle: ReadableDirectoryHandle,
@@ -647,7 +664,7 @@ export function useArchive(): {
       messengerReferenceIndexCacheRef.current.clear();
       messengerMediaSizeIndexCacheRef.current.clear();
       facebookReferenceIndexCacheRef.current.clear();
-      facebookStickerDeletionSupportedRef.current = true;
+      metaArchivePlatformRef.current = 'unknown';
       setAttachmentReferenceIndex(null);
       setAttachmentReferenceIndexLoading(false);
       setAttachmentReferenceScan(null);
@@ -679,7 +696,7 @@ export function useArchive(): {
           handle,
           (done, total) => {
             setLoadProgress({ done, total });
-            progress.report({ stage: 'ownership', label: 'Checking chat JSON', done, total, unit: 'files' });
+            progress.report({ stage: 'ownership', label: 'Scanning for shared attachments', done, total, unit: 'files' });
           },
           abortCtrl.signal
         ).catch(error => {
@@ -714,7 +731,7 @@ export function useArchive(): {
       setOriginalRootHandle(handle);
       setRootHandle(messagesRoot);
       // Explicit Instagram roots must never opt into Facebook shared-sticker removal.
-      facebookStickerDeletionSupportedRef.current = !messagesRootInfo?.instagram;
+      metaArchivePlatformRef.current = messagesRootInfo?.platform || 'unknown';
 
       const progresses = [
         { done: 0, total: 0 },
@@ -848,6 +865,18 @@ export function useArchive(): {
     if (messengerEntries.length === 0) {
       const generation = archiveGenerationRef.current;
       const selectedEntries = [...new Map(entries.map(item => [getFacebookChatId(item), item])).values()];
+      if (options?.skipAttachmentCheck) {
+        // This dialog no longer waits for, or follows, the independent
+        // background index. Global stickers never enter an unchecked estimate.
+        const info: MessengerExportDeletionInfo = {
+          jsonSize: 0, chatFileCount: 0, mediaSize: 0, totalSize: 0,
+          exclusiveMediaFiles: [], exclusiveMediaCount: 0, sharedMediaCount: 0,
+          stickerCount: 0, stickerSize: 0, stickersPreservedForSafety: true,
+          deletableChatCount: selectedEntries.length,
+        };
+        if (options.skipSizes) return info;
+        return { ...info, ...await computeFacebookDeleteInfo(selectedEntries, signal, 4, options.progress?.report) };
+      }
       const work = options?.forceOwnershipCheck
         ? refreshFacebookReferenceIndex(rootHandle, generation, signal)
         : getFacebookReferenceIndexForRoot(rootHandle, generation, signal);
@@ -986,10 +1015,12 @@ export function useArchive(): {
           setAttachmentReferenceIndexLoading(false);
           setAttachmentReferenceScan(null);
         } else {
-          await getFacebookReferenceIndexForRoot(rootHandle, generation, buildSignal);
+          const initialWork = getFacebookReferenceIndexForRoot(rootHandle, generation, buildSignal);
+          const stopProgress = followCalculationProgress(referenceProgressRef.current, options?.verificationProgress);
+          try { await initialWork; } finally { stopProgress(); }
           // Refresh ownership immediately before mutation; a preview/background cache is not deletion proof.
           stickerIndex = await runMetaReferenceScan(
-            rootHandle, generation, buildSignal, facebookStickerDeletionSupportedRef.current,
+            rootHandle, generation, buildSignal, metaArchivePlatformRef.current, options?.verificationProgress,
           );
         }
         const plan = stickerIndex ? buildMetaChatDeletionPlan(entries, stickerIndex)
@@ -1000,7 +1031,7 @@ export function useArchive(): {
           for (const block of plan.blocked) result.failed.push({ entry: block.entry, error: new MetaChatDeletionBlockedError(block), partial: false, blocked: true });
         }
         const stickerTargets = stickerIndex ? await getFacebookStickerDeletionTargets(
-          rootHandle, stickerIndex, new Set(selected.map(getFacebookChatId)), buildSignal,
+          rootHandle, stickerIndex, new Set(selected.map(getFacebookChatId)), buildSignal, options?.verificationProgress?.report,
         ) : [];
         const total = selected.length + stickerTargets.length;
         for (let position = 0; position < selected.length; position++) {

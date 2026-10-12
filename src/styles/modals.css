@@ -92,11 +92,16 @@
 .delete-warning { color:var(--muted); font-size:14px; line-height:1.5; margin-bottom:16px; }
 .delete-warning strong { color:#e53e3e; }
 .delete-meta { color:var(--muted); font-size:13px; margin:8px 0 0; }
-.calculation-progress { flex:0 0 auto; min-width:0; margin-top:10px; color:var(--muted); font-size:12px; line-height:1.4; }
-.calculation-progress-details { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+.delete-calculation-summary, .calculation-progress { font-size:12px; line-height:1.4; }
+.calculation-progress { flex:0 0 auto; min-width:0; margin-top:10px; color:var(--muted); }
+.calculation-progress-details { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:4px 8px; }
+.progress-ellipsis { display:inline-block; width:3ch; }
 .calculation-progress-count { min-width:0; margin-top:4px; color:var(--muted); font-size:11px; text-align:right; }
-.calculation-progress-details .calculation-progress-count { flex:0 1 auto; margin-top:0; }
+.calculation-progress-details .calculation-progress-count { flex:0 1 auto; margin-top:0; text-align:left; }
+.calculation-progress-list { margin:4px 0 0; padding:0; list-style:none; font-size:11px; }
+.calculation-progress-list li { display:flex; align-items:baseline; gap:6px; }
 .delete-result-notice { display:flex; flex-direction:column; gap:6px; margin:12px 0 16px; padding:10px 12px; border:1px solid #d69e2e; border-radius:8px; background:color-mix(in srgb, #d69e2e 12%, var(--panel-bg)); color:var(--text); font-size:13px; line-height:1.4; }
+.delete-footer-notice { flex:0 1 auto; min-height:0; margin-bottom:0; overflow-y:auto; }
 .delete-dependencies { flex:0 0 auto; min-width:0; }
 .delete-dependencies-scroll { max-height:200px; overflow-y:auto; overscroll-behavior:contain; border:1px solid var(--border); border-radius:6px; background:var(--bg); }
 .delete-dependency-group { padding:10px; overflow-wrap:anywhere; }

@@ -24,6 +24,8 @@ export interface ChatDeletionBlockDetails {
 }
 
 export interface DeleteChatsOptions {
+  /** Fresh ownership verification, before any files are removed. */
+  verificationProgress?: CalculationProgressStore;
   /** Explicit user override: chat-folder removal may break retained attachments. */
   allowSharedAttachmentLoss?: boolean;
   /** Explicit user override: skip ownership checks and preserve all global stickers. */
@@ -31,6 +33,8 @@ export interface DeleteChatsOptions {
 }
 
 export interface DeleteInfoOptions {
+  /** Explicitly bypass Meta ownership; estimate selected folders only. */
+  skipAttachmentCheck?: boolean;
   /** Only size/count estimation is skipped; ownership is still checked. */
   skipSizes?: boolean;
   /** Discard a completed Meta ownership index and read attachment references again. */
@@ -52,7 +56,7 @@ export interface BatchDeleteResult {
   }>;
 }
 
-export type DeletePreparationState =
+export type DeletePreparationState = (
   | { status: 'loading'; info?: MessengerExportDeletionInfo; calculatingSizes: boolean; sizesSkipped?: boolean; progress?: CalculationProgressStore }
   | { status: 'ready'; info: MessengerExportDeletionInfo }
   | {
@@ -62,7 +66,8 @@ export type DeletePreparationState =
       info?: MessengerExportDeletionInfo;
     }
   | { status: 'skipped'; info?: MessengerExportDeletionInfo }
-  | { status: 'unchecked' };
+  | { status: 'unchecked' }
+) & { attachmentCheckSkipped?: boolean };
 
 export interface DeleteResultNotice {
   message: string;
