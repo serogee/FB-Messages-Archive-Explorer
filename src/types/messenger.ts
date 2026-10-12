@@ -169,6 +169,8 @@ export interface MediaEntry {
 }
 
 export interface MediaState {
+  /** Meta media resolves exact archive paths; basenames are chat-local only. */
+  metaChatId?: string;
   files: Record<string, string>;
   types: Record<string, string>;
   lookup: Map<string, MediaEntry>;

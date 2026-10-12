@@ -2,7 +2,9 @@ import { useState, useCallback, useRef, startTransition } from 'react';
 import type { ChatListEntry, MessengerThread, MediaState } from '../types/messenger';
 import type { ReadableDirectoryHandle } from '../types/fileSystem';
 import { loadChatMessages } from '../services/fileSystem';
-import { processMediaFromDirectory, processFacebookStickerReferences, createMediaState, revokeAllMedia, classifyChatMp4Attachments } from '../services/media';
+import { processMediaFromDirectory, processMetaAttachmentReferences, createMediaState, revokeAllMedia, classifyChatMp4Attachments } from '../services/media';
+import { getMetaChatId } from '../services/metaAttachmentPaths';
+import { prioritizeAttachmentPreview } from '../services/attachmentScanScheduling';
 import { loadMessengerExportChat, processMessengerExportMedia } from '../services/messengerExport';
 import { storageGet } from '../services/storage';
 import { getParticipantNames } from '../services/parser';
@@ -79,6 +81,7 @@ export function useChat(): {
     }
     const abortCtrl = new AbortController();
     mediaAbortControllerRef.current = abortCtrl;
+    const releasePreviewPriority = prioritizeAttachmentPreview(abortCtrl.signal);
 
     await new Promise(r => setTimeout(r, 10));
     try {
@@ -89,6 +92,7 @@ export function useChat(): {
       });
 
       const newMediaState = createMediaState();
+      if (!entry._messengerExport) newMediaState.metaChatId = getMetaChatId(entry);
       let messageProgress = 0;
       let attachmentProgress = 0;
       let attachmentLoadingComplete = false;
@@ -131,20 +135,15 @@ export function useChat(): {
       updateCombinedProgress();
       if (!attachmentLoadingComplete) setMsgStatusText("Loading attachments");
 
-      if (!entry._messengerExport && messagesRootHandle && !abortCtrl.signal.aborted) {
-        await processFacebookStickerReferences(
-          messagesRootHandle,
-          data.messages || [],
-          newMediaState,
-          abortCtrl.signal
-        );
-        if (!abortCtrl.signal.aborted) setMediaState({ ...newMediaState });
-      }
-      
       if (abortCtrl.signal.aborted) return;
 
       await attachmentTask;
       if (abortCtrl.signal.aborted) return;
+
+      if (!entry._messengerExport && messagesRootHandle) {
+        await processMetaAttachmentReferences(messagesRootHandle, getMetaChatId(entry), data.messages || [], newMediaState, abortCtrl.signal);
+        if (abortCtrl.signal.aborted) return;
+      }
 
       await classifyChatMp4Attachments(data, newMediaState, abortCtrl.signal);
       if (abortCtrl.signal.aborted) return;
@@ -195,6 +194,8 @@ export function useChat(): {
           : 'This chat could not be loaded. The parser may be unavailable, or the selected files may no longer be accessible.');
       }
       console.error('Failed to load chat:', err);
+    } finally {
+      releasePreviewPriority();
     }
   }, []);
 
