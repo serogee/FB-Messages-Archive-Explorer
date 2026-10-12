@@ -632,7 +632,7 @@ test('previews and safely removes Facebook shared stickers after their last chat
     for (const name of ['alice_chat', 'bob_chat']) {
       const json = await (await inbox.getDirectoryHandle(name)).getFileHandle('message_1.json');
       const raw = JSON.parse(await (await json.getFile()).text());
-      raw.messages[0].sticker = { uri: 'messages/stickers_used/shared.webp' };
+      raw.messages[0].sticker = { uri: 'your_facebook_activity/messages/stickers_used/shared.webp' };
       if (name === 'bob_chat') raw.messages.push({ sender_name: 'Bob', timestamp_ms: 6, sticker: { uri: 'https://example.com/remote-sticker.png' } });
       const stream = await json.createWritable();
       await stream.write(JSON.stringify(raw)); await stream.close();
@@ -666,6 +666,86 @@ test('previews and safely removes Facebook shared stickers after their last chat
   }
 });
 
+for (const format of ['facebook', 'instagram'] as const) {
+test(`loads cross-folder ${format} images in the referencing chat and gallery`, async ({ page }) => {
+  await installArchive(page, format);
+  await page.goto('');
+  await page.evaluate(async selectedFormat => {
+    const root = (window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } }).__testArchives.facebook;
+    const inbox = await root.getDirectoryHandle('inbox');
+    for (const [name, color] of [['alice_chat', 'red'], ['bob_chat', 'blue']]) {
+      const photos = await (await inbox.getDirectoryHandle(name)).getDirectoryHandle('photos', { create: true });
+      const file = await photos.getFileHandle('shared.png', { create: true });
+      const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 16;
+      const context = canvas.getContext('2d')!;
+      context.fillStyle = color; context.fillRect(0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob>(resolve => canvas.toBlob(blob => resolve(blob!)));
+      const writer = await file.createWritable(); await writer.write(new Uint8Array(await blob.arrayBuffer())); await writer.close();
+      const json = await (await inbox.getDirectoryHandle(name)).getFileHandle('message_1.json');
+      const raw = JSON.parse(await (await json.getFile()).text());
+      const activity = selectedFormat === 'facebook' ? 'your_facebook_activity' : 'your_instagram_activity';
+      raw.messages[0].photos = [{ uri: `${activity}/messages/inbox/alice_chat/photos/shared.png` }];
+      const stream = await json.createWritable(); await stream.write(JSON.stringify(raw)); await stream.close();
+    }
+  }, format);
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  await page.locator('.chat-list-item').filter({ hasText: 'Bob Chat' }).click();
+  const preview = page.locator('#chat img').first();
+  await expect(preview).toBeVisible();
+  await expect.poll(() => preview.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  // Decode the preview pixel, proving that the foreign red image was loaded
+  // instead of Bob's same-named blue local file.
+  const pixel = await preview.evaluate(image => {
+    const canvas = document.createElement('canvas'); canvas.width = 1; canvas.height = 1;
+    const context = canvas.getContext('2d')!; context.drawImage(image as HTMLImageElement, 0, 0, 1, 1);
+    return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
+  });
+  // Chat previews can use lossy image encoding; a red pixel can pick up a
+  // small green/blue component without becoming Bob's blue image.
+  expect(pixel[0]).toBeGreaterThan(240);
+  expect(pixel[1]).toBeLessThan(10);
+  expect(pixel[2]).toBeLessThan(10);
+  await page.getByRole('button', { name: 'Toggle chat info panel' }).click();
+  await page.getByRole('button', { name: 'Attachments', exact: true }).click();
+  const shared = page.locator('.gallery-thumb[title="shared.png"]').filter({ has: page.getByLabel('Attachment used in 2 chats') });
+  await expect(shared).toBeVisible();
+  await expect.poll(() => shared.locator('img').evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+});
+}
+
+test('shows fresh ownership verification inside the deletion dialog before removing chats', async ({ page }) => {
+  await installArchive(page, 'facebook');
+  await page.goto('');
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  const alice = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
+  await alice.hover(); await alice.getByRole('button', { name: 'Chat options' }).click();
+  await page.getByRole('button', { name: 'Delete chat' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete Chat', exact: true });
+  await expect(dialog.getByRole('button', { name: 'Delete permanently' })).toBeEnabled();
+  await page.evaluate(() => {
+    const NativeWorker = window.Worker;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    window.Worker = class extends NativeWorker {
+      postMessage(message: unknown, transfer: Transferable[] = []) {
+        if ((message as { type?: string }).type === 'file') void gate.then(() => super.postMessage(message, transfer));
+        else super.postMessage(message, transfer);
+      }
+    };
+    Object.defineProperty(window, '__releaseDeletionVerification', { value: release });
+  });
+  await dialog.getByRole('button', { name: 'Delete permanently' }).click();
+  const verification = dialog.getByRole('status', { name: 'Deletion attachment verification' });
+  await expect(verification).toContainText('Scanning for shared attachments');
+  await expect(verification).toContainText('Folders/Subfolders Checked');
+  await expect(verification).toContainText('JSON Found');
+  await expect(alice).toHaveCount(1);
+  await expect(dialog.getByRole('button', { name: 'Deleting...' })).toBeDisabled();
+  await page.evaluate(() => (window as unknown as { __releaseDeletionVerification: () => void }).__releaseDeletionVerification());
+  await expect(alice).toHaveCount(0);
+  await expect(dialog).toHaveCount(0);
+});
+
 test('shows gallery shared-video counts after scanning and blocks deleting their source chat', async ({ page }) => {
   await installArchive(page, 'facebook');
   await page.goto('');
@@ -682,37 +762,32 @@ test('shows gallery shared-video counts after scanning and blocks deleting their
       raw.messages[0].videos = [{ uri: 'your_facebook_activity/messages/inbox/alice_chat/videos/shared.mp4' }];
       const writable = await file.createWritable(); await writable.write(JSON.stringify(raw)); await writable.close();
     }
-    // Hold a retained chat's background read while the source chat and gallery open.
-    const file = await (await inbox.getDirectoryHandle('bob_chat')).getFileHandle('message_1.json');
-    const read = file.getFile.bind(file);
-    let textReads = 0;
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
-    file.getFile = async () => {
-      const result = await read();
-      // Size scanning needs only metadata. Hold the reference scanner's text
-      // read, so suspending size work can still open the source chat.
-      const text = result.text.bind(result);
-      Object.defineProperty(result, 'text', { value: async () => {
-        if (++textReads > 1) await gate;
-        return text();
-      } });
-      return result;
+    let released = false;
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      postMessage(message: unknown, transfer: Transferable[] = []) {
+        const request = message as { type?: string; chatId?: string };
+        if (!released && request.type === 'file' && request.chatId === 'inbox/bob_chat') {
+          void gate.then(() => super.postMessage(message, transfer));
+        } else super.postMessage(message, transfer);
+      }
     };
-    Object.defineProperty(window, '__releaseReferenceScan', { value: release });
+    Object.defineProperty(window, '__releaseReferenceScan', { value: () => { released = true; release(); } });
   });
   await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
   const alice = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
   const scanStatus = page.getByRole('status', { name: 'Shared attachment scan' });
-  await expect(scanStatus).toContainText('Checking shared attachments');
-  await expect(scanStatus).toContainText('Scanning chat folders');
-  await expect(scanStatus).toContainText('folders checked');
-  await expect(scanStatus).toContainText('entries discovered');
+  await expect(scanStatus).toContainText('Scanning for shared attachments');
+  await expect(scanStatus).toContainText('Folders/Subfolders Checked');
+  await expect(scanStatus).toContainText('JSON Found');
+  await expect(scanStatus).not.toContainText('entries');
   await expect(scanStatus.getByRole('progressbar')).toHaveCount(0);
   await alice.click();
   await page.getByRole('button', { name: 'Toggle chat info panel' }).click();
   await page.getByRole('button', { name: 'Attachments', exact: true }).click();
-  await expect(page.getByText('Checking shared attachments…', { exact: true })).toBeVisible();
+  await expect(page.locator('.gallery-reference-status')).toContainText('Scanning for shared attachments');
   await expect(page.getByLabel('Attachment used in 2 chats')).toHaveCount(0);
   expect(await scanStatus.evaluate(element => {
     const list = element.parentElement!.querySelector('.chat-list')!;
@@ -721,7 +796,7 @@ test('shows gallery shared-video counts after scanning and blocks deleting their
   })).toBe(true);
   await page.evaluate(() => (window as unknown as { __releaseReferenceScan: () => void }).__releaseReferenceScan());
   await expect(page.locator('.gallery-thumb[title="shared.mp4"]').getByLabel('Attachment used in 2 chats')).toBeVisible();
-  await expect(page.getByText('Checking shared attachments…', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.gallery-reference-status')).toHaveCount(0);
   await expect(scanStatus).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to chat' }).click();
   await alice.hover();
@@ -749,8 +824,8 @@ test('shows gallery shared-video counts after scanning and blocks deleting their
 });
 
 for (const skipOwnership of [false, true]) {
-test(skipOwnership ? 'unlocks unchecked deletion while dependency detection is pending'
-  : 'keeps dependency detection after skipping sizes and explicitly overrides folder protection', async ({ page }) => {
+test(skipOwnership ? 'calculates sizes after skipping the shared check while dependency detection stays pending'
+  : 'keeps dependency detection before sizes and explicitly overrides folder protection', async ({ page }) => {
   await installArchive(page, 'facebook');
   await page.goto('');
   await page.evaluate(async () => {
@@ -769,21 +844,19 @@ test(skipOwnership ? 'unlocks unchecked deletion while dependency detection is p
       raw.messages[0].sticker = { uri: 'messages/stickers_used/shared.png' };
       const writer = await file.createWritable(); await writer.write(JSON.stringify(raw)); await writer.close();
     }
-    const file = await (await inbox.getDirectoryHandle('bob_chat')).getFileHandle('message_1.json');
-    const read = file.getFile.bind(file);
-    let textReads = 0;
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
-    file.getFile = async () => {
-      const result = await read();
-      const text = result.text.bind(result);
-      Object.defineProperty(result, 'text', { value: async () => {
-        if (++textReads > 1) await gate;
-        return text();
-      } });
-      return result;
+    let released = false;
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      postMessage(message: unknown, transfer: Transferable[] = []) {
+        const request = message as { type?: string; chatId?: string };
+        if (!released && request.type === 'file' && request.chatId === 'inbox/bob_chat') {
+          void gate.then(() => super.postMessage(message, transfer));
+        } else super.postMessage(message, transfer);
+      }
     };
-    Object.defineProperty(window, '__releaseReferenceScan', { value: release });
+    Object.defineProperty(window, '__releaseReferenceScan', { value: () => { released = true; release(); } });
   });
   await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
   const alice = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
@@ -801,12 +874,11 @@ test(skipOwnership ? 'unlocks unchecked deletion while dependency detection is p
   });
   await page.getByRole('button', { name: 'Delete chat' }).click();
   const dialog = page.getByRole('dialog', { name: 'Delete Chat', exact: true });
-  await expect(dialog.getByRole('button', { name: 'Skip check' })).toHaveCount(0);
-  await dialog.getByRole('button', { name: 'Skip calculation' }).click();
-  await expect(dialog.getByText('Checking shared attachments...', { exact: true })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Preparing...', exact: true })).toBeDisabled();
   const skipCheck = dialog.getByRole('button', { name: 'Skip check' });
   await expect(skipCheck).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Skip calculation' })).toHaveCount(0);
+  await expect(dialog.getByRole('status', { name: 'Deletion calculation progress' })).toContainText('Scanning for shared attachments');
+  await expect(dialog.getByRole('button', { name: 'Preparing...', exact: true })).toBeDisabled();
   const skipPosition = await skipCheck.evaluate(button => ({
     left: button.getBoundingClientRect().left,
     footerLeft: button.closest('.delete-actions')!.getBoundingClientRect().left,
@@ -814,7 +886,30 @@ test(skipOwnership ? 'unlocks unchecked deletion while dependency detection is p
   expect(skipPosition.left).toBeCloseTo(skipPosition.footerLeft, 0);
   await expect(dialog.getByRole('button', { name: 'Delete anyway' })).toHaveCount(0);
   if (skipOwnership) {
+    // Delay a size-only media read, independently of the held ownership worker.
+    await page.evaluate(async () => {
+      const root = (window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } }).__testArchives.facebook;
+      const photo = await (await (await root.getDirectoryHandle('inbox')).getDirectoryHandle('alice_chat')).getDirectoryHandle('photos');
+      const file = await photo.getFileHandle('photo.jpg');
+      const read = file.getFile.bind(file);
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      file.getFile = async () => { await gate; return read(); };
+      Object.defineProperty(window, '__releaseSizeCalculation', { value: release });
+    });
     await skipCheck.click();
+    const sizeProgress = dialog.getByRole('status', { name: 'Deletion calculation progress' });
+    await expect(sizeProgress).toContainText('Calculating chat sizes');
+    await expect(sizeProgress).not.toContainText('Folders/Subfolders Checked');
+    await expect(sizeProgress).not.toContainText('Scanning for shared attachments');
+    await expect(page.getByRole('status', { name: 'Shared attachment scan' })).toContainText('Folders/Subfolders Checked');
+    await expect(dialog.getByRole('button', { name: 'Skip check' })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Calculating sizes...' })).toBeDisabled();
+    await expect.poll(() => dialog.locator('.delete-card-body').evaluate(body => body.scrollHeight - body.clientHeight)).toBeLessThanOrEqual(1);
+    await dialog.getByRole('button', { name: 'Skip calculation' }).click();
+    await page.evaluate(() => (window as unknown as { __releaseSizeCalculation: () => void }).__releaseSizeCalculation());
+    await expect(sizeProgress).toHaveCount(0);
+    await expect.poll(() => dialog.locator('.delete-card-body').evaluate(body => body.scrollHeight - body.clientHeight)).toBeLessThanOrEqual(1);
     await expect(dialog.getByRole('alert')).toContainText('without checking dependencies');
     await expect(alice).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Delete permanently' })).toBeEnabled();
@@ -827,9 +922,7 @@ test(skipOwnership ? 'unlocks unchecked deletion while dependency detection is p
   await page.evaluate(() => (window as unknown as { __releaseReferenceScan: () => void }).__releaseReferenceScan());
   await expect(dialog.getByRole('list', { name: 'Chats depending on Alice Chat' })).toContainText('Bob Chat');
   await expect(dialog.getByRole('button', { name: 'Skip check' })).toHaveCount(0);
-  await expect(dialog.getByRole('button', { name: 'Check attachments' })).toBeVisible();
   await expect(dialog.getByText('inbox/bob_chat', { exact: true })).toBeVisible();
-  await expect(dialog.getByText('Skipped', { exact: true })).toHaveCount(4);
   await expect(dialog.getByRole('button', { name: 'Deletion blocked' })).toBeDisabled();
   const override = dialog.getByRole('button', { name: 'Delete anyway' });
   await expect(override).toHaveAccessibleDescription(/Other chats may lose attachments/);
@@ -845,7 +938,7 @@ test(skipOwnership ? 'unlocks unchecked deletion while dependency detection is p
   }
   await expect(alice).toHaveCount(0);
   const positions = await page.evaluate(() => (window as unknown as { __deleteActionPositions: Array<{ label: string; offset: number }> }).__deleteActionPositions);
-  expect(positions.some(position => position.label === 'Skip calculation')).toBe(true);
+  if (skipOwnership) expect(positions.some(position => position.label === 'Skip calculation')).toBe(true);
   expect(positions.some(position => position.label === 'Skip check')).toBe(true);
   if (!skipOwnership) expect(positions.some(position => position.label === 'Delete anyway')).toBe(true);
   expect(positions.every(position => Math.abs(position.offset) < 1)).toBe(true);
