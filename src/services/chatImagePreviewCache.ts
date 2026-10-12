@@ -1,4 +1,5 @@
 import type { MediaEntry } from '../types/messenger';
+import { withAttachmentPreviewPriority } from './attachmentScanScheduling';
 import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
 
 export type ChatImagePreviewFit = 'contain' | 'cover';
@@ -93,7 +94,7 @@ export class ChatImagePreviewCache {
     creator: PreviewCreator = createChatImagePreview,
   ) {
     this.maxSize = maxSize;
-    this.scheduler = new SubscribableTaskQueue(maxConcurrentJobs, creator);
+    this.scheduler = new SubscribableTaskQueue(maxConcurrentJobs, (request, signal) => withAttachmentPreviewPriority(() => creator(request, signal), signal));
   }
 
   subscribe(

@@ -1,4 +1,5 @@
 import type { MediaEntry } from '../types/messenger';
+import { withAttachmentPreviewPriority } from './attachmentScanScheduling';
 import { blobCache } from './blobCache';
 import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
 import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
@@ -44,7 +45,7 @@ export class VideoPosterCache {
     this.maxSize = maxSize;
     this.createPoster = createPoster;
     this.scheduler = new SubscribableTaskQueue(maxConcurrentJobs, (entry, signal) => (
-      this.generate(entry, signal)
+      withAttachmentPreviewPriority(() => this.generate(entry, signal), signal)
     ));
   }
 

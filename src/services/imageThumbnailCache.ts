@@ -1,4 +1,5 @@
 import type { MediaEntry } from '../types/messenger';
+import { withAttachmentPreviewPriority } from './attachmentScanScheduling';
 import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
 import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
 
@@ -26,7 +27,7 @@ export class ImageThumbnailCache {
     this.maxSize = maxSize;
     this.createThumbnail = createThumbnail;
     this.scheduler = new SubscribableTaskQueue(maxConcurrentJobs, (entry, signal) => (
-      this.generate(entry, signal)
+      withAttachmentPreviewPriority(() => this.generate(entry, signal), signal)
     ));
   }
 
