@@ -1,6 +1,7 @@
 import { getMessageAttachmentReferences } from '../media';
 import { parseMessengerExportJson } from './messengerExportParser';
 import type { ReadableDirectoryHandle } from '../../types/fileSystem';
+import type { CalculationProgress } from '../calculationProgress';
 import {
   getMessengerMediaBasename,
   getMessengerMediaIdentity,
@@ -31,7 +32,8 @@ async function collectMediaSizes(
   index: MediaSizeIndex,
   basenamePaths: Map<string, string>,
   ambiguousBasenames: Set<string>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onFileChecked?: () => void
 ): Promise<void> {
   let lastYield = performance.now();
 
@@ -62,9 +64,9 @@ async function collectMediaSizes(
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') throw error;
         /* ignore unreadable files */
-      }
+      } finally { onFileChecked?.(); }
     } else if (entry.kind === 'directory') {
-      await collectMediaSizes(entry, path, index, basenamePaths, ambiguousBasenames, signal);
+      await collectMediaSizes(entry, path, index, basenamePaths, ambiguousBasenames, signal, onFileChecked);
     }
 
     if (performance.now() - lastYield > 16) {
@@ -77,23 +79,28 @@ async function collectMediaSizes(
 
 export async function buildMessengerExportMediaSizeIndex(
   rootHandle: ReadableDirectoryHandle,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (progress: CalculationProgress) => void
 ): Promise<MediaSizeIndex> {
   const index: MediaSizeIndex = new Map();
   const basenamePaths = new Map<string, string>();
   const ambiguousBasenames = new Set<string>();
+  let done = 0;
+  const report = (finished = false) => onProgress?.({ stage: 'media-sizes', label: 'Calculating shared media sizes', done, total: finished ? done : undefined, unit: 'files' });
+  report();
 
   try {
     throwIfAborted(signal);
     const mediaHandle = await rootHandle.getDirectoryHandle('media');
     throwIfAborted(signal);
-    await collectMediaSizes(mediaHandle, 'media', index, basenamePaths, ambiguousBasenames, signal);
+    await collectMediaSizes(mediaHandle, 'media', index, basenamePaths, ambiguousBasenames, signal, () => { done++; report(); });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error;
     // A Messenger export may validly omit media when it contains only JSON.
   }
 
+  report(true);
   return index;
 }
 

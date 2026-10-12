@@ -36,13 +36,21 @@ async function containsFacebookConversations(handle: ReadableDirectoryHandle): P
 export async function resolveFacebookMessagesRoot(
   handle: ReadableDirectoryHandle
 ): Promise<ReadableDirectoryHandle | null> {
+  return (await resolveFacebookMessagesRootInfo(handle))?.handle || null;
+}
+
+export async function resolveFacebookMessagesRootInfo(
+  handle: ReadableDirectoryHandle
+): Promise<{ handle: ReadableDirectoryHandle; instagram: boolean } | null> {
   for (const path of FACEBOOK_MESSAGES_ROOT_PATHS) {
     try {
       let current = handle;
       for (const segment of path) {
         current = await current.getDirectoryHandle(segment);
       }
-      if (await containsFacebookConversations(current)) return current;
+      if (await containsFacebookConversations(current)) {
+        return { handle: current, instagram: path[0] === 'your_instagram_activity' || handle.name === 'your_instagram_activity' };
+      }
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
     }

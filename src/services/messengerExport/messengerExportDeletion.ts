@@ -1,6 +1,9 @@
 import type { ChatListEntry } from '../../types/messenger';
+import type { ChatDeletionBlockDetails } from '../../types/deletion';
+import type { CalculationProgress } from '../calculationProgress';
 import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../../types/fileSystem';
 import { mapWithConcurrency } from '../concurrency';
+import { getDeletableAttachmentIdentities } from '../attachmentReferenceIndex';
 import { classifyMessengerExportJson } from './messengerExportParser';
 import { buildMessengerExportMediaSizeIndex, type MediaSizeIndex } from './messengerExportSize';
 import {
@@ -25,6 +28,12 @@ export interface MessengerExportDeletionInfo {
   exclusiveMediaFiles: string[];
   exclusiveMediaCount: number;
   sharedMediaCount: number;
+  /** Shared Meta stickers are additional to media inside the chat folders. */
+  stickerCount?: number;
+  stickerSize?: number;
+  stickersPreservedForSafety?: boolean;
+  blockedChats?: ChatDeletionBlockDetails[];
+  deletableChatCount?: number;
 }
 
 export interface MessengerExportMediaDeletionTarget {
@@ -172,15 +181,8 @@ export function buildMessengerExportDeletionPlan(
     });
   }
 
-  const referencedMedia = new Set<string>();
-  for (const chat of chats) {
-    for (const identity of referenceIndex.chatMedia.get(chat.jsonFileName) || []) {
-      referencedMedia.add(identity);
-    }
-  }
-
   let totalMediaBytes = 0;
-  for (const identity of referencedMedia) {
+  for (const identity of getDeletableAttachmentIdentities(referenceIndex, new Set(selectedPositions.keys()))) {
     const owners = referenceIndex.mediaOwners.get(identity);
     if (!owners || owners.size === 0) continue;
     let targetPosition = -1;
@@ -355,7 +357,8 @@ export async function getMessengerExportDeletionInfo(
   entry: ChatListEntry,
   index: MessengerExportChatIndex | MessengerExportReferenceIndex,
   signal?: AbortSignal,
-  mediaSizeIndex?: MediaSizeIndex
+  mediaSizeIndex?: MediaSizeIndex,
+  onProgress?: (progress: CalculationProgress) => void
 ): Promise<MessengerExportDeletionInfo> {
   const jsonFileName = entry._jsonFileName!;
   const referenceIndex = getReferenceIndex(index);
@@ -364,8 +367,10 @@ export async function getMessengerExportDeletionInfo(
   throwIfAborted(signal);
   const resolvedMediaSizeIndex = mediaSizeIndex || await buildMessengerExportMediaSizeIndex(rootHandle, signal);
   throwIfAborted(signal);
+  onProgress?.({ stage: 'chat-data', label: 'Calculating chat data sizes', done: 0, total: 1, unit: 'chats' });
   const jsonSize = await getJsonSize(rootHandle, jsonFileName, chatIndex);
   throwIfAborted(signal);
+  onProgress?.({ stage: 'chat-data', label: 'Calculating chat data sizes', done: 1, total: 1, unit: 'chats' });
   const chatMedia = referenceIndex.chatMedia.get(jsonFileName) || new Set<string>();
   const plan = buildMessengerExportDeletionPlan([entry], index, resolvedMediaSizeIndex);
   const mediaFiles = plan.chats[0]?.mediaFiles || [];
@@ -391,7 +396,8 @@ export async function getMessengerExportBatchDeletionInfo(
   entries: ChatListEntry[],
   index: MessengerExportChatIndex | MessengerExportReferenceIndex,
   signal?: AbortSignal,
-  mediaSizeIndex?: MediaSizeIndex
+  mediaSizeIndex?: MediaSizeIndex,
+  onProgress?: (progress: CalculationProgress) => void
 ): Promise<MessengerExportDeletionInfo> {
   const referenceIndex = getReferenceIndex(index);
   const chatIndex = isMessengerExportChatIndex(index) ? index : undefined;
@@ -402,12 +408,15 @@ export async function getMessengerExportBatchDeletionInfo(
   const referencedMedia = new Set<string>();
   let jsonSize = 0;
   let chatFileCount = 0;
+  const report = () => onProgress?.({ stage: 'chat-data', label: 'Calculating chat data sizes', done: chatFileCount, total: entries.length, unit: 'chats' });
+  report();
 
   for (const entry of entries) {
     throwIfAborted(signal);
     const jsonFileName = entry._jsonFileName!;
     jsonSize += await getJsonSize(rootHandle, jsonFileName, chatIndex);
     chatFileCount++;
+    report();
     const chatMedia = referenceIndex.chatMedia.get(jsonFileName);
     if (!chatMedia) continue;
     for (const identity of chatMedia) referencedMedia.add(identity);

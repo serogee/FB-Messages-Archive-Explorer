@@ -6,6 +6,7 @@ import { chatImagePreviewCache } from './chatImagePreviewCache';
 import { chatVideoPosterCache, videoPosterCache } from './videoPosterCache';
 import { normalizeAttachmentPath } from './attachmentIdentity';
 import { readMp4MediaType } from './mp4MediaType';
+import { getSharedStickerFileName, isRemoteAttachmentPath } from './metaAttachmentPaths';
 
 
 function normalizeMediaPath(path: string): string {
@@ -81,6 +82,7 @@ export function addMediaToIndex(
 }
 
 export function isMediaReferenceFound(state: MediaState, path: string): boolean {
+  if (isRemoteAttachmentPath(path)) return false;
   const normalizedPath = normalizeMediaPath(path);
   const basename = getMediaBasename(path);
   return (
@@ -90,6 +92,7 @@ export function isMediaReferenceFound(state: MediaState, path: string): boolean 
 }
 
 export function findMediaFile(state: MediaState, path: string): MediaEntry | null {
+  if (isRemoteAttachmentPath(path)) return null;
   const normalizedPath = normalizeMediaPath(path);
   const basename = getMediaBasename(path);
   return state.lookup.get(normalizedPath) || state.basenameLookup.get(basename) || null;
@@ -263,14 +266,7 @@ export async function classifyChatMp4Attachments(
 }
 
 export function getFacebookStickerFileName(path: string): string | null {
-  const cleanPath = String(path || '').replace(/\\/g, '/').split(/[?#]/, 1)[0];
-  const parts = cleanPath.split('/').filter(Boolean);
-  const stickerDirectoryIndex = parts.findIndex(part => part.toLowerCase() === 'stickers_used');
-  if (stickerDirectoryIndex < 0 || stickerDirectoryIndex !== parts.length - 2) return null;
-
-  const fileName = parts[stickerDirectoryIndex + 1];
-  if (!fileName || !/\.(?:jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(fileName) || fileName === '.' || fileName === '..') return null;
-  return fileName;
+  return getSharedStickerFileName(String(path || ''));
 }
 
 export async function processFacebookStickerReferences(
