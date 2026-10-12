@@ -3,8 +3,14 @@ import { mapWithConcurrency } from './concurrency';
 import { getDeletableAttachmentIdentities } from './attachmentReferenceIndex';
 import type { MetaAttachmentReferenceIndex } from './metaAttachmentReferences';
 import type { CalculationProgress } from './calculationProgress';
+import { buildMetaAttachmentReferenceIndex } from './metaAttachmentReferences';
+import type { MetaArchivePlatform } from './metaAttachmentPaths';
 
-export { buildMetaAttachmentReferenceIndex as buildFacebookStickerReferenceIndex } from './metaAttachmentReferences';
+/** The Facebook-specific entry point explicitly supplies the known platform. */
+export function buildFacebookStickerReferenceIndex(root: ReadableDirectoryHandle, signal?: AbortSignal,
+  platform: MetaArchivePlatform | boolean = 'facebook', onProgress?: (progress: CalculationProgress) => void) {
+  return buildMetaAttachmentReferenceIndex(root, signal, platform, onProgress);
+}
 export { getMetaChatId as getFacebookChatId, getSharedStickerFileName, getSharedStickerIdentity } from './metaAttachmentPaths';
 export type FacebookStickerReferenceIndex = MetaAttachmentReferenceIndex;
 
@@ -23,7 +29,7 @@ export async function getFacebookStickerDeletionTargets(
   if (!index.deletionSupported) return [];
   const identities = getDeletableAttachmentIdentities(index, chatIds).filter(identity => identity.startsWith('stickers_used/'));
   let done = 0;
-  const report = () => onProgress?.({ stage: 'stickers', label: 'Calculating shared sticker sizes', done, total: identities.length, unit: 'files' });
+  const report = () => onProgress?.({ stage: 'stickers', label: 'Calculating chat sizes', done, total: identities.length, unit: 'files' });
   report();
   if (identities.length === 0) return [];
   let directory: ReadableDirectoryHandle;

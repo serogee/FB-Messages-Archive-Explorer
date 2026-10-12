@@ -1,5 +1,7 @@
 import type { ChatListEntry } from '../types/messenger';
 
+export type MetaArchivePlatform = 'facebook' | 'instagram' | 'unknown';
+
 const CHAT_SECTIONS = /^(?:inbox|archived_threads|message_requests|e2ee_cutover|filtered_threads)\//i;
 
 export function isRemoteAttachmentPath(path: string): boolean {

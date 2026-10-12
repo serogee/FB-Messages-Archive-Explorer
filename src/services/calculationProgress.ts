@@ -7,6 +7,9 @@ export interface CalculationProgress {
   total?: number;
   unit: 'files' | 'chats' | 'folders';
   detail?: string;
+  /** Meta discovery totals also accompany physical shared-file verification. */
+  jsonFound?: number;
+  foldersChecked?: number;
 }
 
 /** Publish progress locally; archive/chat components do not need to rerender. */

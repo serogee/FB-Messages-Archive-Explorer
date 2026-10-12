@@ -44,7 +44,7 @@ describe('Meta conversation discovery', () => {
     const readNestedPayload = vi.spyOn(await (await files.getDirectoryHandle('nested')).getFileHandle('conversation.json'), 'getFile');
     const unreadable = await (await chat.getDirectoryHandle('photos')).getFileHandle('unreadable.json');
     const readAttachment = vi.spyOn(unreadable, 'getFile').mockRejectedValue(new Error('Unreadable attachment'));
-    const index = await buildMetaAttachmentReferenceIndex(root);
+    const index = await buildMetaAttachmentReferenceIndex(root, undefined, 'facebook');
 
     expect(index.complete).toBe(true);
     expect(index.warnings).toEqual([]);
@@ -97,21 +97,18 @@ describe('Meta conversation discovery', () => {
     expect(plan.blocked[0].kind).toBe('unverified');
   });
 
-  it('updates discovery counts while walking entries without more conversation JSON', async () => {
+  it('reports folder and JSON counts without adding ordinary media entries to JSON discovery', async () => {
     const extra = Object.fromEntries(Array.from({ length: 160 }, (_, number) => [`entry_${number}.txt`, 'data']));
     const root = createMockDirectoryHandle('messages', { inbox: { a: {
       'message_1.json': conversation(), extra,
     } } });
     const progress: CalculationProgress[] = [];
     await buildMetaAttachmentReferenceIndex(root, undefined, true, update => progress.push(update));
-    const walkingEntries = progress.filter(update => update.stage === 'ownership'
-      && update.detail?.startsWith('1 JSON files checked') && update.done === 3);
-
-    expect(walkingEntries.length).toBeGreaterThan(1);
-    expect(new Set(walkingEntries.map(update => update.detail)).size).toBeGreaterThan(1);
+    expect(progress.some(update => update.done === 2 && update.jsonFound === 1)).toBe(true);
+    expect(progress.every(update => update.detail === undefined)).toBe(true);
     expect(progress.at(-1)).toMatchObject({
-      stage: 'ownership', label: 'Scanning chat folders', unit: 'folders', done: 4, total: 4,
-      detail: '1 JSON files checked · 164 entries discovered',
+      stage: 'ownership', label: 'Scanning for shared attachments', unit: 'folders', done: 4, total: 4,
+      jsonFound: 1,
     });
   });
 });
