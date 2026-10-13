@@ -8,7 +8,14 @@ import { EnableDeletionModal } from '../Modals/EnableDeletionModal';
 import { ShortcutsModal } from '../Modals/ShortcutsModal';
 import { FilenamePlaceholdersModal } from '../Modals/FilenamePlaceholdersModal';
 import { DisableOfflineModal } from '../Modals/DisableOfflineModal';
-import { Braces, ChevronUp, ChevronDown, ChevronRight, Info, Keyboard } from 'lucide-react';
+import {
+    Braces,
+    ChevronUp,
+    ChevronDown,
+    ChevronRight,
+    Info,
+    Keyboard,
+} from 'lucide-react';
 import { DEFAULT_ATTACHMENT_FILENAME_TEMPLATE } from '../../services/saveAttachments';
 import { disableOfflineSupport } from '../../services/pwa';
 import { useReactionContext } from '../../hooks/useReactionFeature';
@@ -19,463 +26,810 @@ import { ConsistencyDetailsModal } from '../Modals/ConsistencyDetailsModal';
 import { ReactionNoticesInfoModal } from '../Modals/ReactionNoticesInfoModal';
 
 interface SettingsPanelProps {
-  settings: Settings;
-  setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
-  chatData?: MessengerThread | null;
-  selectedPerspective: string;
-  setSelectedPerspective: (name: string) => void;
-  onOpenFolder: () => Promise<void>;
-  rootHandle: ReadableDirectoryHandle | null;
-  onAttachmentBookmarkingChange: (enabled: boolean) => Promise<boolean>;
-  chatEntries: ChatListEntry[];
-  onSelectChat: (entry: ChatListEntry) => Promise<void>;
+    settings: Settings;
+    setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+    chatData?: MessengerThread | null;
+    selectedPerspective: string;
+    setSelectedPerspective: (name: string) => void;
+    onOpenFolder: () => Promise<void>;
+    rootHandle: ReadableDirectoryHandle | null;
+    onAttachmentBookmarkingChange: (enabled: boolean) => Promise<boolean>;
+    chatEntries: ChatListEntry[];
+    onSelectChat: (entry: ChatListEntry) => Promise<void>;
 }
 
-function ToggleRow({ id, label, checked, onChange, disabled }: {
-  id: string; label: string; checked: boolean; onChange: (val: boolean) => void; disabled?: boolean;
+function ToggleRow({
+    id,
+    label,
+    checked,
+    onChange,
+    disabled,
+}: {
+    id: string;
+    label: string;
+    checked: boolean;
+    onChange: (val: boolean) => void;
+    disabled?: boolean;
 }) {
-  return (
-    <div className="settings-row">
-      <label htmlFor={id}>{label}</label>
-      <label className="switch">
-        <input
-          type="checkbox"
-          id={id}
-          checked={checked}
-          onChange={e => onChange(e.target.checked)}
-          disabled={disabled}
-        />
-        <span className="slider" />
-      </label>
-    </div>
-  );
+    return (
+        <div className="settings-row">
+            <label htmlFor={id}>{label}</label>
+            <label className="switch">
+                <input
+                    type="checkbox"
+                    id={id}
+                    checked={checked}
+                    onChange={(e) => onChange(e.target.checked)}
+                    disabled={disabled}
+                />
+                <span className="slider" />
+            </label>
+        </div>
+    );
 }
 
 function PerspectiveDropdown({
-  participants,
-  selectedPerspective,
-  setSelectedPerspective,
+    participants,
+    selectedPerspective,
+    setSelectedPerspective,
 }: {
-  participants: string[];
-  selectedPerspective: string;
-  setSelectedPerspective: (name: string) => void;
+    participants: string[];
+    selectedPerspective: string;
+    setSelectedPerspective: (name: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState('');
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+    const [open, setOpen] = useState(false);
+    const [filter, setFilter] = useState('');
+    const wrapRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
 
-  const filtered = filter.trim()
-    ? participants.filter(p => p.toLowerCase().includes(filter.toLowerCase()))
-    : participants;
+    const filtered = filter.trim()
+        ? participants.filter((p) =>
+              p.toLowerCase().includes(filter.toLowerCase()),
+          )
+        : participants;
 
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+    useEffect(() => {
+        if (!open) return;
+        const handler = (e: MouseEvent) => {
+            if (
+                wrapRef.current &&
+                !wrapRef.current.contains(e.target as Node)
+            ) {
+                setOpen(false);
+                setFilter('');
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [open]);
+
+    const select = (name: string) => {
+        setSelectedPerspective(name);
         setOpen(false);
         setFilter('');
-      }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
 
-  const select = (name: string) => {
-    setSelectedPerspective(name);
-    setOpen(false);
-    setFilter('');
-  };
-
-  return (
-    <div className="perspective-dropdown-wrap" ref={wrapRef}>
-      <button
-        className="perspective-dropdown-btn"
-        onClick={() => { setOpen(v => !v); setTimeout(() => inputRef.current?.focus(), 30); }}
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-      >
-        <span className="perspective-dropdown-value">
-          {selectedPerspective || 'Select...'}
-        </span>
-        <span className="perspective-dropdown-arrow">
-          {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </span>
-      </button>
-      {open && (
-        <div className="perspective-dropdown-list" role="listbox">
-          <input
-            ref={inputRef}
-            className="perspective-dropdown-search"
-            type="text"
-            placeholder="Search..."
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Escape') { setOpen(false); setFilter(''); }
-              if (e.key === 'Enter' && filtered.length === 1) select(filtered[0]);
-            }}
-          />
-          {filtered.length === 0 && (
-            <div className="perspective-dropdown-empty">No match</div>
-          )}
-          {filtered.map(name => (
+    return (
+        <div className="perspective-dropdown-wrap" ref={wrapRef}>
             <button
-              key={name}
-              className={`perspective-dropdown-item${name === selectedPerspective ? ' active' : ''}`}
-              onClick={() => select(name)}
-              role="option"
-              aria-selected={name === selectedPerspective}
+                className="perspective-dropdown-btn"
+                onClick={() => {
+                    setOpen((v) => !v);
+                    setTimeout(() => inputRef.current?.focus(), 30);
+                }}
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={open}
             >
-              {name}
+                <span className="perspective-dropdown-value">
+                    {selectedPerspective || 'Select...'}
+                </span>
+                <span className="perspective-dropdown-arrow">
+                    {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </span>
             </button>
-          ))}
+            {open && (
+                <div className="perspective-dropdown-list" role="listbox">
+                    <input
+                        ref={inputRef}
+                        className="perspective-dropdown-search"
+                        type="text"
+                        placeholder="Search..."
+                        value={filter}
+                        onChange={(e) => setFilter(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                                setOpen(false);
+                                setFilter('');
+                            }
+                            if (e.key === 'Enter' && filtered.length === 1)
+                                select(filtered[0]);
+                        }}
+                    />
+                    {filtered.length === 0 && (
+                        <div className="perspective-dropdown-empty">
+                            No match
+                        </div>
+                    )}
+                    {filtered.map((name) => (
+                        <button
+                            key={name}
+                            className={`perspective-dropdown-item${name === selectedPerspective ? ' active' : ''}`}
+                            onClick={() => select(name)}
+                            role="option"
+                            aria-selected={name === selectedPerspective}
+                        >
+                            {name}
+                        </button>
+                    ))}
+                </div>
+            )}
         </div>
-      )}
-    </div>
-  );
+    );
 }
 
 export function SettingsPanel({
-  settings, setSetting,
-  chatData: providedThread, selectedPerspective, setSelectedPerspective,
-  onOpenFolder, rootHandle,
-  onAttachmentBookmarkingChange,
-  chatEntries, onSelectChat,
+    settings,
+    setSetting,
+    chatData: providedThread,
+    selectedPerspective,
+    setSelectedPerspective,
+    onOpenFolder,
+    rootHandle,
+    onAttachmentBookmarkingChange,
+    chatEntries,
+    onSelectChat,
 }: SettingsPanelProps) {
-  const chatData = useThreadData(providedThread);
-  const participants = getParticipantNames(chatData);
-  const reactionFeature = useReactionContext();
-  const fsSupported = isFileSystemAccessSupported();
-  const [showEnableModal, setShowEnableModal] = useState(false);
-  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
-  const [showFilenamePlaceholdersModal, setShowFilenamePlaceholdersModal] = useState(false);
-  const [bookmarkPermissionError, setBookmarkPermissionError] = useState(false);
-  const [showDisableOfflineModal, setShowDisableOfflineModal] = useState(false);
-  const [consistencyDetails, setConsistencyDetails] = useState<'inconsistent' | 'unmatched' | null>(null);
-  const [showReactionNoticesInfo, setShowReactionNoticesInfo] = useState(false);
-  const [offlineSupportBusy, setOfflineSupportBusy] = useState(false);
-  const [offlineSupportError, setOfflineSupportError] = useState<string | null>(null);
-  const consistencyChats = useMemo(() => {
-    const entries = new Map(chatEntries.map(entry => [reactionConversationId(entry.source, entry.folderName), entry]));
-    const resolve = (issues: typeof reactionFeature.consistency.inconsistentChats) => issues.flatMap(issue => {
-      const entry = entries.get(issue.id);
-      return entry ? [{ entry, issue }] : [];
-    });
-    return { inconsistent: resolve(reactionFeature.consistency.inconsistentChats), unmatched: resolve(reactionFeature.consistency.unmatchedChats) };
-  }, [chatEntries, reactionFeature.consistency.inconsistentChats, reactionFeature.consistency.unmatchedChats]);
-  const consistencyPercent = reactionFeature.consistency.notices
-    ? `${((reactionFeature.consistency.candidates || 0) / reactionFeature.consistency.notices * 100).toFixed(1)}%`
-    : null;
+    const chatData = useThreadData(providedThread);
+    const participants = getParticipantNames(chatData);
+    const reactionFeature = useReactionContext();
+    const fsSupported = isFileSystemAccessSupported();
+    const [showEnableModal, setShowEnableModal] = useState(false);
+    const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+    const [showFilenamePlaceholdersModal, setShowFilenamePlaceholdersModal] =
+        useState(false);
+    const [bookmarkPermissionError, setBookmarkPermissionError] =
+        useState(false);
+    const [showDisableOfflineModal, setShowDisableOfflineModal] =
+        useState(false);
+    const [consistencyDetails, setConsistencyDetails] = useState<
+        'inconsistent' | 'unmatched' | null
+    >(null);
+    const [showReactionNoticesInfo, setShowReactionNoticesInfo] =
+        useState(false);
+    const [offlineSupportBusy, setOfflineSupportBusy] = useState(false);
+    const [offlineSupportError, setOfflineSupportError] = useState<
+        string | null
+    >(null);
+    const consistencyChats = useMemo(() => {
+        const entries = new Map(
+            chatEntries.map((entry) => [
+                reactionConversationId(entry.source, entry.folderName),
+                entry,
+            ]),
+        );
+        const resolve = (
+            issues: typeof reactionFeature.consistency.inconsistentChats,
+        ) =>
+            issues.flatMap((issue) => {
+                const entry = entries.get(issue.id);
+                return entry ? [{ entry, issue }] : [];
+            });
+        return {
+            inconsistent: resolve(
+                reactionFeature.consistency.inconsistentChats,
+            ),
+            unmatched: resolve(reactionFeature.consistency.unmatchedChats),
+        };
+    }, [
+        chatEntries,
+        reactionFeature.consistency.inconsistentChats,
+        reactionFeature.consistency.unmatchedChats,
+    ]);
+    const consistencyPercent = reactionFeature.consistency.notices
+        ? `${(((reactionFeature.consistency.candidates || 0) / reactionFeature.consistency.notices) * 100).toFixed(1)}%`
+        : null;
 
-  const handleDeletionToggle = (val: boolean) => {
-    if (val) {
-      // Always require explicit confirmation before enabling
-      setShowEnableModal(true);
-    } else {
-      setSetting('deletionEnabled', false as Settings['deletionEnabled']);
-    }
-  };
+    const handleDeletionToggle = (val: boolean) => {
+        if (val) {
+            // Always require explicit confirmation before enabling
+            setShowEnableModal(true);
+        } else {
+            setSetting('deletionEnabled', false as Settings['deletionEnabled']);
+        }
+    };
 
-  const handleBookmarkingToggle = async (val: boolean) => {
-    setBookmarkPermissionError(false);
-    try {
-      const changed = await onAttachmentBookmarkingChange(val);
-      if (!changed && val) setBookmarkPermissionError(true);
-    } catch {
-      if (val) setBookmarkPermissionError(true);
-    }
-  };
+    const handleBookmarkingToggle = async (val: boolean) => {
+        setBookmarkPermissionError(false);
+        try {
+            const changed = await onAttachmentBookmarkingChange(val);
+            if (!changed && val) setBookmarkPermissionError(true);
+        } catch {
+            if (val) setBookmarkPermissionError(true);
+        }
+    };
 
-  const handleOfflineSupportToggle = (enabled: boolean) => {
-    setOfflineSupportError(null);
-    if (!enabled) {
-      setShowDisableOfflineModal(true);
-      return;
-    }
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      setOfflineSupportError('Reconnect to enable offline support.');
-      return;
-    }
-    setSetting('offlineSupportEnabled', true);
-  };
+    const handleOfflineSupportToggle = (enabled: boolean) => {
+        setOfflineSupportError(null);
+        if (!enabled) {
+            setShowDisableOfflineModal(true);
+            return;
+        }
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            setOfflineSupportError('Reconnect to enable offline support.');
+            return;
+        }
+        setSetting('offlineSupportEnabled', true);
+    };
 
-  const handleDisableOfflineSupport = async () => {
-    setOfflineSupportBusy(true);
-    setOfflineSupportError(null);
-    setSetting('offlineSupportEnabled', false);
-    try {
-      await disableOfflineSupport();
-      setShowDisableOfflineModal(false);
-    } catch (error) {
-      console.error('Failed to disable offline support:', error);
-      setSetting('offlineSupportEnabled', true);
-      setOfflineSupportError('Offline support could not be disabled. Try again.');
-    } finally {
-      setOfflineSupportBusy(false);
-    }
-  };
+    const handleDisableOfflineSupport = async () => {
+        setOfflineSupportBusy(true);
+        setOfflineSupportError(null);
+        setSetting('offlineSupportEnabled', false);
+        try {
+            await disableOfflineSupport();
+            setShowDisableOfflineModal(false);
+        } catch (error) {
+            console.error('Failed to disable offline support:', error);
+            setSetting('offlineSupportEnabled', true);
+            setOfflineSupportError(
+                'Offline support could not be disabled. Try again.',
+            );
+        } finally {
+            setOfflineSupportBusy(false);
+        }
+    };
 
-  return (
-    <div className="sidebar-scroll-region settings-scroll-region">
-      <div className="settings-section messages-folder-settings">
-        <strong>Messages Folder</strong>
-        {rootHandle ? (
-          <div className="folder-display-container">
-            <div className="folder-path-display" title={rootHandle.name}>
-              <span className="folder-path-prefix">…/</span>
-              <span className="folder-path-name">{rootHandle.name}</span>
-            </div>
-            <button className="btn btn-secondary" onClick={onOpenFolder} style={{ flexShrink: 0, padding: '4px 8px', fontSize: '13px' }}>
-              Change
-            </button>
-          </div>
-        ) : (
-          <button className="btn btn-primary folder-select-button" onClick={onOpenFolder} style={{ marginTop: 4 }}>
-            <span className="folder-select-label-long">Select messages folder</span>
-            <span className="folder-select-label-short">Select folder</span>
-          </button>
-        )}
-      </div>
-
-      {chatData && participants.length > 0 && (
-        <div className="settings-section">
-          <strong>View perspective</strong>
-          <PerspectiveDropdown
-            participants={participants}
-            selectedPerspective={selectedPerspective}
-            setSelectedPerspective={setSelectedPerspective}
-          />
-          <span id="tips" className="footer">Messages from the selected participant appear on the right side as "me".</span>
-        </div>
-      )}
-
-      <div className="settings-section">
-        <div className="settings-section-heading"><strong>Reaction notices</strong><button type="button" className="settings-info-button" aria-label="Open reaction notices information" onClick={() => setShowReactionNoticesInfo(true)}><Info size={17} /></button></div>
-        <ToggleRow id="hideLikelyReactionNotices" label="Hide reaction notices" checked={settings.hideLikelyReactionNotices} disabled={!reactionFeature.applicable} onChange={v => setSetting('hideLikelyReactionNotices', v)} />
-        <label htmlFor="reactionTimestampGuessingMode">Reaction timestamp matching</label>
-        <ReactionGuessingDropdown value={settings.reactionTimestampGuessingMode} onChange={v => setSetting('reactionTimestampGuessingMode', v)} disabled={!reactionFeature.applicable} />
-        {!reactionFeature.applicable ? <p className="browser-notice">Does not apply to this Messenger export.</p> : <>
-          <div className="reaction-guessing-status">
-            <p className="browser-notice" role="status">{settings.reactionTimestampGuessingMode === 'off' ? reactionFeature.hasCache ? 'Guesses cached' : 'No guesses cached' : reactionFeature.status === 'ready' ? 'Guesses Available' : reactionFeature.reason || (reactionFeature.status === 'checking' ? 'Checking reaction notices…' : 'Select a Facebook or Instagram export.')}</p>
-            {settings.reactionTimestampGuessingMode === 'off'
-              ? <button type="button" className="btn btn-secondary reaction-refresh-control" onClick={reactionFeature.clear} disabled={!reactionFeature.canClear}>Clear</button>
-              : ['checking', 'failed', 'unavailable', 'ready'].includes(reactionFeature.status) && <button type="button" className="btn btn-secondary reaction-refresh-control" onClick={reactionFeature.retry}>Refresh</button>}
-          </div>
-          <div className="reaction-guessing-status">
-            <p className="browser-notice">Full archive consistency check</p>
-            {reactionFeature.consistency.status === 'checking'
-              ? <button type="button" className="btn btn-secondary reaction-refresh-control" onClick={reactionFeature.cancelArchiveCheck}>Cancel</button>
-              : <button type="button" className="btn btn-secondary reaction-refresh-control" onClick={reactionFeature.checkArchive} disabled={!reactionFeature.canCheckArchive}>{reactionFeature.consistency.status === 'idle' ? 'Check archive' : 'Check again'}</button>}
-          </div>
-          {reactionFeature.consistency.status !== 'idle' && <p className="browser-notice" role="status">{reactionFeature.consistency.status === 'checking' ? 'Full archive consistency check running. ' : consistencyPercent ? `Full archive consistency check: ${consistencyPercent} passed. ` : 'Full archive consistency check was inconclusive. '}{reactionFeature.consistency.reason}</p>}
-          {reactionFeature.consistency.status === 'inconsistent' && <>
-            <button type="button" className="settings-shortcuts-btn" onClick={() => setConsistencyDetails('inconsistent')}>
-              <span>View inconsistent matches</span>
-              <ChevronRight size={16} />
-            </button>
-          </>}
-          {reactionFeature.consistency.status !== 'checking' && reactionFeature.consistency.unmatchedChats.length > 0 && <button type="button" className="settings-shortcuts-btn" onClick={() => setConsistencyDetails('unmatched')}>
-            <span>View chats with unmatched notices</span>
-            <ChevronRight size={16} />
-          </button>}
-        </>}
-      </div>
-
-      <div className="settings-section">
-        <strong>Customization</strong>
-        <ToggleRow id="darkModeToggle" label="Dark mode" checked={settings.darkMode} onChange={v => setSetting('darkMode', v as Settings['darkMode'])} />
-        <ToggleRow id="showMyNameToggle" label="Show my name" checked={settings.showMyName} onChange={v => setSetting('showMyName', v as Settings['showMyName'])} />
-        <ToggleRow id="showTheirNameToggle" label="Show their names" checked={settings.showTheirName} onChange={v => setSetting('showTheirName', v as Settings['showTheirName'])} />
-        <ToggleRow id="showReactionsToggle" label="Show reactions" checked={settings.showReactions} onChange={v => setSetting('showReactions', v as Settings['showReactions'])} />
-        <ToggleRow id="autoCollapseDateNavToggle" label="Auto-collapse date navigator" checked={settings.autoCollapseDateNav} onChange={v => setSetting('autoCollapseDateNav', v as Settings['autoCollapseDateNav'])} />
-      </div>
-
-      <div className="settings-section">
-        <strong>Offline Use</strong>
-        <ToggleRow
-          id="offlineSupportEnabledToggle"
-          label="Keep app available offline"
-          checked={settings.offlineSupportEnabled}
-          onChange={handleOfflineSupportToggle}
-          disabled={offlineSupportBusy}
-        />
-        <p className="deletion-info">
-          Stores only the app files and chat parsers. Messages and attachments are not stored in the app cache.
-        </p>
-        {offlineSupportError && <p className="browser-notice">{offlineSupportError}</p>}
-      </div>
-
-      <div className="settings-section">
-        <strong>Downloads</strong>
-        <ToggleRow
-          id="dateAttachmentFilenamesToggle"
-          label="Name attachments by message date and time"
-          checked={settings.dateAttachmentFilenames}
-          onChange={v => setSetting('dateAttachmentFilenames', v as Settings['dateAttachmentFilenames'])}
-        />
-        {settings.dateAttachmentFilenames && (
-          <>
-            <label className="filename-template-label" htmlFor="attachmentFilenameTemplate">Filename template</label>
-            <div className="filename-template-row">
-              <input
-                id="attachmentFilenameTemplate"
-                className="filename-template-input"
-                type="text"
-                maxLength={200}
-                value={settings.attachmentFilenameTemplate}
-                placeholder={DEFAULT_ATTACHMENT_FILENAME_TEMPLATE}
-                onChange={event => setSetting(
-                  'attachmentFilenameTemplate',
-                  event.target.value
-                    .replace(/\.?\{ext\}/g, '')
-                    .replace(/[^\p{L}\p{N}\s{}_-]/gu, '') as Settings['attachmentFilenameTemplate']
+    return (
+        <div className="sidebar-scroll-region settings-scroll-region">
+            <div className="settings-section messages-folder-settings">
+                <strong>Messages Folder</strong>
+                {rootHandle ? (
+                    <div className="folder-display-container">
+                        <div
+                            className="folder-path-display"
+                            title={rootHandle.name}
+                        >
+                            <span className="folder-path-prefix">…/</span>
+                            <span className="folder-path-name">
+                                {rootHandle.name}
+                            </span>
+                        </div>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={onOpenFolder}
+                            style={{
+                                flexShrink: 0,
+                                padding: '4px 8px',
+                                fontSize: '13px',
+                            }}
+                        >
+                            Change
+                        </button>
+                    </div>
+                ) : (
+                    <button
+                        className="btn btn-primary folder-select-button"
+                        onClick={onOpenFolder}
+                        style={{ marginTop: 4 }}
+                    >
+                        <span className="folder-select-label-long">
+                            Select messages folder
+                        </span>
+                        <span className="folder-select-label-short">
+                            Select folder
+                        </span>
+                    </button>
                 )}
-                spellCheck={false}
-              />
-              <span className="filename-template-extension">.{'{ext}'}</span>
-              <button
-                type="button"
-                className="btn btn-secondary filename-template-reset"
-                onClick={() => setSetting('attachmentFilenameTemplate', DEFAULT_ATTACHMENT_FILENAME_TEMPLATE as Settings['attachmentFilenameTemplate'])}
-                disabled={settings.attachmentFilenameTemplate === DEFAULT_ATTACHMENT_FILENAME_TEMPLATE}
-              >
-                Reset
-              </button>
             </div>
-            <button className="settings-shortcuts-btn filename-placeholders-btn" onClick={() => setShowFilenamePlaceholdersModal(true)}>
-              <Braces size={17} />
-              <span>Filename placeholders</span>
-              <ChevronRight size={16} />
-            </button>
-            <ToggleRow
-              id="longAttachmentFilenamesToggle"
-              label="Enable long filenames"
-              checked={settings.longAttachmentFilenames}
-              onChange={v => setSetting('longAttachmentFilenames', v as Settings['longAttachmentFilenames'])}
-            />
-            <p className="browser-notice">
-              Names are normalized and stripped of unsupported symbols. The maximum is {settings.longAttachmentFilenames ? '180' : '100'} characters including the extension.
-            </p>
-          </>
-        )}
-      </div>
 
-      <div className="settings-section">
-        <strong>Help</strong>
-        <button className="settings-shortcuts-btn" onClick={() => setShowShortcutsModal(true)}>
-          <Keyboard size={17} />
-          <span>Keyboard shortcuts</span>
-          <ChevronRight size={16} />
-        </button>
-      </div>
-
-      <div className="settings-section">
-        <strong>Bookmarking</strong>
-        {!fsSupported ? (
-          <>
-            <ToggleRow id="attachmentBookmarkingEnabledToggle" label="Enable bookmarking" checked={false} onChange={() => {}} disabled={true} />
-            <p className="browser-notice">Only available in Chromium-based browsers (Chrome, Edge, Brave).</p>
-          </>
-        ) : (
-          <>
-            <ToggleRow
-              id="attachmentBookmarkingEnabledToggle"
-              label="Enable bookmarking"
-              checked={settings.attachmentBookmarkingEnabled}
-              onChange={handleBookmarkingToggle}
-            />
-            <p className="deletion-info">
-              Saves attachment and link bookmarks, plus pinned chats, to <code>fb-mae/bookmarks.json</code> inside the messages folder.
-              Existing <code>selected_messages</code> data is migrated automatically when the folder is opened with Bookmarking enabled.
-              Existing bookmarks are kept when this feature is disabled.
-              {!rootHandle && settings.attachmentBookmarkingEnabled && ' Write access will be requested when you open a folder.'}
-            </p>
-            {bookmarkPermissionError && (
-              <p className="browser-notice">Write access is required to enable attachment bookmarking.</p>
+            {chatData && participants.length > 0 && (
+                <div className="settings-section">
+                    <strong>View perspective</strong>
+                    <PerspectiveDropdown
+                        participants={participants}
+                        selectedPerspective={selectedPerspective}
+                        setSelectedPerspective={setSelectedPerspective}
+                    />
+                    <span id="tips" className="footer">
+                        Messages from the selected participant appear on the
+                        right side as "me".
+                    </span>
+                </div>
             )}
-          </>
-        )}
-      </div>
 
-      <div className="settings-section">
-        <strong>Chat Deletion</strong>
-        {!fsSupported ? (
-          <>
-            <ToggleRow id="deletionEnabledToggle" label="Enable chat deletion" checked={false} onChange={() => {}} disabled={true} />
-            <p className="browser-notice">Only available in Chromium-based browsers (Chrome, Edge, Brave).</p>
-          </>
-        ) : (
-          <>
-            <ToggleRow id="deletionEnabledToggle" label="Enable chat deletion" checked={settings.deletionEnabled} onChange={handleDeletionToggle} />
-            <p className="deletion-info">
-              When enabled, a <em>Delete chat</em> option appears on each conversation.
-              {' '}Shared attachments are checked and cross-chat usage counts appear while deletion is enabled.
-              {' '}Disabling deletion clears those counts; enabling it again starts a fresh check.
-              This removes the chat folder — including all messages, photos, videos, and audio —
-              permanently from your device storage. <strong>Once deleted, the files cannot be recovered.</strong>
-              {!rootHandle && settings.deletionEnabled && ' Write access will be requested when you open a folder.'}
-            </p>
-          </>
-        )}
-      </div>
+            <div className="settings-section">
+                <div className="settings-section-heading">
+                    <strong>Reaction notices</strong>
+                    <button
+                        type="button"
+                        className="settings-info-button"
+                        aria-label="Open reaction notices information"
+                        onClick={() => setShowReactionNoticesInfo(true)}
+                    >
+                        <Info size={17} />
+                    </button>
+                </div>
+                <ToggleRow
+                    id="hideLikelyReactionNotices"
+                    label="Hide reaction notices"
+                    checked={settings.hideLikelyReactionNotices}
+                    disabled={!reactionFeature.applicable}
+                    onChange={(v) => setSetting('hideLikelyReactionNotices', v)}
+                />
+                <label htmlFor="reactionTimestampGuessingMode">
+                    Reaction timestamp matching
+                </label>
+                <ReactionGuessingDropdown
+                    value={settings.reactionTimestampGuessingMode}
+                    onChange={(v) =>
+                        setSetting('reactionTimestampGuessingMode', v)
+                    }
+                    disabled={!reactionFeature.applicable}
+                />
+                {!reactionFeature.applicable ? (
+                    <p className="browser-notice">
+                        Does not apply to this Messenger export.
+                    </p>
+                ) : (
+                    <>
+                        <div className="reaction-guessing-status">
+                            <p className="browser-notice" role="status">
+                                {settings.reactionTimestampGuessingMode ===
+                                'off'
+                                    ? reactionFeature.hasCache
+                                        ? 'Guesses cached'
+                                        : 'No guesses cached'
+                                    : reactionFeature.status === 'ready'
+                                      ? 'Guesses Available'
+                                      : reactionFeature.reason ||
+                                        (reactionFeature.status === 'checking'
+                                            ? 'Checking reaction notices…'
+                                            : 'Select a Facebook or Instagram export.')}
+                            </p>
+                            {settings.reactionTimestampGuessingMode ===
+                            'off' ? (
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary reaction-refresh-control"
+                                    onClick={reactionFeature.clear}
+                                    disabled={!reactionFeature.canClear}
+                                >
+                                    Clear
+                                </button>
+                            ) : (
+                                [
+                                    'checking',
+                                    'failed',
+                                    'unavailable',
+                                    'ready',
+                                ].includes(reactionFeature.status) && (
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary reaction-refresh-control"
+                                        onClick={reactionFeature.retry}
+                                    >
+                                        Refresh
+                                    </button>
+                                )
+                            )}
+                        </div>
+                        <div className="reaction-guessing-status">
+                            <p className="browser-notice">
+                                Full archive consistency check
+                            </p>
+                            {reactionFeature.consistency.status ===
+                            'checking' ? (
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary reaction-refresh-control"
+                                    onClick={reactionFeature.cancelArchiveCheck}
+                                >
+                                    Cancel
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary reaction-refresh-control"
+                                    onClick={reactionFeature.checkArchive}
+                                    disabled={!reactionFeature.canCheckArchive}
+                                >
+                                    {reactionFeature.consistency.status ===
+                                    'idle'
+                                        ? 'Check archive'
+                                        : 'Check again'}
+                                </button>
+                            )}
+                        </div>
+                        {reactionFeature.consistency.status !== 'idle' && (
+                            <p className="browser-notice" role="status">
+                                {reactionFeature.consistency.status ===
+                                'checking'
+                                    ? 'Full archive consistency check running. '
+                                    : consistencyPercent
+                                      ? `Full archive consistency check: ${consistencyPercent} passed. `
+                                      : 'Full archive consistency check was inconclusive. '}
+                                {reactionFeature.consistency.reason}
+                            </p>
+                        )}
+                        {reactionFeature.consistency.status ===
+                            'inconsistent' && (
+                            <>
+                                <button
+                                    type="button"
+                                    className="settings-shortcuts-btn"
+                                    onClick={() =>
+                                        setConsistencyDetails('inconsistent')
+                                    }
+                                >
+                                    <span>View inconsistent matches</span>
+                                    <ChevronRight size={16} />
+                                </button>
+                            </>
+                        )}
+                        {reactionFeature.consistency.status !== 'checking' &&
+                            reactionFeature.consistency.unmatchedChats.length >
+                                0 && (
+                                <button
+                                    type="button"
+                                    className="settings-shortcuts-btn"
+                                    onClick={() =>
+                                        setConsistencyDetails('unmatched')
+                                    }
+                                >
+                                    <span>
+                                        View chats with unmatched notices
+                                    </span>
+                                    <ChevronRight size={16} />
+                                </button>
+                            )}
+                    </>
+                )}
+            </div>
 
-      {showEnableModal && (
-        <EnableDeletionModal
-          onConfirm={() => {
-            setSetting('deletionEnabled', true as Settings['deletionEnabled']);
-            setShowEnableModal(false);
-          }}
-          onCancel={() => setShowEnableModal(false)}
-        />
-      )}
+            <div className="settings-section">
+                <strong>Customization</strong>
+                <ToggleRow
+                    id="darkModeToggle"
+                    label="Dark mode"
+                    checked={settings.darkMode}
+                    onChange={(v) =>
+                        setSetting('darkMode', v as Settings['darkMode'])
+                    }
+                />
+                <ToggleRow
+                    id="showMyNameToggle"
+                    label="Show my name"
+                    checked={settings.showMyName}
+                    onChange={(v) =>
+                        setSetting('showMyName', v as Settings['showMyName'])
+                    }
+                />
+                <ToggleRow
+                    id="showTheirNameToggle"
+                    label="Show their names"
+                    checked={settings.showTheirName}
+                    onChange={(v) =>
+                        setSetting(
+                            'showTheirName',
+                            v as Settings['showTheirName'],
+                        )
+                    }
+                />
+                <ToggleRow
+                    id="showReactionsToggle"
+                    label="Show reactions"
+                    checked={settings.showReactions}
+                    onChange={(v) =>
+                        setSetting(
+                            'showReactions',
+                            v as Settings['showReactions'],
+                        )
+                    }
+                />
+                <ToggleRow
+                    id="autoCollapseDateNavToggle"
+                    label="Auto-collapse date navigator"
+                    checked={settings.autoCollapseDateNav}
+                    onChange={(v) =>
+                        setSetting(
+                            'autoCollapseDateNav',
+                            v as Settings['autoCollapseDateNav'],
+                        )
+                    }
+                />
+            </div>
 
-      {showDisableOfflineModal && (
-        <DisableOfflineModal
-          busy={offlineSupportBusy}
-          onCancel={() => setShowDisableOfflineModal(false)}
-          onDisable={() => void handleDisableOfflineSupport()}
-        />
-      )}
+            <div className="settings-section">
+                <strong>Offline Use</strong>
+                <ToggleRow
+                    id="offlineSupportEnabledToggle"
+                    label="Keep app available offline"
+                    checked={settings.offlineSupportEnabled}
+                    onChange={handleOfflineSupportToggle}
+                    disabled={offlineSupportBusy}
+                />
+                <p className="deletion-info">
+                    Stores only the app files and chat parsers. Messages and
+                    attachments are not stored in the app cache.
+                </p>
+                {offlineSupportError && (
+                    <p className="browser-notice">{offlineSupportError}</p>
+                )}
+            </div>
 
-      {showShortcutsModal && (
-        <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />
-      )}
+            <div className="settings-section">
+                <strong>Downloads</strong>
+                <ToggleRow
+                    id="dateAttachmentFilenamesToggle"
+                    label="Name attachments by message date and time"
+                    checked={settings.dateAttachmentFilenames}
+                    onChange={(v) =>
+                        setSetting(
+                            'dateAttachmentFilenames',
+                            v as Settings['dateAttachmentFilenames'],
+                        )
+                    }
+                />
+                {settings.dateAttachmentFilenames && (
+                    <>
+                        <label
+                            className="filename-template-label"
+                            htmlFor="attachmentFilenameTemplate"
+                        >
+                            Filename template
+                        </label>
+                        <div className="filename-template-row">
+                            <input
+                                id="attachmentFilenameTemplate"
+                                className="filename-template-input"
+                                type="text"
+                                maxLength={200}
+                                value={settings.attachmentFilenameTemplate}
+                                placeholder={
+                                    DEFAULT_ATTACHMENT_FILENAME_TEMPLATE
+                                }
+                                onChange={(event) =>
+                                    setSetting(
+                                        'attachmentFilenameTemplate',
+                                        event.target.value
+                                            .replace(/\.?\{ext\}/g, '')
+                                            .replace(
+                                                /[^\p{L}\p{N}\s{}_-]/gu,
+                                                '',
+                                            ) as Settings['attachmentFilenameTemplate'],
+                                    )
+                                }
+                                spellCheck={false}
+                            />
+                            <span className="filename-template-extension">
+                                .{'{ext}'}
+                            </span>
+                            <button
+                                type="button"
+                                className="btn btn-secondary filename-template-reset"
+                                onClick={() =>
+                                    setSetting(
+                                        'attachmentFilenameTemplate',
+                                        DEFAULT_ATTACHMENT_FILENAME_TEMPLATE as Settings['attachmentFilenameTemplate'],
+                                    )
+                                }
+                                disabled={
+                                    settings.attachmentFilenameTemplate ===
+                                    DEFAULT_ATTACHMENT_FILENAME_TEMPLATE
+                                }
+                            >
+                                Reset
+                            </button>
+                        </div>
+                        <button
+                            className="settings-shortcuts-btn filename-placeholders-btn"
+                            onClick={() =>
+                                setShowFilenamePlaceholdersModal(true)
+                            }
+                        >
+                            <Braces size={17} />
+                            <span>Filename placeholders</span>
+                            <ChevronRight size={16} />
+                        </button>
+                        <ToggleRow
+                            id="longAttachmentFilenamesToggle"
+                            label="Enable long filenames"
+                            checked={settings.longAttachmentFilenames}
+                            onChange={(v) =>
+                                setSetting(
+                                    'longAttachmentFilenames',
+                                    v as Settings['longAttachmentFilenames'],
+                                )
+                            }
+                        />
+                        <p className="browser-notice">
+                            Names are normalized and stripped of unsupported
+                            symbols. The maximum is{' '}
+                            {settings.longAttachmentFilenames ? '180' : '100'}{' '}
+                            characters including the extension.
+                        </p>
+                    </>
+                )}
+            </div>
 
-      {consistencyDetails && (
-        <ConsistencyDetailsModal
-          chats={consistencyChats[consistencyDetails]}
-          title={consistencyDetails === 'inconsistent' ? 'Chats with inconsistent matches' : 'Chats with unmatched notices'}
-          onOpenChat={onSelectChat}
-          onClose={() => setConsistencyDetails(null)}
-        />
-      )}
+            <div className="settings-section">
+                <strong>Help</strong>
+                <button
+                    className="settings-shortcuts-btn"
+                    onClick={() => setShowShortcutsModal(true)}
+                >
+                    <Keyboard size={17} />
+                    <span>Keyboard shortcuts</span>
+                    <ChevronRight size={16} />
+                </button>
+            </div>
 
-      {showReactionNoticesInfo && (
-        <ReactionNoticesInfoModal onClose={() => setShowReactionNoticesInfo(false)} />
-      )}
+            <div className="settings-section">
+                <strong>Bookmarking</strong>
+                {!fsSupported ? (
+                    <>
+                        <ToggleRow
+                            id="attachmentBookmarkingEnabledToggle"
+                            label="Enable bookmarking"
+                            checked={false}
+                            onChange={() => {}}
+                            disabled={true}
+                        />
+                        <p className="browser-notice">
+                            Only available in Chromium-based browsers (Chrome,
+                            Edge, Brave).
+                        </p>
+                    </>
+                ) : (
+                    <>
+                        <ToggleRow
+                            id="attachmentBookmarkingEnabledToggle"
+                            label="Enable bookmarking"
+                            checked={settings.attachmentBookmarkingEnabled}
+                            onChange={handleBookmarkingToggle}
+                        />
+                        <p className="deletion-info">
+                            Saves attachment and link bookmarks, plus pinned
+                            chats, to <code>fb-mae/bookmarks.json</code> inside
+                            the messages folder. Existing bookmarks are kept
+                            when this feature is disabled.
+                            {!rootHandle &&
+                                settings.attachmentBookmarkingEnabled &&
+                                ' Write access will be requested when you open a folder.'}
+                        </p>
+                        {bookmarkPermissionError && (
+                            <p className="browser-notice">
+                                Write access is required to enable attachment
+                                bookmarking.
+                            </p>
+                        )}
+                    </>
+                )}
+            </div>
 
-      {showFilenamePlaceholdersModal && (
-        <FilenamePlaceholdersModal onClose={() => setShowFilenamePlaceholdersModal(false)} />
-      )}
+            <div className="settings-section">
+                <strong>Chat Deletion</strong>
+                {!fsSupported ? (
+                    <>
+                        <ToggleRow
+                            id="deletionEnabledToggle"
+                            label="Enable chat deletion"
+                            checked={false}
+                            onChange={() => {}}
+                            disabled={true}
+                        />
+                        <p className="browser-notice">
+                            Only available in Chromium-based browsers (Chrome,
+                            Edge, Brave).
+                        </p>
+                    </>
+                ) : (
+                    <>
+                        <ToggleRow
+                            id="deletionEnabledToggle"
+                            label="Enable chat deletion"
+                            checked={settings.deletionEnabled}
+                            onChange={handleDeletionToggle}
+                        />
+                        <p className="deletion-info">
+                            When enabled, a <em>Delete chat</em> option appears
+                            on each conversation. This option removes the chat
+                            folder, including all messages, photos, videos, and
+                            audio, permanently from your device storage.{' '}
+                            <strong>
+                                Once deleted, the files cannot be recovered.
+                            </strong>{' '}
+                            Shared attachments across chats are also checked
+                            while deletion is enabled.
+                            {!rootHandle &&
+                                settings.deletionEnabled &&
+                                ' Write access will be requested when you open a folder.'}
+                        </p>
+                    </>
+                )}
+            </div>
 
-      <div className="settings-section download-info">
-        <strong>How to export your messages</strong>
-        <a href="https://www.facebook.com/dyi" target="_blank" rel="noreferrer">
-          Facebook Download Your Information
-        </a>
-        <a href="https://www.messenger.com/secure_storage/dyi" target="_blank" rel="noreferrer">
-          Messenger Download Your Information
-        </a>
-        <a href="https://accountscenter.instagram.com/info_and_permissions/dyi/" target="_blank" rel="noreferrer">
-          Instagram Download Your Information
-        </a>
-        <p className="footer">
-          Select <strong style={{fontSize: '0.85em'}}>JSON</strong> format and download the <em>Messages</em> category.
-          Extract the zip and open the export folder or its <code>messages</code> folder here.
-        </p>
-      </div>
-    </div>
-  );
+            {showEnableModal && (
+                <EnableDeletionModal
+                    onConfirm={() => {
+                        setSetting(
+                            'deletionEnabled',
+                            true as Settings['deletionEnabled'],
+                        );
+                        setShowEnableModal(false);
+                    }}
+                    onCancel={() => setShowEnableModal(false)}
+                />
+            )}
+
+            {showDisableOfflineModal && (
+                <DisableOfflineModal
+                    busy={offlineSupportBusy}
+                    onCancel={() => setShowDisableOfflineModal(false)}
+                    onDisable={() => void handleDisableOfflineSupport()}
+                />
+            )}
+
+            {showShortcutsModal && (
+                <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />
+            )}
+
+            {consistencyDetails && (
+                <ConsistencyDetailsModal
+                    chats={consistencyChats[consistencyDetails]}
+                    title={
+                        consistencyDetails === 'inconsistent'
+                            ? 'Chats with inconsistent matches'
+                            : 'Chats with unmatched notices'
+                    }
+                    onOpenChat={onSelectChat}
+                    onClose={() => setConsistencyDetails(null)}
+                />
+            )}
+
+            {showReactionNoticesInfo && (
+                <ReactionNoticesInfoModal
+                    onClose={() => setShowReactionNoticesInfo(false)}
+                />
+            )}
+
+            {showFilenamePlaceholdersModal && (
+                <FilenamePlaceholdersModal
+                    onClose={() => setShowFilenamePlaceholdersModal(false)}
+                />
+            )}
+
+            <div className="settings-section download-info">
+                <strong>How to export your messages</strong>
+                <a
+                    href="https://www.facebook.com/dyi"
+                    target="_blank"
+                    rel="noreferrer"
+                >
+                    Facebook Download Your Information
+                </a>
+                <a
+                    href="https://www.messenger.com/secure_storage/dyi"
+                    target="_blank"
+                    rel="noreferrer"
+                >
+                    Messenger Download Your Information
+                </a>
+                <a
+                    href="https://accountscenter.instagram.com/info_and_permissions/dyi/"
+                    target="_blank"
+                    rel="noreferrer"
+                >
+                    Instagram Download Your Information
+                </a>
+                <p className="footer">
+                    Select <strong style={{ fontSize: '0.85em' }}>JSON</strong>{' '}
+                    format and download the <em>Messages</em> category. Extract
+                    the zip and open the export folder or its{' '}
+                    <code>messages</code> folder here.
+                </p>
+            </div>
+        </div>
+    );
 }
