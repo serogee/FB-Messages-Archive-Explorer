@@ -119,6 +119,8 @@
 .delete-breakdown-row span { color:var(--muted); }
 .delete-breakdown-row strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-size:13px; }
 .delete-actions { display:grid; grid-template-columns:minmax(0,1fr) auto; box-sizing:border-box; flex:0 0 auto; align-items:end; gap:8px; padding-top:8px; }
+.confirmation-card .delete-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; }
+.confirmation-card .delete-actions > button { flex:0 1 auto; min-width:0; max-width:100%; }
 .delete-confirm-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:end; gap:8px; max-width:300px; }
 .delete-card-measuring-error .delete-actions,
 .delete-card-expanded .delete-actions { flex-basis:auto; min-height:0; }
