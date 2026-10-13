@@ -411,6 +411,8 @@ export function SettingsPanel({
             <ToggleRow id="deletionEnabledToggle" label="Enable chat deletion" checked={settings.deletionEnabled} onChange={handleDeletionToggle} />
             <p className="deletion-info">
               When enabled, a <em>Delete chat</em> option appears on each conversation.
+              {' '}Shared attachments are checked and cross-chat usage counts appear while deletion is enabled.
+              {' '}Disabling deletion clears those counts; enabling it again starts a fresh check.
               This removes the chat folder — including all messages, photos, videos, and audio —
               permanently from your device storage. <strong>Once deleted, the files cannot be recovered.</strong>
               {!rootHandle && settings.deletionEnabled && ' Write access will be requested when you open a folder.'}

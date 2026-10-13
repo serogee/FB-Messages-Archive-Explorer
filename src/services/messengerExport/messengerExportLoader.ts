@@ -8,9 +8,12 @@ import {
 } from './messengerExportParser';
 import {
   addConversationToChatIndex,
+  addConversationToSizeMetadata,
   createMessengerExportChatIndex,
+  createMessengerExportSizeMetadata,
   markMessengerExportIndexIncomplete,
   type MessengerExportChatIndex,
+  type MessengerExportSizeMetadata,
 } from './messengerExportIndex';
 
 function jsonStem(fileName: string): string {
@@ -54,81 +57,102 @@ function describeLastMessage(thread: MessengerThread): { lastMessage?: string; l
 
 export interface MessengerExportListingResult {
   entries: ChatListEntry[];
-  chatIndex: MessengerExportChatIndex;
+  sizeMetadata: MessengerExportSizeMetadata;
+  chatIndex?: MessengerExportChatIndex;
 }
 
+export interface MessengerExportListingOptions {
+  collectOwnership?: boolean;
+  ownershipSignal?: AbortSignal;
+}
+
+export function listMessengerExportChatsIndexed(handle: ReadableDirectoryHandle,
+  onProgress?: (done: number, total: number) => void, signal?: AbortSignal,
+): Promise<MessengerExportListingResult & { chatIndex: MessengerExportChatIndex }>;
+export function listMessengerExportChatsIndexed(handle: ReadableDirectoryHandle,
+  onProgress: ((done: number, total: number) => void) | undefined, signal: AbortSignal | undefined,
+  options: MessengerExportListingOptions,
+): Promise<MessengerExportListingResult>;
 export async function listMessengerExportChatsIndexed(
   handle: ReadableDirectoryHandle,
   onProgress?: (done: number, total: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: MessengerExportListingOptions = {},
 ): Promise<MessengerExportListingResult> {
-  const fileHandles: Array<{ name: string; handle: ReadableFileHandle }> = [];
+  const sizeMetadata = createMessengerExportSizeMetadata();
+  let chatIndex = options.collectOwnership !== false && !options.ownershipSignal?.aborted
+    ? createMessengerExportChatIndex(sizeMetadata) : undefined;
+  const cancelOwnership = () => { chatIndex = undefined; };
+  options.ownershipSignal?.addEventListener('abort', cancelOwnership, { once: true });
+  try {
+    const fileHandles: Array<{ name: string; handle: ReadableFileHandle }> = [];
 
-  for await (const [name, entry] of handle.entries()) {
-    if (signal?.aborted) return { entries: [], chatIndex: createMessengerExportChatIndex() };
-    if (entry.kind === 'file' && /\.json$/i.test(name)) {
-      fileHandles.push({ name, handle: entry });
-    }
-  }
-
-  const entries: ChatListEntry[] = [];
-  const chatIndex = createMessengerExportChatIndex();
-  onProgress?.(0, fileHandles.length);
-
-  for (let i = 0; i < fileHandles.length; i++) {
-    if (signal?.aborted) return { entries, chatIndex };
-    const { name, handle: fileHandle } = fileHandles[i];
-
-    try {
-      const file = await fileHandle.getFile();
-      const content = await file.text();
-      if (signal?.aborted) return { entries, chatIndex };
-      const classification = classifyMessengerExportJson(content);
-      if (classification.kind === 'malformed-conversation') {
-        markMessengerExportIndexIncomplete(chatIndex, {
-          jsonFileName: name,
-          reason: 'malformed-conversation',
-        });
-      } else if (classification.kind === 'conversation') {
-        const thread = classification.thread;
-        const { lastMessage, lastTimestamp } = describeLastMessage(thread);
-        addConversationToChatIndex(chatIndex, name, file.size, thread);
-
-        entries.push({
-          folderName: jsonStem(name),
-          title: thread.title || jsonStem(name),
-          participants: (thread.participants || []).map(participant => participant.name).filter(Boolean),
-          lastMessage,
-          lastTimestamp,
-          messageCount: thread.messages?.length || 0,
-          folderSize: file.size,
-          dirHandle: handle,
-          jsonFileCount: 1,
-          source: 'inbox',
-          _messengerExport: true,
-          _jsonFileName: name,
-          _sizeIncludesMedia: false,
-        });
+    for await (const [name, entry] of handle.entries()) {
+      if (signal?.aborted) return { entries: [], sizeMetadata, chatIndex };
+      if (entry.kind === 'file' && /\.json$/i.test(name)) {
+        fileHandles.push({ name, handle: entry });
       }
-    } catch {
-      markMessengerExportIndexIncomplete(chatIndex, { jsonFileName: name, reason: 'unreadable' });
-      // One malformed conversation must not hide other chats in the export.
     }
 
-    onProgress?.(i + 1, fileHandles.length);
-    if (i % 10 === 0) {
-      await new Promise(resolve => setTimeout(resolve, 0));
+    const entries: ChatListEntry[] = [];
+    onProgress?.(0, fileHandles.length);
+
+    for (let i = 0; i < fileHandles.length; i++) {
+      if (signal?.aborted) return { entries, sizeMetadata, chatIndex };
+      const { name, handle: fileHandle } = fileHandles[i];
+
+      try {
+        const file = await fileHandle.getFile();
+        const content = await file.text();
+        if (signal?.aborted) return { entries, sizeMetadata, chatIndex };
+        const classification = classifyMessengerExportJson(content);
+        if (classification.kind === 'malformed-conversation') {
+          if (chatIndex) markMessengerExportIndexIncomplete(chatIndex, {
+            jsonFileName: name,
+            reason: 'malformed-conversation',
+          });
+        } else if (classification.kind === 'conversation') {
+          const thread = classification.thread;
+          const { lastMessage, lastTimestamp } = describeLastMessage(thread);
+          if (chatIndex) addConversationToChatIndex(chatIndex, name, file.size, thread);
+          else addConversationToSizeMetadata(sizeMetadata, name, file.size, thread);
+
+          entries.push({
+            folderName: jsonStem(name),
+            title: thread.title || jsonStem(name),
+            participants: (thread.participants || []).map(participant => participant.name).filter(Boolean),
+            lastMessage,
+            lastTimestamp,
+            messageCount: thread.messages?.length || 0,
+            folderSize: file.size,
+            dirHandle: handle,
+            jsonFileCount: 1,
+            source: 'inbox',
+            _messengerExport: true,
+            _jsonFileName: name,
+            _sizeIncludesMedia: false,
+          });
+        }
+      } catch {
+        if (chatIndex) markMessengerExportIndexIncomplete(chatIndex, { jsonFileName: name, reason: 'unreadable' });
+        // One malformed conversation must not hide other chats in the export.
+      }
+
+      onProgress?.(i + 1, fileHandles.length);
+      if (i % 10 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
     }
-  }
 
-  entries.sort((a, b) => {
-    if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
-    if (a.lastTimestamp == null) return 1;
-    if (b.lastTimestamp == null) return -1;
-    return b.lastTimestamp - a.lastTimestamp;
-  });
+    entries.sort((a, b) => {
+      if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
+      if (a.lastTimestamp == null) return 1;
+      if (b.lastTimestamp == null) return -1;
+      return b.lastTimestamp - a.lastTimestamp;
+    });
 
-  return { entries, chatIndex };
+    return { entries, sizeMetadata, chatIndex };
+  } finally { options.ownershipSignal?.removeEventListener('abort', cancelOwnership); }
 }
 
 export async function listMessengerExportChats(
@@ -136,7 +160,7 @@ export async function listMessengerExportChats(
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal
 ): Promise<ChatListEntry[]> {
-  return (await listMessengerExportChatsIndexed(handle, onProgress, signal)).entries;
+  return (await listMessengerExportChatsIndexed(handle, onProgress, signal, { collectOwnership: false })).entries;
 }
 
 export async function loadMessengerExportChat(

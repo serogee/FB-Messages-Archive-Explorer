@@ -323,9 +323,11 @@ function throwIfAborted(signal?: AbortSignal): void {
 export async function deleteChat(
   parentHandle: WritableDirectoryHandle,
   subfolderName: string,
-  chatFolderName: string
+  chatFolderName: string,
+  beforeRemove?: () => void,
 ): Promise<void> {
   const subDir = await parentHandle.getDirectoryHandle(subfolderName);
+  beforeRemove?.();
   await subDir.removeEntry(chatFolderName, { recursive: true });
 }
 

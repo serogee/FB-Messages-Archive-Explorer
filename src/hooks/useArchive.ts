@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import type { ChatListEntry } from '../types/messenger';
 import type { ReadableDirectoryHandle } from '../types/fileSystem';
 import { isWritableDirectoryHandle } from '../types/fileSystem';
@@ -27,6 +27,7 @@ import {
   MessengerExportIndexIncompleteError,
   MessengerExportMediaSizeUnavailableError,
   type MessengerExportChatIndex,
+  type MessengerExportSizeMetadata,
   type MessengerExportDeletionInfo,
   type MessengerExportReferenceIndex,
 } from '../services/messengerExport';
@@ -172,7 +173,7 @@ type SizeWorkPlan =
       kind: 'messenger';
       rootHandle: ReadableDirectoryHandle;
       generation: number;
-      chatIndex: MessengerExportChatIndex;
+      sizeMetadata: MessengerExportSizeMetadata;
     }
   | {
       kind: 'facebook';
@@ -180,7 +181,7 @@ type SizeWorkPlan =
       generation: number;
     };
 
-export function useArchive(): {
+export function useArchive(deletionEnabled: boolean): {
   rootHandle: ReadableDirectoryHandle | null;
   reactionSourceRevision: number;
   reactionMutationPending: boolean;
@@ -233,8 +234,8 @@ export function useArchive(): {
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const archiveGenerationRef = useRef(0);
-  const facebookReferenceRevisionRef = useRef(0);
-  const facebookReferenceAbortRef = useRef<AbortController | null>(null);
+  const ownershipRevisionRef = useRef(0);
+  const ownershipAbortRef = useRef<AbortController | null>(null);
   const referenceProgressRef = useRef<CalculationProgressStore | null>(null);
   const messengerSizeProgressRef = useRef<CalculationProgressStore | null>(null);
   const isMessengerExportRef = useRef(false);
@@ -258,6 +259,41 @@ export function useArchive(): {
   const sizeWorkPlanRef = useRef<SizeWorkPlan | null>(null);
   const deletedSizeEntryKeysRef = useRef<Set<string>>(new Set());
   const deletionOperationGuardRef = useRef(new SingleFlightGuard());
+  const deletionEnabledRef = useRef(deletionEnabled);
+  const messengerSizeMetadataRef = useRef<{
+    rootHandle: ReadableDirectoryHandle; generation: number; metadata: MessengerExportSizeMetadata;
+  } | null>(null);
+
+  const assertDeletionEnabled = useCallback(() => {
+    if (!deletionEnabledRef.current) throw new DOMException('Chat deletion is disabled.', 'AbortError');
+  }, []);
+  const clearOwnership = useCallback(() => {
+    // Invalidate first: abort handlers and late reads cannot restore old owners.
+    ownershipRevisionRef.current++;
+    ownershipAbortRef.current?.abort();
+    ownershipAbortRef.current = null;
+    facebookReferenceIndexCacheRef.current.clear();
+    messengerReferenceIndexCacheRef.current.clear();
+    messengerChatIndexRef.current = null;
+    referenceProgressRef.current?.dispose();
+    referenceProgressRef.current = null;
+    setAttachmentReferenceIndex(null);
+    setAttachmentReferenceIndexLoading(false);
+    setAttachmentReferenceScan(null);
+  }, []);
+  useLayoutEffect(() => {
+    if (deletionEnabledRef.current === deletionEnabled) return;
+    deletionEnabledRef.current = deletionEnabled;
+    clearOwnership();
+  }, [deletionEnabled, clearOwnership]);
+  useEffect(() => () => {
+    ownershipRevisionRef.current++;
+    ownershipAbortRef.current?.abort();
+    referenceProgressRef.current?.dispose();
+    facebookReferenceIndexCacheRef.current.clear();
+    messengerReferenceIndexCacheRef.current.clear();
+    messengerChatIndexRef.current = null;
+  }, []);
 
   const inboxListRef = useRef<ChatListEntry[]>([]);
   const archivedListRef = useRef<ChatListEntry[]>([]);
@@ -273,9 +309,15 @@ export function useArchive(): {
     platform: MetaArchivePlatform,
     verificationProgress?: CalculationProgressStore,
   ): Promise<MetaAttachmentReferenceIndex> => {
-    const revision = facebookReferenceRevisionRef.current;
-    const isCurrent = () => archiveGenerationRef.current === generation && facebookReferenceRevisionRef.current === revision;
+    assertDeletionEnabled();
+    const revision = ownershipRevisionRef.current;
+    const isCurrent = () => deletionEnabledRef.current && archiveGenerationRef.current === generation && ownershipRevisionRef.current === revision;
     throwIfAborted(signal);
+    const controller = new AbortController();
+    ownershipAbortRef.current = controller;
+    const abort = () => controller.abort();
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
     if (!isCurrent()) throw new DOMException('Aborted', 'AbortError');
     const progress = new CalculationProgressStore();
     referenceProgressRef.current = progress;
@@ -286,31 +328,35 @@ export function useArchive(): {
     try {
       // Let scan status and the chat list paint before reading the archive.
       await new Promise(resolve => setTimeout(resolve, 0));
-      const index = await buildMetaAttachmentReferenceIndex(handle, signal, platform, progress.report);
+      const index = await buildMetaAttachmentReferenceIndex(handle, controller.signal, platform, progress.report);
+      throwIfAborted(controller.signal);
       status = index.complete ? 'complete' : 'incomplete';
       return index;
     } finally {
       progress.dispose();
       stopProgress();
+      signal?.removeEventListener('abort', abort);
+      if (ownershipAbortRef.current === controller) ownershipAbortRef.current = null;
       if (isCurrent()) {
         setAttachmentReferenceIndexLoading(false);
         setAttachmentReferenceScan({ status, progress });
       }
     }
-  }, []);
+  }, [assertDeletionEnabled]);
 
   const getFacebookReferenceIndexForRoot = useCallback((
     handle: ReadableDirectoryHandle,
     generation: number,
     signal?: AbortSignal,
   ): Promise<MetaAttachmentReferenceIndex> => {
+    assertDeletionEnabled();
     const archiveSignal = abortControllerRef.current?.signal;
-    const revision = facebookReferenceRevisionRef.current;
-    const isCurrent = () => archiveGenerationRef.current === generation && facebookReferenceRevisionRef.current === revision;
+    const revision = ownershipRevisionRef.current;
+    const isCurrent = () => deletionEnabledRef.current && archiveGenerationRef.current === generation && ownershipRevisionRef.current === revision;
     const platform = metaArchivePlatformRef.current;
     const work = facebookReferenceIndexCacheRef.current.getOrCreate(handle, generation, async () => {
       const controller = new AbortController();
-      facebookReferenceAbortRef.current = controller;
+      ownershipAbortRef.current = controller;
       const abort = () => controller.abort();
       if (archiveSignal?.aborted) abort();
       else archiveSignal?.addEventListener('abort', abort, { once: true });
@@ -320,36 +366,37 @@ export function useArchive(): {
         return index;
       } finally {
         archiveSignal?.removeEventListener('abort', abort);
-        if (facebookReferenceAbortRef.current === controller) facebookReferenceAbortRef.current = null;
+        if (ownershipAbortRef.current === controller) ownershipAbortRef.current = null;
       }
     }, isCurrent);
     return waitForPromiseWithAbort(work, signal);
-  }, [runMetaReferenceScan]);
+  }, [runMetaReferenceScan, assertDeletionEnabled]);
 
   const refreshFacebookReferenceIndex = useCallback(async (
     handle: ReadableDirectoryHandle,
     generation: number,
     signal?: AbortSignal,
   ): Promise<MetaAttachmentReferenceIndex> => {
+    assertDeletionEnabled();
     // Keep the completed index available to the gallery while an optional
     // manual recheck runs. It becomes the fallback if the user cancels it.
     const previousIndex = facebookReferenceIndexCacheRef.current.get(handle, generation);
     // A dialog waiting for the initial scan does not own that background work.
     if (!previousIndex) return getFacebookReferenceIndexForRoot(handle, generation, signal);
     throwIfAborted(signal);
-    const revision = facebookReferenceRevisionRef.current + 1;
-    facebookReferenceRevisionRef.current = revision;
-    facebookReferenceAbortRef.current?.abort();
-    const isCurrent = () => archiveGenerationRef.current === generation
-      && facebookReferenceRevisionRef.current === revision;
+    const revision = ownershipRevisionRef.current + 1;
+    ownershipRevisionRef.current = revision;
+    ownershipAbortRef.current?.abort();
+    const isCurrent = () => deletionEnabledRef.current && archiveGenerationRef.current === generation
+      && ownershipRevisionRef.current === revision;
     const controller = new AbortController();
-    facebookReferenceAbortRef.current = controller;
+    ownershipAbortRef.current = controller;
     const archiveSignal = abortControllerRef.current?.signal;
     const abort = () => {
       controller.abort();
       if (!isCurrent()) return;
       // Invalidate publication now, even if getFile()/entries() cannot abort.
-      facebookReferenceRevisionRef.current++;
+      ownershipRevisionRef.current++;
       referenceProgressRef.current?.dispose();
       setAttachmentReferenceIndex(previousIndex);
       setAttachmentReferenceIndexLoading(false);
@@ -372,9 +419,9 @@ export function useArchive(): {
     } finally {
       signal?.removeEventListener('abort', abort);
       archiveSignal?.removeEventListener('abort', abort);
-      if (facebookReferenceAbortRef.current === controller) facebookReferenceAbortRef.current = null;
+      if (ownershipAbortRef.current === controller) ownershipAbortRef.current = null;
     }
-  }, [getFacebookReferenceIndexForRoot, runMetaReferenceScan]);
+  }, [getFacebookReferenceIndexForRoot, runMetaReferenceScan, assertDeletionEnabled]);
 
   const getMessengerMediaSizeIndexForRoot = useCallback((
     handle: ReadableDirectoryHandle,
@@ -575,7 +622,7 @@ export function useArchive(): {
           signal,
           async entry => computeMessengerExportChatSizeFromIndex(
             entry._jsonFileName!,
-            plan.chatIndex,
+            plan.sizeMetadata,
             mediaSizeIndex
           )
         );
@@ -660,6 +707,8 @@ export function useArchive(): {
       setRootHandle(null);
       setOriginalRootHandle(null);
       isMessengerExportRef.current = false;
+      clearOwnership();
+      messengerSizeMetadataRef.current = null;
       messengerChatIndexRef.current = null;
       messengerReferenceIndexCacheRef.current.clear();
       messengerMediaSizeIndexCacheRef.current.clear();
@@ -689,22 +738,36 @@ export function useArchive(): {
         setOriginalRootHandle(handle);
         setRootHandle(handle);
 
+        const revision = ownershipRevisionRef.current;
+        const isCurrent = () => deletionEnabledRef.current && archiveGenerationRef.current === generation
+          && ownershipRevisionRef.current === revision;
+        const ownershipController = new AbortController();
+        const collectOwnership = deletionEnabledRef.current;
+        if (collectOwnership) ownershipAbortRef.current = ownershipController;
         const progress = new CalculationProgressStore();
         referenceProgressRef.current = progress;
-        setAttachmentReferenceScan({ status: 'checking', progress });
-        const { entries: inbox, chatIndex } = await listMessengerExportChatsIndexed(
+        if (collectOwnership) {
+          setAttachmentReferenceIndexLoading(true);
+          setAttachmentReferenceScan({ status: 'checking', progress });
+        }
+        const { entries: inbox, chatIndex, sizeMetadata } = await listMessengerExportChatsIndexed(
           handle,
           (done, total) => {
             setLoadProgress({ done, total });
-            progress.report({ stage: 'ownership', label: 'Scanning for shared attachments', done, total, unit: 'files' });
+            if (collectOwnership && isCurrent()) progress.report({ stage: 'ownership', label: 'Scanning for shared attachments', done, total, unit: 'files' });
           },
-          abortCtrl.signal
+          abortCtrl.signal,
+          { collectOwnership, ownershipSignal: ownershipController.signal },
         ).catch(error => {
-          if (archiveGenerationRef.current === generation) {
+          if (collectOwnership && isCurrent()) {
+            setAttachmentReferenceIndexLoading(false);
             setAttachmentReferenceScan({ status: 'failed', progress });
           }
           throw error;
-        }).finally(() => progress.dispose());
+        }).finally(() => {
+          progress.dispose();
+          if (ownershipAbortRef.current === ownershipController) ownershipAbortRef.current = null;
+        });
         if (abortCtrl.signal.aborted) return false;
 
         const perspective = resolveArchivePerspective(inbox, 'messenger');
@@ -712,10 +775,14 @@ export function useArchive(): {
         setArchivePerspectiveKey(perspective.archiveKey);
         setArchivePerspectiveName(perspective.name);
 
-        messengerChatIndexRef.current = { rootHandle: handle, generation, chatIndex };
-        messengerReferenceIndexCacheRef.current.set(handle, generation, chatIndex.referenceIndex);
-        setAttachmentReferenceIndex(chatIndex.referenceIndex);
-        setAttachmentReferenceScan({ status: chatIndex.referenceIndex.complete ? 'complete' : 'incomplete', progress });
+        messengerSizeMetadataRef.current = { rootHandle: handle, generation, metadata: sizeMetadata };
+        if (chatIndex && isCurrent()) {
+          messengerChatIndexRef.current = { rootHandle: handle, generation, chatIndex };
+          messengerReferenceIndexCacheRef.current.set(handle, generation, chatIndex.referenceIndex);
+          setAttachmentReferenceIndex(chatIndex.referenceIndex);
+          setAttachmentReferenceIndexLoading(false);
+          setAttachmentReferenceScan({ status: chatIndex.referenceIndex.complete ? 'complete' : 'incomplete', progress });
+        }
 
         inboxListRef.current = inbox;
         archivedListRef.current = [];
@@ -723,7 +790,7 @@ export function useArchive(): {
         setInboxList(inbox);
         setArchivedList([]);
         setRequestsList([]);
-        sizeWorkPlanRef.current = { kind: 'messenger', rootHandle: handle, generation, chatIndex };
+        sizeWorkPlanRef.current = { kind: 'messenger', rootHandle: handle, generation, sizeMetadata };
         startBackgroundSizeWork();
         return true;
       }
@@ -776,11 +843,6 @@ export function useArchive(): {
       setInboxList(mergedInbox);
       setArchivedList(archived);
       setRequestsList(requests);
-      void getFacebookReferenceIndexForRoot(messagesRoot, generation).catch(error => {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          console.error('Shared attachment reference scan failed:', error);
-        }
-      });
       sizeWorkPlanRef.current = { kind: 'facebook', rootHandle: messagesRoot, generation };
       startBackgroundSizeWork();
       return true;
@@ -796,7 +858,7 @@ export function useArchive(): {
         setLoadProgress(null);
       }
     }
-  }, [getFacebookReferenceIndexForRoot, startBackgroundSizeWork]);
+  }, [clearOwnership, startBackgroundSizeWork]);
 
   const openFolderWithWriteAccess = useCallback(async () => {
     setError(null);
@@ -822,12 +884,16 @@ export function useArchive(): {
     try { return await work; } finally { stop(); }
   }, [getMessengerMediaSizeIndexForRoot, rootHandle]);
 
-  const getMessengerReferenceIndex = useCallback(async (signal?: AbortSignal): Promise<{
+  const getMessengerReferenceIndex = useCallback(async (signal?: AbortSignal, progressTarget?: CalculationProgressStore): Promise<{
     index: MessengerExportReferenceIndex;
     chatIndex?: MessengerExportChatIndex;
   }> => {
+    assertDeletionEnabled();
     if (!rootHandle) throw new Error('No folder open');
     const generation = archiveGenerationRef.current;
+    const revision = ownershipRevisionRef.current;
+    const isCurrent = () => deletionEnabledRef.current && archiveGenerationRef.current === generation
+      && ownershipRevisionRef.current === revision;
     const chatCached = messengerChatIndexRef.current;
     if (chatCached && chatCached.rootHandle === rootHandle && chatCached.generation === generation) {
       return {
@@ -841,16 +907,50 @@ export function useArchive(): {
       rootHandle,
       generation,
       async () => {
-        const builtIndex = await buildMessengerExportReferenceIndex(rootHandle, buildSignal);
-        throwIfAborted(buildSignal);
-        return builtIndex;
+        const controller = new AbortController();
+        ownershipAbortRef.current = controller;
+        const abort = () => controller.abort();
+        if (buildSignal?.aborted) abort();
+        else buildSignal?.addEventListener('abort', abort, { once: true });
+        const progress = new CalculationProgressStore();
+        referenceProgressRef.current = progress;
+        setAttachmentReferenceIndexLoading(true);
+        setAttachmentReferenceScan({ status: 'checking', progress });
+        let status: AttachmentReferenceScan['status'] = 'failed';
+        try {
+          const builtIndex = await buildMessengerExportReferenceIndex(rootHandle, controller.signal, progress.report);
+          throwIfAborted(controller.signal);
+          status = builtIndex.complete ? 'complete' : 'incomplete';
+          if (isCurrent()) setAttachmentReferenceIndex(builtIndex);
+          return builtIndex;
+        } finally {
+          progress.dispose();
+          buildSignal?.removeEventListener('abort', abort);
+          if (ownershipAbortRef.current === controller) ownershipAbortRef.current = null;
+          if (isCurrent()) {
+            setAttachmentReferenceIndexLoading(false);
+            setAttachmentReferenceScan({ status, progress });
+          }
+        }
       },
-      () => archiveGenerationRef.current === generation
+      isCurrent,
     );
-    const index = await waitForPromiseWithAbort(promise, signal);
+    const stopProgress = followCalculationProgress(referenceProgressRef.current, progressTarget);
+    try {
+      const index = await waitForPromiseWithAbort(promise, signal);
+      return { index };
+    } finally { stopProgress(); }
+  }, [rootHandle, assertDeletionEnabled]);
 
-    return { index };
-  }, [rootHandle]);
+  useEffect(() => {
+    if (!deletionEnabled || !rootHandle || loading || !sizeWorkPlanRef.current
+      || sizeWorkPlanRef.current.generation !== archiveGenerationRef.current || deletionOperationGuardRef.current.busy) return;
+    const work = isMessengerExportRef.current ? getMessengerReferenceIndex()
+      : getFacebookReferenceIndexForRoot(rootHandle, archiveGenerationRef.current);
+    void work.catch(error => {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) console.error('Shared attachment scan failed:', error);
+    });
+  }, [deletionEnabled, rootHandle, loading, reactionMutationPending, getMessengerReferenceIndex, getFacebookReferenceIndexForRoot]);
 
   const getDeleteInfo = useCallback(async (
     entry: ChatListEntry | ChatListEntry[],
@@ -858,6 +958,7 @@ export function useArchive(): {
     onOwnershipReady?: (info: MessengerExportDeletionInfo) => void,
     options?: DeleteInfoOptions
   ): Promise<MessengerExportDeletionInfo> => {
+    assertDeletionEnabled();
     if (!rootHandle) throw new Error('No folder open');
     throwIfAborted(signal);
     const entries = Array.isArray(entry) ? entry : [entry];
@@ -911,7 +1012,7 @@ export function useArchive(): {
         stickerSize, stickerCount: stickers.length, totalSize: folderInfo.totalSize + stickerSize };
     }
 
-    const referenceResult = await getMessengerReferenceIndex(signal);
+    const referenceResult = await getMessengerReferenceIndex(signal, options?.progress);
     const { index: referenceIndex, chatIndex } = referenceResult;
     if (!referenceIndex.complete) throw new MessengerExportIndexIncompleteError();
     const deletionIndex = chatIndex || referenceIndex;
@@ -929,14 +1030,15 @@ export function useArchive(): {
     }
 
     return getMessengerExportBatchDeletionInfo(rootHandle, messengerEntries, deletionIndex, signal, mediaSizeIndex, options?.progress?.report);
-  }, [getFacebookReferenceIndexForRoot, getMessengerMediaSizeIndex, getMessengerReferenceIndex, refreshFacebookReferenceIndex, rootHandle]);
+  }, [assertDeletionEnabled, getFacebookReferenceIndexForRoot, getMessengerMediaSizeIndex, getMessengerReferenceIndex, refreshFacebookReferenceIndex, rootHandle]);
 
   const beginDeletionOperation = useCallback((): symbol => {
+    assertDeletionEnabled();
     const token = deletionOperationGuardRef.current.begin();
     setReactionMutationPending(true);
     setReactionSourceRevision(v => v + 1);
     return token;
-  }, []);
+  }, [assertDeletionEnabled]);
 
   const finishDeletionOperation = useCallback((token: symbol) => {
     deletionOperationGuardRef.current.finish(token);
@@ -963,6 +1065,17 @@ export function useArchive(): {
       if (!rootHandle) throw new Error('No folder open');
       if (!isWritableDirectoryHandle(rootHandle)) throw new Error('Deletion is not supported for this folder');
       const generation = archiveGenerationRef.current;
+      let ownershipRevision = ownershipRevisionRef.current;
+      const assertOwnershipCurrent = () => {
+        assertDeletionEnabled();
+        if (ownershipRevision !== ownershipRevisionRef.current) throw new DOMException('Attachment check was superseded.', 'AbortError');
+      };
+      let mutationStarted = false;
+      const beginMutation = () => {
+        if (mutationStarted) return;
+        assertOwnershipCurrent();
+        mutationStarted = true;
+      };
       const result: BatchDeleteResult = { requested: entries.length, deleted: [], failed: [] };
       const messengerEntries = entries.filter(entry => entry._messengerExport);
 
@@ -970,10 +1083,11 @@ export function useArchive(): {
         if (messengerEntries.length !== entries.length) {
           throw new Error('Facebook and Messenger chats cannot be deleted in one operation.');
         }
-        const { index: referenceIndex, chatIndex } = await getMessengerReferenceIndex();
+        const { index: referenceIndex, chatIndex } = await getMessengerReferenceIndex(undefined, options?.verificationProgress);
         const deletionIndex = chatIndex || referenceIndex;
         const mediaSizeIndex = messengerMediaSizeIndexCacheRef.current.get(rootHandle, generation);
         const plan = buildMessengerExportDeletionPlan(entries, deletionIndex, mediaSizeIndex);
+        assertOwnershipCurrent();
         const deletionResult = await executeMessengerExportDeletionPlan(
           rootHandle,
           plan,
@@ -982,7 +1096,8 @@ export function useArchive(): {
             stage: progress.stage,
             done: progress.done,
             total: progress.total,
-          })
+          }),
+          beginMutation,
         );
 
         for (const chatResult of deletionResult.chats) {
@@ -1008,8 +1123,9 @@ export function useArchive(): {
         if (options?.skipAttachmentCheck) {
           // Invalidate pending publication before mutation. An old background
           // scan must not restore owners for folders removed without checking.
-          facebookReferenceRevisionRef.current++;
-          facebookReferenceAbortRef.current?.abort();
+          ownershipRevisionRef.current++;
+          ownershipRevision = ownershipRevisionRef.current;
+          ownershipAbortRef.current?.abort();
           facebookReferenceIndexCacheRef.current.clear();
           setAttachmentReferenceIndex(null);
           setAttachmentReferenceIndexLoading(false);
@@ -1034,6 +1150,7 @@ export function useArchive(): {
           rootHandle, stickerIndex, new Set(selected.map(getFacebookChatId)), buildSignal, options?.verificationProgress?.report,
         ) : [];
         const total = selected.length + stickerTargets.length;
+        assertOwnershipCurrent();
         for (let position = 0; position < selected.length; position++) {
           throwIfAborted(buildSignal);
           const entry = selected[position];
@@ -1050,9 +1167,10 @@ export function useArchive(): {
             entry.source === 'e2ee'     ? 'e2ee_cutover' :
             'archived_threads';
           try {
-            await deleteChatFs(rootHandle, subfolderName, entry.folderName);
+            await deleteChatFs(rootHandle, subfolderName, entry.folderName, beginMutation);
             result.deleted.push(entry);
           } catch (error) {
+            if (!mutationStarted && error instanceof DOMException && error.name === 'AbortError') throw error;
             console.error(`Failed to delete ${entry.folderName}`, error);
             result.failed.push({ entry, error, partial: false });
           }
@@ -1069,7 +1187,7 @@ export function useArchive(): {
         }
         onProgress?.({ stage: 'media', done: total, total });
         if (stickerIndex) for (const entry of result.deleted) removeChatAttachmentReferences(stickerIndex, getFacebookChatId(entry));
-        if (archiveGenerationRef.current === generation) {
+        if (deletionEnabledRef.current && ownershipRevisionRef.current === ownershipRevision && archiveGenerationRef.current === generation) {
           if (stickerIndex) {
             facebookReferenceIndexCacheRef.current.set(rootHandle, generation, stickerIndex);
             setAttachmentReferenceIndex({ ...stickerIndex });
@@ -1084,7 +1202,18 @@ export function useArchive(): {
       }
 
       if (archiveGenerationRef.current === generation) {
-        if (messengerChatIndexRef.current) setAttachmentReferenceIndex({ ...messengerChatIndexRef.current.chatIndex.referenceIndex });
+        if (deletionEnabledRef.current && ownershipRevisionRef.current === ownershipRevision) {
+          const messengerIndex = messengerChatIndexRef.current?.chatIndex.referenceIndex
+            || messengerReferenceIndexCacheRef.current.get(rootHandle, generation);
+          if (messengerIndex) setAttachmentReferenceIndex({ ...messengerIndex });
+        }
+        for (const entry of result.deleted) {
+          const metadata = messengerSizeMetadataRef.current?.metadata;
+          if (entry._jsonFileName) {
+            metadata?.chatMediaPaths.delete(entry._jsonFileName);
+            metadata?.jsonSizes.delete(entry._jsonFileName);
+          }
+        }
         removeDeletedEntriesFromLists(result.deleted);
       }
       return result;
@@ -1095,6 +1224,7 @@ export function useArchive(): {
     beginDeletionOperation,
     finishDeletionOperation,
     getFacebookReferenceIndexForRoot,
+    assertDeletionEnabled,
     runMetaReferenceScan,
     getMessengerReferenceIndex,
     removeDeletedEntriesFromLists,
@@ -1119,8 +1249,11 @@ export function useArchive(): {
         throw new Error('JSON-only deletion is available only for Messenger exports.');
       }
       const generation = archiveGenerationRef.current;
+      const revision = ownershipRevisionRef.current;
       const { index: referenceIndex, chatIndex } = await getMessengerReferenceIndex();
       const deletionIndex = chatIndex || referenceIndex;
+      assertDeletionEnabled();
+      if (revision !== ownershipRevisionRef.current) throw new DOMException('Attachment check was superseded.', 'AbortError');
       const chatResults = await deleteMessengerExportJsonOnly(
         rootHandle,
         entries,
@@ -1139,7 +1272,11 @@ export function useArchive(): {
           })),
       };
       if (archiveGenerationRef.current === generation) {
-        setAttachmentReferenceIndex({ ...referenceIndex });
+        if (deletionEnabledRef.current && revision === ownershipRevisionRef.current) setAttachmentReferenceIndex({ ...referenceIndex });
+        for (const entry of result.deleted) {
+          messengerSizeMetadataRef.current?.metadata.chatMediaPaths.delete(entry._jsonFileName!);
+          messengerSizeMetadataRef.current?.metadata.jsonSizes.delete(entry._jsonFileName!);
+        }
         removeDeletedEntriesFromLists(result.deleted);
       }
       return result;
@@ -1150,6 +1287,7 @@ export function useArchive(): {
     beginDeletionOperation,
     finishDeletionOperation,
     getMessengerReferenceIndex,
+    assertDeletionEnabled,
     removeDeletedEntriesFromLists,
     rootHandle,
   ]);
@@ -1193,14 +1331,14 @@ export function useArchive(): {
             signal
           );
           throwIfAborted(signal);
-          const cached = messengerChatIndexRef.current;
+          const cached = messengerSizeMetadataRef.current;
           if (cached
             && cached.rootHandle === rootHandle
             && cached.generation === archiveGenerationRef.current
-            && cached.chatIndex.jsonSizes.has(entry._jsonFileName!)) {
+            && cached.metadata.jsonSizes.has(entry._jsonFileName!)) {
             return computeMessengerExportChatSizeFromIndex(
               entry._jsonFileName!,
-              cached.chatIndex,
+              cached.metadata,
               mediaSizeIndex
             );
           }
@@ -1237,7 +1375,10 @@ export function useArchive(): {
   ]);
 
   return {
-    rootHandle, attachmentReferenceIndex, attachmentReferenceIndexLoading, attachmentReferenceScan, reactionSourceRevision, reactionMutationPending, standaloneMessenger: isMessengerExportRef.current, originalRootHandle, inboxList, archivedList, requestsList,
+    rootHandle, attachmentReferenceIndex: deletionEnabled ? attachmentReferenceIndex : null,
+    attachmentReferenceIndexLoading: deletionEnabled && attachmentReferenceIndexLoading,
+    attachmentReferenceScan: deletionEnabled ? attachmentReferenceScan : null,
+    reactionSourceRevision, reactionMutationPending, standaloneMessenger: isMessengerExportRef.current, originalRootHandle, inboxList, archivedList, requestsList,
     archivePerspectiveKey, archivePerspectiveName,
     loading, loadProgress, sizeProgress, error,
     openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, suspendSizeWork, resumeSizeWork, deleteChat, deleteChats, deleteMessengerChatsJsonOnly, updateFolderSize,

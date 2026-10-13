@@ -10,6 +10,7 @@ export {
   listMessengerExportChatsIndexed,
   loadMessengerExportChat,
   type MessengerExportListingResult,
+  type MessengerExportListingOptions,
 } from './messengerExportLoader';
 export { processMessengerExportMedia } from './messengerExportMedia';
 export {
@@ -22,6 +23,8 @@ export {
   addConversationToChatIndex,
   buildReferenceIndexFromChatMedia,
   createMessengerExportChatIndex,
+  createMessengerExportSizeMetadata,
+  addConversationToSizeMetadata,
   createMessengerExportReferenceIndex,
   getMessengerMediaBasename,
   getMessengerMediaFilePath,
@@ -31,6 +34,7 @@ export {
   removeConversationFromChatIndex,
   removeConversationFromReferenceIndex,
   type MessengerExportChatIndex,
+  type MessengerExportSizeMetadata,
   type MessengerExportIndexWarning,
   type MessengerExportIndexWarningReason,
 } from './messengerExportIndex';

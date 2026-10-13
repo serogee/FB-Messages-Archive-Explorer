@@ -1,10 +1,11 @@
 import type { ChatListEntry } from '../../types/messenger';
 import type { ChatDeletionBlockDetails } from '../../types/deletion';
 import type { CalculationProgress } from '../calculationProgress';
-import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../../types/fileSystem';
+import type { ReadableDirectoryHandle, ReadableFileHandle, WritableDirectoryHandle } from '../../types/fileSystem';
 import { mapWithConcurrency } from '../concurrency';
 import { getDeletableAttachmentIdentities } from '../attachmentReferenceIndex';
 import { classifyMessengerExportJson } from './messengerExportParser';
+import { waitForAttachmentPreview } from '../attachmentScanScheduling';
 import { buildMessengerExportMediaSizeIndex, type MediaSizeIndex } from './messengerExportSize';
 import {
   addConversationToChatIndex,
@@ -242,15 +243,21 @@ export function getMessengerExportDeletionOwnershipInfo(
 
 export async function buildMessengerExportReferenceIndex(
   rootHandle: ReadableDirectoryHandle,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (progress: CalculationProgress) => void,
 ): Promise<MessengerExportReferenceIndex> {
   const chatIndex = createMessengerExportChatIndex();
   let lastYield = performance.now();
-
+  const files: Array<{ name: string; entry: ReadableFileHandle }> = [];
   for await (const [name, entry] of rootHandle.entries()) {
     throwIfAborted(signal);
-    if (entry.kind !== 'file' || !/\.json$/i.test(name)) continue;
-
+    if (entry.kind === 'file' && /\.json$/i.test(name)) files.push({ name, entry });
+  }
+  let done = 0;
+  const report = () => onProgress?.({ stage: 'ownership', label: 'Scanning for shared attachments', done, total: files.length, unit: 'files' });
+  report();
+  for (const { name, entry } of files) {
+    await waitForAttachmentPreview(signal);
     try {
       const file = await entry.getFile();
       throwIfAborted(signal);
@@ -268,7 +275,8 @@ export async function buildMessengerExportReferenceIndex(
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       markMessengerExportIndexIncomplete(chatIndex, { jsonFileName: name, reason: 'unreadable' });
     }
-
+    done++;
+    report();
     if (performance.now() - lastYield > 16) {
       await new Promise(resolve => setTimeout(resolve, 0));
       throwIfAborted(signal);
@@ -281,7 +289,8 @@ export async function buildMessengerExportReferenceIndex(
 
 async function removeMediaFile(
   mediaHandle: WritableDirectoryHandle,
-  relativePath: string
+  relativePath: string,
+  beforeRemove?: () => void,
 ): Promise<'removed' | 'missing'> {
   try {
     let directory = mediaHandle;
@@ -292,6 +301,7 @@ async function removeMediaFile(
     for (const part of parts.slice(0, -1)) {
       directory = await directory.getDirectoryHandle(part);
     }
+    beforeRemove?.();
     await directory.removeEntry(parts[parts.length - 1]);
     return 'removed';
   } catch (error) {
@@ -309,14 +319,20 @@ export async function removeMediaFiles(
     completed: number,
     total: number,
     file: MessengerExportMediaDeletionTarget
-  ) => void
+  ) => void,
+  beforeRemove?: () => void,
 ): Promise<MessengerExportMediaRemovalResult> {
   let completedCount = 0;
   const outcomes = await mapWithConcurrency(files, concurrency, async file => {
+    let guardRejected = false;
+    const guard = () => {
+      try { beforeRemove?.(); } catch (error) { guardRejected = true; throw error; }
+    };
     try {
-      const status = mediaHandle ? await removeMediaFile(mediaHandle, file.path) : 'missing';
+      const status = mediaHandle ? await removeMediaFile(mediaHandle, file.path, guard) : 'missing';
       return { file, status } as const;
     } catch (error) {
+      if (guardRejected) throw error;
       return { file, status: 'failed' as const, error };
     } finally {
       completedCount++;
@@ -465,7 +481,8 @@ export async function executeMessengerExportDeletionPlan(
   rootHandle: WritableDirectoryHandle,
   plan: MessengerExportDeletionPlan,
   index: MessengerExportChatIndex | MessengerExportReferenceIndex,
-  onProgress?: (progress: MessengerExportDeletionProgress) => void
+  onProgress?: (progress: MessengerExportDeletionProgress) => void,
+  beforeRemove?: () => void,
 ): Promise<MessengerExportDeletionResult> {
   const referenceIndex = getReferenceIndex(index);
   assertCompleteReferenceIndex(referenceIndex);
@@ -513,7 +530,7 @@ export async function executeMessengerExportDeletionPlan(
     } else {
       mediaResult = await removeMediaFiles(mediaHandle, mediaToDelete, 4, () => {
         reportProgress('media', chat.entry);
-      });
+      }, beforeRemove);
     }
 
     if (mediaResult.failures.length > 0) {
@@ -534,6 +551,7 @@ export async function executeMessengerExportDeletionPlan(
       continue;
     }
 
+    beforeRemove?.();
     try {
       await rootHandle.removeEntry(chat.jsonFileName);
     } catch (error) {

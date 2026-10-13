@@ -16,10 +16,13 @@ export interface MessengerExportReferenceIndex extends AttachmentReferenceIndex 
   warnings: MessengerExportIndexWarning[];
 }
 
-export interface MessengerExportChatIndex {
-  referenceIndex: MessengerExportReferenceIndex;
+export interface MessengerExportSizeMetadata {
   chatMediaPaths: Map<string, Set<string>>;
   jsonSizes: Map<string, number>;
+}
+
+export interface MessengerExportChatIndex extends MessengerExportSizeMetadata {
+  referenceIndex: MessengerExportReferenceIndex;
   complete: boolean;
   warnings: MessengerExportIndexWarning[];
 }
@@ -58,12 +61,15 @@ export function createMessengerExportReferenceIndex(): MessengerExportReferenceI
   };
 }
 
-export function createMessengerExportChatIndex(): MessengerExportChatIndex {
+export function createMessengerExportSizeMetadata(): MessengerExportSizeMetadata {
+  return { chatMediaPaths: new Map(), jsonSizes: new Map() };
+}
+
+export function createMessengerExportChatIndex(metadata = createMessengerExportSizeMetadata()): MessengerExportChatIndex {
   const referenceIndex = createMessengerExportReferenceIndex();
   return {
     referenceIndex,
-    chatMediaPaths: new Map(),
-    jsonSizes: new Map(),
+    ...metadata,
     complete: true,
     warnings: referenceIndex.warnings,
   };
@@ -92,36 +98,36 @@ export function addConversationToChatIndex(
   thread: MessengerThread
 ): void {
   removeConversationFromChatIndex(index, jsonFileName);
+  addConversationToSizeMetadata(index, jsonFileName, fileSize, thread, (identity, filePath) => {
+    const existingPath = index.referenceIndex.mediaFiles.get(identity);
+    if (existingPath && existingPath !== filePath) {
+      markMessengerExportIndexIncomplete(index, { jsonFileName, reason: 'ambiguous-media-path' });
+    } else if (!existingPath) index.referenceIndex.mediaFiles.set(identity, filePath);
+  });
+  const mediaIdentities = index.chatMediaPaths.get(jsonFileName)!;
+  index.referenceIndex.chatMedia.set(jsonFileName, mediaIdentities);
+  for (const identity of mediaIdentities) addAttachmentOwner(index.referenceIndex, identity, jsonFileName);
+}
 
-  const mediaIdentities = new Set<string>();
+/** Size references are independent of cross-chat owners and safety warnings. */
+export function addConversationToSizeMetadata(
+  metadata: MessengerExportSizeMetadata, jsonFileName: string, fileSize: number, thread: MessengerThread,
+  onReference?: (identity: string, filePath: string) => void,
+): void {
+  const identities = new Set<string>();
   for (const message of thread.messages || []) {
     for (const { path, shared } of getMessageAttachmentReferences(message)) {
       if (shared) continue;
       const identity = getMessengerMediaIdentity(path);
       const filePath = getMessengerMediaFilePath(path);
       if (!identity || !filePath) continue;
-      mediaIdentities.add(identity);
-      const existingPath = index.referenceIndex.mediaFiles.get(identity);
-      if (existingPath && existingPath !== filePath) {
-        markMessengerExportIndexIncomplete(index, {
-          jsonFileName,
-          reason: 'ambiguous-media-path',
-        });
-      } else if (!existingPath) {
-        index.referenceIndex.mediaFiles.set(identity, filePath);
-      }
+      identities.add(identity);
+      onReference?.(identity, filePath);
     }
   }
 
-  index.referenceIndex.chatMedia.set(jsonFileName, mediaIdentities);
-  // Both APIs currently consume the same normalized identities. Share the set so
-  // attachment-heavy archives do not retain every per-chat reference twice.
-  index.chatMediaPaths.set(jsonFileName, mediaIdentities);
-  index.jsonSizes.set(jsonFileName, fileSize);
-
-  for (const identity of mediaIdentities) {
-    addAttachmentOwner(index.referenceIndex, identity, jsonFileName);
-  }
+  metadata.chatMediaPaths.set(jsonFileName, identities);
+  metadata.jsonSizes.set(jsonFileName, fileSize);
 }
 
 export function removeConversationFromReferenceIndex(

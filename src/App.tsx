@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { useSettings } from './hooks/useSettings';
 import { ReactionFeatureContext, useReactionFeature } from './hooks/useReactionFeature';
 import { useArchive } from './hooks/useArchive';
@@ -48,7 +48,7 @@ function getErrorMessage(error: unknown): string {
 
 export default function App() {
   const { settings, setSetting } = useSettings();
-  const archive = useArchive();
+  const archive = useArchive(settings.deletionEnabled);
   const chat = useChat();
   const attachmentReferences = useMemo(() => ({
     index: archive.attachmentReferenceIndex,
@@ -96,6 +96,20 @@ export default function App() {
   const [deleteVerificationProgress, setDeleteVerificationProgress] = useState<CalculationProgressStore | null>(null);
   const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deleteOperationGuardRef = useRef(new SingleFlightGuard());
+  const deletionPolicyRef = useRef({ enabled: settings.deletionEnabled, revision: 0 });
+  useLayoutEffect(() => {
+    if (deletionPolicyRef.current.enabled === settings.deletionEnabled) return;
+    deletionPolicyRef.current = { enabled: settings.deletionEnabled, revision: deletionPolicyRef.current.revision + 1 };
+  }, [settings.deletionEnabled]);
+  useEffect(() => {
+    if (settings.deletionEnabled) return;
+    deleteInfoRequestRef.current++;
+    deleteInfoAbortRef.current?.abort();
+    deleteInfoAbortRef.current = null;
+    deleteCalculationProgressRef.current?.dispose();
+    setDeleteTarget(null);
+    setDeleteResultNotice(null);
+  }, [settings.deletionEnabled]);
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryDefaultTab, setGalleryDefaultTab] = useState<GalleryCategory>('all');
@@ -132,6 +146,7 @@ export default function App() {
     forceOwnershipCheck = false,
     skipAttachmentCheck = false,
   ) => {
+    if (!deletionPolicyRef.current.enabled) return;
     deleteCalculationProgressRef.current?.dispose();
     deleteInfoAbortRef.current?.abort();
     const abortCtrl = new AbortController();
@@ -208,7 +223,13 @@ export default function App() {
   }, [prepareDeleteTarget]);
 
   const handleDeleteConfirm = useCallback(async (mode: 'normal' | 'json-only' | 'override' | 'unchecked') => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !deletionPolicyRef.current.enabled) return;
+    const policyRevision = deletionPolicyRef.current.revision;
+    const assertPolicyCurrent = () => {
+      if (!deletionPolicyRef.current.enabled || deletionPolicyRef.current.revision !== policyRevision) {
+        throw new DOMException('Chat deletion was disabled or superseded.', 'AbortError');
+      }
+    };
     const jsonOnly = mode === 'json-only';
     const operationToken = deleteOperationGuardRef.current.tryBegin();
     if (!operationToken) return;
@@ -234,8 +255,10 @@ export default function App() {
       if (!permissionRoot || !await requestDirectoryWritePermission(permissionRoot)) {
         throw new DOMException('Write access is required to delete these chats.', 'NotAllowedError');
       }
+      assertPolicyCurrent();
       sizeWorkSuspended = true;
       await archive.suspendSizeWork();
+      assertPolicyCurrent();
       setDeletePreparing(false);
       setDeleteBusy(true);
       setDeleteProgress(null);
@@ -292,11 +315,13 @@ export default function App() {
         setDeleteTarget(null);
       }
     } catch (error) {
-      console.error('Delete failed:', error);
-      const message = error instanceof DOMException && error.name === 'NotAllowedError'
-        ? 'Write access was not granted. The chats were not deleted.'
-        : `Deletion failed: ${getErrorMessage(error)}`;
-      setDeleteResultNotice({ message, failures: [] });
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        console.error('Delete failed:', error);
+        const message = error instanceof DOMException && error.name === 'NotAllowedError'
+          ? 'Write access was not granted. The chats were not deleted.'
+          : `Deletion failed: ${getErrorMessage(error)}`;
+        setDeleteResultNotice({ message, failures: [] });
+      }
     } finally {
       if (sizeWorkSuspended) archive.resumeSizeWork();
       progressReporter.cancel();
