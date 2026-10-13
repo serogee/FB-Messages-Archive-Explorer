@@ -5,7 +5,7 @@ import type { CalculationProgress } from '../calculationProgress';
 import {
   getMessengerMediaBasename,
   getMessengerMediaIdentity,
-  type MessengerExportChatIndex,
+  type MessengerExportSizeMetadata,
 } from './messengerExportIndex';
 
 export type MediaSizeIndex = Map<string, number>;
@@ -141,7 +141,7 @@ export async function computeMessengerExportChatSize(
 
 export function computeMessengerExportChatSizeFromIndex(
   jsonFileName: string,
-  chatIndex: MessengerExportChatIndex,
+  chatIndex: MessengerExportSizeMetadata,
   mediaSizeIndex: MediaSizeIndex
 ): number {
   const jsonSize = chatIndex.jsonSizes.get(jsonFileName);
