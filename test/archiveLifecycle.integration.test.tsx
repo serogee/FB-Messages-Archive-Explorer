@@ -55,7 +55,7 @@ describe('archive lifecycle integration', () => {
       .mockResolvedValueOnce(firstRoot)
       .mockResolvedValueOnce(secondRoot);
     Object.defineProperty(window, 'showDirectoryPicker', { value: picker, configurable: true });
-    const { result, unmount } = renderHook(() => useArchive());
+    const { result, unmount } = renderHook(() => useArchive(true));
 
     let firstLoad!: Promise<boolean>;
     act(() => { firstLoad = result.current.openFolder(); });
@@ -82,7 +82,7 @@ describe('archive lifecycle integration', () => {
     const invalidRoot = createMockDirectoryHandle('invalid', { notes: { 'readme.txt': 'no messages' } });
     const picker = vi.fn().mockResolvedValueOnce(validRoot).mockResolvedValueOnce(invalidRoot);
     Object.defineProperty(window, 'showDirectoryPicker', { value: picker, configurable: true });
-    const { result } = renderHook(() => useArchive());
+    const { result } = renderHook(() => useArchive(true));
 
     await act(async () => { await result.current.openFolder(); });
     expect(result.current.inboxList).toHaveLength(1);

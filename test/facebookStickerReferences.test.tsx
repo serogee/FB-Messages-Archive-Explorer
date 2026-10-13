@@ -49,7 +49,7 @@ function archiveRoot() {
 
 async function openArchive(root: FileSystemDirectoryHandle) {
   Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: vi.fn(async () => root) });
-  const hook = renderHook(() => useArchive());
+  const hook = renderHook(() => useArchive(true));
   await act(async () => { await hook.result.current.openFolder(); });
   return hook;
 }

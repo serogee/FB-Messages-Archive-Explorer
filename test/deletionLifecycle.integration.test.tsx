@@ -47,7 +47,7 @@ describe('archive deletion lifecycle', () => {
     });
     Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: vi.fn(async () => root) });
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { result } = renderHook(() => useArchive());
+    const { result } = renderHook(() => useArchive(true));
     await act(async () => { await result.current.openFolder(); });
     const target = result.current.inboxList.find(entry => entry._jsonFileName === 'a.json')!;
     const progress: Array<{ stage: string; done: number; total: number }> = [];
@@ -98,7 +98,7 @@ describe('archive deletion lifecycle', () => {
     });
     Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: vi.fn(async () => root) });
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { result } = renderHook(() => useArchive());
+    const { result } = renderHook(() => useArchive(true));
     await act(async () => { await result.current.openFolder(); });
     const target = result.current.inboxList[0];
 
