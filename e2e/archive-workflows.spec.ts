@@ -619,6 +619,70 @@ test('stacks cross-chat attachment counts above local usage and updates after de
   })).toBe('file');
 });
 
+for (const format of ['facebook', 'messenger'] as const) {
+test(`connects ${format} ownership scanning and gallery counts to the deletion setting`, async ({ page }) => {
+  await installArchive(page, format);
+  await page.addInitScript(() => {
+    localStorage.setItem(`majv_${location.hostname}_setting_deletionEnabled`, '0');
+    const BaseWorker = window.Worker;
+    Object.defineProperty(window, '__ownershipWorkerCount', { configurable: true, writable: true, value: 0 });
+    window.Worker = class extends BaseWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (String(url).includes('metaAttachmentWorker')) (window as unknown as { __ownershipWorkerCount: number }).__ownershipWorkerCount++;
+      }
+    };
+  });
+  await page.goto('');
+  await page.evaluate(async selectedFormat => {
+    const roots = (window as unknown as { __testArchives: Record<string, FileSystemDirectoryHandle> }).__testArchives;
+    const root = roots[selectedFormat];
+    const inbox = selectedFormat === 'facebook' ? await root.getDirectoryHandle('inbox') : null;
+    const a = inbox ? await (await inbox.getDirectoryHandle('alice_chat')).getFileHandle('message_1.json') : await root.getFileHandle('alice.json');
+    const b = inbox ? await (await inbox.getDirectoryHandle('bob_chat')).getFileHandle('message_1.json') : await root.getFileHandle('group.json');
+    const uri = inbox ? 'messages/inbox/alice_chat/photos/photo.jpg' : 'media/photo.jpg';
+    const first = JSON.parse(await (await a.getFile()).text());
+    const second = JSON.parse(await (await b.getFile()).text());
+    const field = inbox ? 'photos' : 'media';
+    first.messages[0][field] = [{ uri }];
+    first.messages[1][field] = [{ uri }];
+    second.messages[0][field] = [{ uri }];
+    for (const [handle, raw] of [[a, first], [b, second]] as const) {
+      const writer = await handle.createWritable(); await writer.write(JSON.stringify(raw)); await writer.close();
+    }
+    const read = b.getFile.bind(b);
+    Object.defineProperty(window, '__sharedJsonReadCount', { configurable: true, writable: true, value: 0 });
+    b.getFile = async () => {
+      (window as unknown as { __sharedJsonReadCount: number }).__sharedJsonReadCount++;
+      return read();
+    };
+  }, format);
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  await page.locator('.chat-list-item').filter({ hasText: format === 'facebook' ? 'Alice Chat' : 'Messenger Alice' }).click();
+  await page.getByRole('button', { name: 'Toggle chat info panel' }).click();
+  await page.getByRole('button', { name: 'Attachments', exact: true }).click();
+  const thumb = page.locator('.gallery-thumb[title="photo.jpg"]').first();
+  await expect(thumb).toBeVisible();
+  await expect(thumb.getByLabel('Attachment used 2 times in this chat')).toBeVisible();
+  await expect(page.getByLabel('Attachment used in 2 chats')).toHaveCount(0);
+  await expect(page.getByRole('status', { name: 'Shared attachment scan', exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __ownershipWorkerCount: number }).__ownershipWorkerCount)).toBe(0);
+  await page.getByRole('tab', { name: 'Settings' }).click();
+  const toggle = page.locator('label[for="deletionEnabledToggle"]');
+  await toggle.click(); await page.getByRole('button', { name: 'I understand, enable deletion' }).click();
+  await expect(thumb.getByLabel('Attachment used in 2 chats')).toBeVisible();
+  const reads = await page.evaluate(() => (window as unknown as { __sharedJsonReadCount: number }).__sharedJsonReadCount);
+  await toggle.click();
+  await expect(page.getByLabel('Attachment used in 2 chats')).toHaveCount(0);
+  await expect(page.locator('.gallery-reference-status')).toHaveCount(0);
+  await expect(thumb.getByLabel('Attachment used 2 times in this chat')).toBeVisible();
+  await toggle.click(); await page.getByRole('button', { name: 'I understand, enable deletion' }).click();
+  await expect(thumb.getByLabel('Attachment used in 2 chats')).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { __sharedJsonReadCount: number }).__sharedJsonReadCount)).toBeGreaterThan(reads);
+  if (format === 'facebook') expect(await page.evaluate(() => (window as unknown as { __ownershipWorkerCount: number }).__ownershipWorkerCount)).toBe(2);
+});
+}
+
 test('previews and safely removes Facebook shared stickers after their last chat is deleted', async ({ page }) => {
   await installArchive(page, 'facebook');
   await page.goto('');
