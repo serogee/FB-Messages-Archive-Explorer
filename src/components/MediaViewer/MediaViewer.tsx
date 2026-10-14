@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { MoreVertical, ExternalLink, Download, Copy, X, ChevronLeft, ChevronRight, Check, CheckSquare, SquareX, Paperclip, Music, FileText, Bookmark, Link as LinkIcon, UserRound, Eye, EyeOff } from 'lucide-react';
 import type { MediaEntry, ResolvedAttachment, SelectableItem } from '../../types/messenger';
@@ -130,6 +130,9 @@ export function MediaViewer({
   const [filenameCopiedFor, setFilenameCopiedFor] = useState<ResolvedAttachment | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const topbarRef = useRef<HTMLDivElement>(null);
+  const navigationRef = useRef<HTMLDivElement>(null);
+  const imageElementRef = useRef<HTMLImageElement>(null);
   const mediaElementRef = useRef<HTMLMediaElement | null>(null);
   const currentItemRef = useRef<SelectableItem | null>(null);
   const selectionRef = useRef(selection);
@@ -217,6 +220,38 @@ export function MediaViewer({
   const rightIndex = findNavigableIndex(currentIndex, rightStep);
   const hasLeft = leftIndex >= 0;
   const hasRight = rightIndex >= 0;
+  const navigationRendered = showNavigation && (hasLeft || hasRight);
+  useLayoutEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    if (!mobile) { prepareViewerImage(imageElementRef.current); return; }
+    const measure = () => {
+      const viewport = overlay.getBoundingClientRect();
+      const top = Math.max(0, (topbarRef.current?.getBoundingClientRect().bottom ?? viewport.top) - viewport.top + 12);
+      const footer = navigationRef.current;
+      const bottom = footer ? viewport.bottom - footer.getBoundingClientRect().top + 12
+        : 12 + (parseFloat(getComputedStyle(overlay).paddingBottom) || 0);
+      for (const [name, value] of Object.entries({
+        '--viewer-content-top': top, '--viewer-content-bottom': bottom,
+        '--viewer-content-height': Math.max(0, viewport.height - top - bottom),
+      })) {
+        const pixels = `${value}px`;
+        if (overlay.style.getPropertyValue(name) !== pixels) overlay.style.setProperty(name, pixels);
+      }
+    };
+    measure();
+    // Reveal cached images only after the current chrome has been measured.
+    prepareViewerImage(imageElementRef.current);
+    // Chrome stays independent of the content we resize, avoiding observer feedback.
+    const observer = new ResizeObserver(measure);
+    observer.observe(overlay);
+    if (topbarRef.current) observer.observe(topbarRef.current);
+    if (navigationRef.current) observer.observe(navigationRef.current);
+    return () => {
+      observer.disconnect();
+      for (const name of ['--viewer-content-top', '--viewer-content-bottom', '--viewer-content-height']) overlay.style.removeProperty(name);
+    };
+  }, [mobile, navigationRendered, item, url]);
   const selectedItemCount = selectedNavigation && selection
     ? items.filter(candidate => selection.isSelected(candidate)).length
     : 0;
@@ -385,7 +420,7 @@ export function MediaViewer({
         if (e.target === e.currentTarget) closeViewer();
       }}
     >
-      <div className="media-viewer-topbar" inert={imageExpanded || undefined} aria-hidden={imageExpanded || undefined}>
+      <div ref={topbarRef} className="media-viewer-topbar" inert={imageExpanded || undefined} aria-hidden={imageExpanded || undefined}>
         <div className="media-viewer-top-left">
           <div className="media-viewer-counter">
             {items.length > 0 && (selectedNavigation
@@ -508,7 +543,7 @@ export function MediaViewer({
         </div>
       </div>
 
-      {showNavigation && (hasLeft || hasRight) && <div className="media-viewer-navigation" aria-label="Attachment navigation"
+      {navigationRendered && <div ref={navigationRef} className="media-viewer-navigation" aria-label="Attachment navigation"
         inert={imageExpanded || undefined} aria-hidden={imageExpanded || undefined}>
         <button
           type="button"
@@ -580,7 +615,7 @@ export function MediaViewer({
         ) : displayType === 'image' ? (
           <img
             key={`${currentIndex}:${url}`}
-            ref={prepareViewerImage}
+            ref={imageElementRef}
             src={url}
             alt={filename}
             className={`media-viewer-image${attachment?.category === 'stickers' ? ' media-viewer-sticker' : ''}`}
