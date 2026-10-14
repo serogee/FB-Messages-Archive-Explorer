@@ -3,10 +3,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MediaViewer } from '../src/components/MediaViewer/MediaViewer';
+import { useViewerSwipe } from '../src/hooks/useViewerSwipe';
 import { createMediaState } from '../src/services/media';
 import type { ResolvedAttachment } from '../src/types/messenger';
 
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   vi.stubGlobal('PointerEvent', class extends MouseEvent {
     readonly pointerId: number;
     readonly pointerType: string;
@@ -50,6 +52,38 @@ function gesture(target: Element, dx: number, dy = 0, cancel = false) {
 }
 
 describe('mobile viewer gestures', () => {
+  it.each(['touch', 'pen'])('blocks moved %s gestures on controls and links, including movement back to the start', pointerType => {
+    const actions = vi.fn();
+    const navigate = vi.fn();
+    function Controls() {
+      const swipe = useViewerSwipe({ enabled: true, item: null, onPrevious: navigate, onNext: navigate, onImageTap: navigate });
+      return <div {...swipe}>
+        {['Select', 'Download', 'Close', 'Menu'].map(label => <button key={label} onClick={actions}>{label}</button>)}
+        <a href="#attachment" onClick={event => { event.preventDefault(); actions(); }}>Link</a>
+      </div>;
+    }
+    render(<Controls />);
+    for (const control of screen.getAllByRole('button').concat(screen.getByRole('link'))) {
+      for (const [dx, dy, returnToStart, cancel] of [[30, 0, false, false], [0, 30, false, false], [30, 0, true, false], [0, 0, false, true]]) {
+        const pointer = { pointerId: 7, pointerType, isPrimary: true, button: 0, clientX: 100, clientY: 100 };
+        fireEvent.pointerDown(control, pointer);
+        fireEvent.pointerMove(control, { ...pointer, clientX: 100 + Number(dx), clientY: 100 + Number(dy) });
+        if (cancel) fireEvent.pointerCancel(control, pointer);
+        else fireEvent.pointerUp(control, returnToStart ? pointer : { ...pointer, clientX: 100 + Number(dx), clientY: 100 + Number(dy) });
+        fireEvent.click(control, { detail: 1 });
+        expect(actions).not.toHaveBeenCalled();
+        expect(navigate).not.toHaveBeenCalled();
+        // A fresh valid tap runs once even if a compatibility click follows.
+        fireEvent.pointerDown(control, pointer);
+        fireEvent.pointerUp(control, pointer);
+        fireEvent.click(control, { detail: 1 });
+        expect(actions).toHaveBeenCalledTimes(1);
+        fireEvent.click(control, { detail: 0 });
+        expect(actions).toHaveBeenCalledTimes(2);
+        actions.mockClear();
+      }
+    }
+  });
   it.each([true, false])('never commits a previous file URL under the next attachment, mobile=%s', async mobile => {
     const mediaState = createMediaState();
     const sources: (string | null)[] = [];
@@ -179,6 +213,9 @@ describe('mobile viewer gestures', () => {
     expect(onCurrentItemChange).toHaveBeenLastCalledWith(items[1]);
     const menu = screen.getByRole('button', { name: 'More options' });
     gesture(menu, -100);
+    fireEvent.click(menu, { detail: 1 });
+    expect(screen.queryByRole('button', { name: 'Jump to message' })).toBeNull();
+    gesture(menu, 0);
     fireEvent.click(menu, { detail: 1 });
     expect(screen.getByRole('button', { name: 'Jump to message' })).toBeTruthy();
     expect(onCurrentItemChange).toHaveBeenLastCalledWith(items[1]);
