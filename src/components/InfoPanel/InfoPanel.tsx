@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
-import { Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon, Sticker, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon, Sticker, ChevronRight } from 'lucide-react';
 import {
   formatCompactInfoDate,
   formatCompactInfoNumber,
@@ -14,6 +14,9 @@ import { normalizeAttachmentPath } from '../../services/attachmentIdentity';
 import { useThreadData } from '../../hooks/useThreadData';
 
 interface InfoPanelProps {
+  dateNavigation?: ReactNode;
+  onBack?: () => void;
+  hidden?: boolean;
   chatData?: MessengerThread | null;
   activeEntry: ChatListEntry | null;
   mediaState: MediaState;
@@ -122,7 +125,7 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
   };
 }
 
-export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery, header }: InfoPanelProps) {
+export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery, header, onBack, hidden = false, dateNavigation }: InfoPanelProps) {
   const chatData = useThreadData(providedThread);
   const stats = useMemo(() => {
     if (!chatData) return null;
@@ -130,7 +133,8 @@ export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, s
   }, [activeEntry?._messengerExport, chatData, mediaState]);
 
   return (
-    <div className="chat-info-panel" id="chatInfoPanel" aria-hidden={!chatData ? 'true' : 'false'}>
+    <div className="chat-info-panel" id="chatInfoPanel" inert={hidden || undefined} aria-hidden={hidden || (!chatData && !onBack)}>
+      {onBack && <div className="mobile-page-header"><button type="button" className="mobile-back-btn" onClick={onBack} aria-label="Back to chat"><ArrowLeft size={18} /></button><h3>Chat info</h3></div>}
       {header || (
         <div className="info-panel-header">
           <strong>{chatData?.title || activeEntry?.title || 'Chat Info'}</strong>
@@ -145,6 +149,10 @@ export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, s
           )
         ) : (
           <>
+            {dateNavigation && <details className="info-section mobile-date-section">
+              <summary>Browse by date</summary>
+              {dateNavigation}
+            </details>}
             <div className="info-section">
               <strong>Chat Info</strong>
               <div className="info-stats">
@@ -174,6 +182,7 @@ export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, s
               <strong
                 className={onOpenGallery ? 'info-section-clickable' : ''}
                 onClick={() => onOpenGallery?.()}
+                onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpenGallery?.(); } }}
                 role={onOpenGallery ? 'button' : undefined}
                 tabIndex={onOpenGallery ? 0 : undefined}
                 title="Open attachments"
@@ -194,6 +203,7 @@ export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, s
                     key={label}
                     className={`info-row ${onOpenGallery ? 'info-row-clickable' : ''}`}
                     onClick={() => onOpenGallery?.(tab)}
+                    onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpenGallery?.(tab); } }}
                     role={onOpenGallery ? 'button' : undefined}
                     tabIndex={onOpenGallery ? 0 : undefined}
                     title={`View ${label.toLowerCase()}`}
