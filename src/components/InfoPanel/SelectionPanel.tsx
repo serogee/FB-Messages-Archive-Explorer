@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ResolvedAttachment, ResolvedLink, SelectableItem, MediaState, MessengerThread, ChatListEntry } from '../../types/messenger';
-import { MoreHorizontal, X, Check, Image as ImageIcon, Film, Music, FileText, Play, FolderOutput, Archive, Bookmark, BookmarkX, Link as LinkIcon, UserRound, Info } from 'lucide-react';
+import { ArrowLeft, MoreHorizontal, X, Check, Image as ImageIcon, Film, Music, FileText, Play, FolderOutput, Archive, Bookmark, BookmarkX, Link as LinkIcon, UserRound, Info } from 'lucide-react';
 import { formatFileSize, formatInfoNumber } from '../../services/storage';
 import { saveToFolder, downloadAsZip } from '../../services/saveAttachments';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
@@ -16,6 +16,8 @@ import { UnavailableAttachment } from '../UnavailableAttachment';
 import { AttachmentUsageIndicators } from '../AttachmentUsageIndicators';
 
 interface SelectionPanelProps {
+  onBack?: () => void;
+  hidden?: boolean;
   activeEntry: ChatListEntry | null;
   chatData: MessengerThread;
   mediaState: MediaState;
@@ -320,6 +322,8 @@ export function SelectionHeader({
 }
 
 export function SelectionPanel({
+  onBack,
+  hidden = false,
   activeEntry,
   chatData,
   mediaState,
@@ -336,7 +340,8 @@ export function SelectionPanel({
   const [saveState, setSaveState] = useState<SelectionSaveState>(IDLE_SAVE_STATE);
 
   return (
-    <div className="chat-info-panel selection-panel">
+    <div className="chat-info-panel selection-panel" inert={hidden || undefined} aria-hidden={hidden || undefined}>
+      {onBack && <div className="mobile-page-header"><button type="button" className="mobile-back-btn" onClick={onBack} aria-label="Back to attachments"><ArrowLeft size={18} /></button><h3>Selected attachments</h3></div>}
       <SelectionHeader
         activeEntry={activeEntry}
         chatData={chatData}
@@ -367,6 +372,7 @@ export function SelectionPanel({
         </div>
       ) : (
         <div className="selection-panel-content">
+          {selectedItems.length === 0 && <p className="info-empty">No attachments selected.</p>}
           <div className="selection-grid">
             {selectedItems.map((item, index) => {
               if (item.category === 'links') {
