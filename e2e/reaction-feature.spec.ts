@@ -122,6 +122,8 @@ test('nearby completes delayed reaction pairs and closes the extended block', as
   await page.locator('label[for="hideLikelyReactionNotices"]').click();
   await expect(hiddenNotice).toContainText('5 reaction notices hidden');
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+  await page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' }).click();
   await hiddenNotice.scrollIntoViewIfNeeded();
   const noticeBox = await hiddenNotice.boundingBox();
   const chatBox = await page.locator('.chat-container').boundingBox();
