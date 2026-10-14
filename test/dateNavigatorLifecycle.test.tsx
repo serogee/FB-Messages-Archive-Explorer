@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DateNavigator } from '../src/components/Chat/DateNavigator';
 import { ThreadDataContext } from '../src/hooks/useThreadData';
 import type { Settings } from '../src/hooks/useSettings';
@@ -9,9 +9,28 @@ import type { MessengerMessage, MessengerThread } from '../src/types/messenger';
 const settings = { autoCollapseDateNav: false } as Settings;
 const message = (timestamp_ms: number): MessengerMessage => ({ sender_name: 'Owner', timestamp_ms, content: 'hello' });
 const thread = (messages: MessengerMessage[]) => ({ title: 'chat', participants: [], messages } as unknown as MessengerThread);
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+beforeEach(() => { vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1)); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('date navigator loaded-thread lifecycle', () => {
+  it('browses embedded arrows and week/day sliders locally and jumps only on a month click', async () => {
+    const jump = vi.fn().mockResolvedValue(undefined);
+    const data = thread([message(new Date(2024, 3, 8, 12).getTime()), message(new Date(2024, 4, 9, 12).getTime())]);
+    const view = render(<ThreadDataContext value={data}><DateNavigator settings={settings} onJumpToMessage={jump} chatContainerRef={{ current: null }} mobile embedded /></ThreadDataContext>);
+    await waitFor(() => expect(view.container.querySelectorAll('.date-nav-item')).toHaveLength(2));
+    fireEvent.click(view.getByRole('button', { name: 'Next period' }));
+    expect(jump).not.toHaveBeenCalled();
+    vi.useFakeTimers();
+    for (const scale of ['Week', 'Day']) {
+      fireEvent.click(view.getByRole('button', { name: scale, exact: true }));
+      fireEvent.change(view.container.querySelector('input[type="range"]')!, { target: { value: '1' } });
+      await act(async () => { await vi.runAllTimersAsync(); });
+      expect(jump).not.toHaveBeenCalled();
+    }
+    fireEvent.click(view.getByRole('button', { name: 'Month', exact: true }));
+    fireEvent.click(view.container.querySelectorAll('.date-nav-item')[1]);
+    expect(jump).toHaveBeenCalledExactlyOnceWith(1);
+  });
   it('preserves original jump indices and excludes notices when reading the shared thread', async () => {
     const jump = vi.fn().mockResolvedValue(undefined);
     const april = new Date(2024, 3, 8, 12).getTime(), may = new Date(2024, 4, 9, 12).getTime();
