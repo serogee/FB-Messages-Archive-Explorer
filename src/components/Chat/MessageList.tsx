@@ -12,6 +12,7 @@ import { chunkArray } from '../../services/storage';
 import { resolveMessageJumpTarget } from '../../services/messageJump';
 import { getVisibleMessageNeighbors } from '../../services/messageVisibility';
 import { MessageBubble } from './MessageBubble';
+import { formatMessageSeparatorDate } from '../../services/dateTime';
 import type { MessagePosition } from '../../services/mobileNavigation';
 import { ReactionVisibilityAnchor } from './ReactionVisibilityAnchor';
 import {
@@ -112,27 +113,6 @@ function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages
     failedMediaCount * 118 +
     separatorCount * CHUNK_ESTIMATED_SEPARATOR_HEIGHT
   );
-}
-
-function formatSeparatorDate(ts: number): string {
-  const date = new Date(ts);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const messageDay = new Date(ts);
-  messageDay.setHours(0, 0, 0, 0);
-  if (messageDay.getTime() === today.getTime()) {
-    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  }
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (messageDay.getTime() === yesterday.getTime()) {
-    return `Yesterday, ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-  }
-  return date.toLocaleString([], {
-    weekday: 'short', month: 'short', day: 'numeric',
-    ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}),
-    hour: 'numeric', minute: '2-digit'
-  });
 }
 
 function getChunkDimensionEntries(messages: Messages, mediaState: MediaState): MediaEntry[] {
@@ -252,7 +232,7 @@ const MessageChunk = React.memo(function MessageChunk({
           else if (!forcedRef.current && rendered) {
             // Keep its measured space while releasing message DOM outside the
             // preload margin. Visited chunks must not accumulate forever.
-            measuredRef.current = { visibility, height: el.offsetHeight };
+            measuredRef.current = { visibility, height: el.getBoundingClientRect().height };
             setRendered(false);
           }
         });
@@ -278,7 +258,7 @@ const MessageChunk = React.memo(function MessageChunk({
 
   React.useLayoutEffect(() => {
     if (shouldRender && chunkRef.current && chatContainerRef.current) {
-      const actualHeight = chunkRef.current.offsetHeight;
+      const actualHeight = chunkRef.current.getBoundingClientRect().height;
       measuredRef.current = { visibility, height: actualHeight };
       const container = chatContainerRef.current;
       onHeightMeasured(chunkIndex, actualHeight);
@@ -291,8 +271,9 @@ const MessageChunk = React.memo(function MessageChunk({
     const element = chunkRef.current;
     if (!rendered || !element) return;
     const observer = new ResizeObserver(() => {
-      measuredRef.current = { visibility, height: element.offsetHeight };
-      onHeightMeasured(chunkIndex, element.offsetHeight);
+      const height = element.getBoundingClientRect().height;
+      measuredRef.current = { visibility, height };
+      onHeightMeasured(chunkIndex, height);
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -331,7 +312,7 @@ const MessageChunk = React.memo(function MessageChunk({
       const ts = getMessageTimestamp(msg) || 0;
       items.push(
         <div key={`sep-${globalIdx}`} className="time-separator">
-          {ts ? formatSeparatorDate(ts) : ''}
+          {ts ? formatMessageSeparatorDate(ts) : ''}
         </div>
       );
     }
