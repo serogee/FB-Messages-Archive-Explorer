@@ -75,15 +75,24 @@ export function isWriteAccessSupported(): boolean {
 
 import { openFolderPolyfill } from './polyfill';
 
+// Chrome Android supports showDirectoryPicker but the returned handles may
+// not iterate directory entries reliably through the Storage Access Framework.
+// Fall back to the upload-based polyfill on mobile devices so folder selection
+// works consistently across Android browsers.
+function shouldUsePolyfill(): boolean {
+  if (!isFileSystemAccessSupported()) return true;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 export async function pickMessagesFolder(): Promise<ReadableDirectoryHandle> {
-  if (!isFileSystemAccessSupported()) {
+  if (shouldUsePolyfill()) {
     return openFolderPolyfill();
   }
   return window.showDirectoryPicker({ id: 'messages-folder', mode: 'read' });
 }
 
 export async function pickFolderWithWriteAccess(): Promise<ReadableDirectoryHandle> {
-  if (!isFileSystemAccessSupported()) {
+  if (shouldUsePolyfill()) {
     // Upload fallback handles are read-only but still support archive browsing.
     return openFolderPolyfill();
   }
