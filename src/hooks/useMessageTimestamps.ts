@@ -3,9 +3,26 @@ import { resetChatScrollAnchor } from '../components/Chat/chatScrollAnchoring';
 import { MOBILE_QUERY } from './useMobileNavigation';
 
 const MAX_TAP_MS = 500;
-const DISMISS_MS = 3000;
 const MOVE_TOLERANCE = 10;
 const INTERACTIVE_CONTROLS = 'a, button, input, select, textarea, [role="button"], [contenteditable="true"], .reaction-bubble';
+
+function alignedDateHeight(height: number, margins: number, ratio: number): number {
+  const minimum = Math.ceil(height + margins);
+  let aligned = minimum;
+  let error = Infinity;
+  // Prefer the smallest whole-CSS-pixel block that also ends on a device pixel.
+  // Bound the search so unusual ratios cannot introduce a large blank date row.
+  for (let outer = minimum; outer < minimum + 16; outer++) {
+    const pixels = outer * ratio;
+    const distance = Math.abs(pixels - Math.round(pixels));
+    if (distance < error - 0.000001) {
+      aligned = outer;
+      error = distance;
+    }
+    if (distance < 0.000001) break;
+  }
+  return aligned - margins;
+}
 
 /** Delegate taps to the chat and keep the tapped bubble in place as its date row changes. */
 export function useMessageTimestamps(containerRef: RefObject<HTMLElement | null>, thread: unknown) {
@@ -22,8 +39,6 @@ export function useMessageTimestamps(containerRef: RefObject<HTMLElement | null>
     let startX = 0;
     let startY = 0;
     let startedAt = 0;
-    let compensatedScrollTop: number | undefined;
-    let dismissTimer: ReturnType<typeof setTimeout> | undefined;
 
     const dateRow = (message: HTMLElement) => message.closest('.message-wrapper')?.querySelector<HTMLElement>('.mobile-msg-timestamp');
     const messageFor = (target: EventTarget | null) => {
@@ -35,23 +50,18 @@ export function useMessageTimestamps(containerRef: RefObject<HTMLElement | null>
       pressed = null;
       pointerId = -1;
     };
-    const setVisible = (message: HTMLElement | null, anchor = message ?? visible) => {
-      const top = anchor?.isConnected ? anchor.getBoundingClientRect().top : undefined;
-      container.style.removeProperty('--timestamp-bottom-space');
-      visible?.removeAttribute('data-timestamp-visible');
-      if (visible) {
-        const row = dateRow(visible);
-        if (row) { row.textContent = ''; row.setAttribute('aria-hidden', 'true'); }
+    const reserveDateHeight = (row: HTMLElement) => {
+      row.style.removeProperty('min-height');
+      const height = row.getBoundingClientRect().height;
+      if (height > 0) {
+        const style = getComputedStyle(row);
+        const margins = (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+        // Include margins: the entire inserted block moves the scroll content.
+        // CSS-pixel alignment alone still changes painted edges at fractional DPR.
+        row.style.minHeight = `${alignedDateHeight(height, margins, window.devicePixelRatio || 1)}px`;
       }
-      visible = message;
-      visible?.setAttribute('data-timestamp-visible', 'true');
-      if (visible) {
-        const row = dateRow(visible);
-        if (row) {
-          row.textContent = visible.querySelector('.msg-timestamp')?.textContent ?? '';
-          row.setAttribute('aria-hidden', 'false');
-        }
-      }
+    };
+    const restoreBubbleTop = (anchor: HTMLElement | null, top: number | undefined) => {
       if (top !== undefined && anchor?.isConnected) {
         const delta = anchor.getBoundingClientRect().top - top;
         const destination = Math.max(0, container.scrollTop + delta);
@@ -67,31 +77,51 @@ export function useMessageTimestamps(containerRef: RefObject<HTMLElement | null>
         }
         if (Math.abs(destination - container.scrollTop) > 0.5) {
           container.scrollTop = destination;
-          compensatedScrollTop = container.scrollTop;
         }
         resetChatScrollAnchor(container);
       }
     };
+    const setVisible = (message: HTMLElement | null, anchor = message ?? visible) => {
+      const top = anchor?.isConnected ? anchor.getBoundingClientRect().top : undefined;
+      container.style.removeProperty('--timestamp-bottom-space');
+      visible?.removeAttribute('data-timestamp-visible');
+      if (visible) {
+        const row = dateRow(visible);
+        if (row) {
+          row.style.removeProperty('min-height');
+          row.textContent = '';
+          row.setAttribute('aria-hidden', 'true');
+        }
+      }
+      visible = message;
+      visible?.setAttribute('data-timestamp-visible', 'true');
+      if (visible) {
+        const row = dateRow(visible);
+        if (row) {
+          row.textContent = visible.querySelector('.msg-timestamp')?.textContent ?? '';
+          row.setAttribute('aria-hidden', 'false');
+          reserveDateHeight(row);
+        }
+      }
+      restoreBubbleTop(anchor, top);
+    };
     const dismiss = () => {
       cancelPress();
-      clearTimeout(dismissTimer);
       if (visible) setVisible(null);
     };
     const toggle = (message: HTMLElement) => {
-      clearTimeout(dismissTimer);
       setVisible(visible === message ? null : message, message);
-      if (visible) dismissTimer = setTimeout(dismiss, DISMISS_MS);
     };
     const down = (event: PointerEvent) => {
       if (event.isPrimary === false) {
         blockedClick = pressed;
-        dismiss();
+        cancelPress();
         return;
       }
       cancelPress();
       handledClick = blockedClick = null;
       const message = mobile() && event.button === 0 ? messageFor(event.target) : null;
-      if (!message) { dismiss(); return; }
+      if (!message) return;
       pressed = message;
       pointerId = event.pointerId;
       startX = event.clientX;
@@ -132,18 +162,29 @@ export function useMessageTimestamps(containerRef: RefObject<HTMLElement | null>
       toggle(message);
     };
     const contextMenu = () => { blockedClick = pressed; cancelPress(); };
-    const scroll = () => {
-      // The scroll adjustment above is part of revealing the date, not a user scroll.
-      if (compensatedScrollTop !== undefined && Math.abs(container.scrollTop - compensatedScrollTop) < 1) return;
-      compensatedScrollTop = undefined;
-      blockedClick = pressed;
-      dismiss();
-      const space = parseFloat(container.style.getPropertyValue('--timestamp-bottom-space')) || 0;
-      if (!visible && space && container.scrollTop <= Math.max(0, container.scrollHeight - container.clientHeight - space) + 0.5) {
-        container.style.removeProperty('--timestamp-bottom-space');
-      }
-    };
     const layoutChange = () => { dismiss(); container.style.removeProperty('--timestamp-bottom-space'); };
+    let viewportWidth = container.clientWidth;
+    let viewportHeight = container.clientHeight;
+    let viewportRatio = window.devicePixelRatio || 1;
+    const refreshDateHeight = () => {
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      const ratio = window.devicePixelRatio || 1;
+      if (width === viewportWidth && height === viewportHeight && ratio === viewportRatio) return;
+      viewportWidth = width;
+      viewportHeight = height;
+      viewportRatio = ratio;
+      if (!mobile() || !visible?.isConnected) return;
+      const row = dateRow(visible);
+      if (!row) return;
+      const top = visible.getBoundingClientRect().top;
+      reserveDateHeight(row);
+      restoreBubbleTop(visible, top);
+    };
+    const viewportObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refreshDateHeight);
+    // Observe the viewport, not the row whose height we adjust in the callback.
+    viewportObserver?.observe(container, { box: 'border-box' });
+    window.addEventListener('resize', refreshDateHeight);
 
     document.addEventListener('pointerdown', down, true);
     document.addEventListener('pointermove', move, true);
@@ -151,10 +192,10 @@ export function useMessageTimestamps(containerRef: RefObject<HTMLElement | null>
     document.addEventListener('pointercancel', cancel, true);
     container.addEventListener('click', click, true);
     container.addEventListener('contextmenu', contextMenu);
-    container.addEventListener('scroll', scroll, { passive: true });
     query?.addEventListener('change', layoutChange);
-    window.addEventListener('blur', dismiss);
     return () => {
+      viewportObserver?.disconnect();
+      window.removeEventListener('resize', refreshDateHeight);
       dismiss();
       container.style.removeProperty('--timestamp-bottom-space');
       document.removeEventListener('pointerdown', down, true);
@@ -163,9 +204,7 @@ export function useMessageTimestamps(containerRef: RefObject<HTMLElement | null>
       document.removeEventListener('pointercancel', cancel, true);
       container.removeEventListener('click', click, true);
       container.removeEventListener('contextmenu', contextMenu);
-      container.removeEventListener('scroll', scroll);
       query?.removeEventListener('change', layoutChange);
-      window.removeEventListener('blur', dismiss);
     };
   }, [containerRef, thread]);
 }

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { installArchive } from './helpers/archive';
 
 // These workflows traverse multiple screens; Windows WebKit is slower than Chromium.
@@ -35,6 +35,165 @@ async function openChat(page: Page, longMessages = 0, withValidImage = false, un
 
 async function expectScreen(page: Page, screen: string) {
   await expect(page.locator('.container')).toHaveAttribute('data-mobile-screen', screen);
+}
+
+async function tapWithoutMovingFollowingMessages(page: Page, message: Locator) {
+  await page.locator('#chat:not([data-opening="true"])').waitFor();
+  await message.locator('.message-text').scrollIntoViewIfNeeded();
+  const index = await message.getAttribute('data-msg-index');
+  await page.evaluate(async index => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const chat = document.querySelector<HTMLElement>('#chat')!;
+    const messages = [...chat.querySelectorAll<HTMLElement>('.message')];
+    const viewport = chat.getBoundingClientRect();
+    const following = messages.slice(messages.findIndex(element => element.dataset.msgIndex === index))
+      .filter(element => {
+        const rect = element.getBoundingClientRect();
+        return rect.bottom > viewport.top && rect.top < viewport.bottom;
+      });
+    const tapped = messages.find(element => element.dataset.msgIndex === index)!;
+    const separators = [...chat.querySelectorAll<HTMLElement>('.time-separator:not(.mobile-msg-timestamp)')]
+      .filter(element => {
+        const rect = element.getBoundingClientRect();
+        return !!(tapped.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING)
+          && rect.bottom > viewport.top && rect.top < viewport.bottom;
+      });
+    const measure = () => ({
+      chatWidth: chat.clientWidth,
+      messages: following.map(element => {
+        const rect = element.getBoundingClientRect();
+        const text = element.querySelector('.message-text');
+        const range = document.createRange();
+        if (text) range.selectNodeContents(text);
+        const box = (rect: DOMRect) => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+        return {
+          index: element.dataset.msgIndex, ...box(rect),
+          lines: text ? [...range.getClientRects()].map(box) : [],
+          reactions: [...element.querySelectorAll('.reaction-bubble, .reaction-emoji-simple, .reaction-count')]
+            .map(element => box(element.getBoundingClientRect())),
+        };
+      }),
+      separators: separators.map(element => {
+        const rect = element.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const box = (rect: DOMRect) => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+        return { ...box(rect), lines: [...range.getClientRects()].map(box) };
+      }),
+    });
+    const capture = { before: measure(), frames: [] as ReturnType<typeof measure>[], done: false };
+    (window as unknown as { timestampStability: typeof capture }).timestampStability = capture;
+    const sample = () => {
+      capture.frames.push(measure());
+      if (capture.frames.length >= 8) capture.done = true;
+      else requestAnimationFrame(sample);
+    };
+    const observer = new MutationObserver(() => {
+      observer.disconnect();
+      sample();
+    });
+    observer.observe(chat, { subtree: true, attributes: true, attributeFilter: ['data-timestamp-visible'] });
+  }, index);
+  await message.locator('.message-text').tap();
+  await page.waitForFunction(() => (window as unknown as { timestampStability: { done: boolean } }).timestampStability.done);
+  const maximumDrift = await page.evaluate(() => {
+    type Box = { x: number; y: number; width: number; height: number };
+    type Snapshot = {
+      chatWidth: number;
+      messages: (Box & { index: string; lines: Box[]; reactions: Box[] })[];
+      separators: (Box & { lines: Box[] })[];
+    };
+    const capture = (window as unknown as { timestampStability: { before: Snapshot; frames: Snapshot[] } }).timestampStability;
+    let maximum = 0;
+    const compare = (before: Box, after: Box) => {
+      for (const key of ['x', 'y', 'width', 'height'] as const) maximum = Math.max(maximum, Math.abs(before[key] - after[key]));
+    };
+    for (const frame of capture.frames) {
+      if (frame.chatWidth !== capture.before.chatWidth) return Infinity;
+      for (const [index, before] of capture.before.messages.entries()) {
+        const after = frame.messages[index];
+        if (before.index !== after.index || before.lines.length !== after.lines.length || before.reactions.length !== after.reactions.length) return Infinity;
+        compare(before, after);
+        before.lines.forEach((line, index) => compare(line, after.lines[index]));
+        before.reactions.forEach((reaction, index) => compare(reaction, after.reactions[index]));
+      }
+      for (const [index, before] of capture.before.separators.entries()) {
+        const after = frame.separators[index];
+        if (before.lines.length !== after.lines.length) return Infinity;
+        compare(before, after);
+        before.lines.forEach((line, index) => compare(line, after.lines[index]));
+      }
+    }
+    return maximum;
+  });
+  expect(maximumDrift, 'Bubbles, text, reactions, and separators at or below the tapped message must stay still').toBeLessThanOrEqual(0.02);
+}
+
+async function captureRegionPaint(page: Page, boxes: { x: number; y: number; width: number; height: number }[]) {
+  const png = (await page.screenshot({ scale: 'device', caret: 'hide' })).toString('base64');
+  return page.evaluate(async ({ png, boxes }) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${png}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    return boxes.map(box => {
+      const ratio = devicePixelRatio;
+      const x = Math.ceil(box.x * ratio), y = Math.ceil(box.y * ratio);
+      const width = Math.floor((box.x + box.width) * ratio) - x;
+      const height = Math.floor((box.y + box.height) * ratio) - y;
+      const pixels = context.getImageData(x, y, width, height).data;
+      let hash = 2166136261;
+      for (const value of pixels) hash = Math.imul(hash ^ value, 16777619) >>> 0;
+      return { width, height, hash };
+    });
+  }, { png, boxes });
+}
+
+type BubblePaintBox = { x: number; y: number; width: number; height: number; color: number[] };
+
+async function captureBubblePaint(page: Page, boxes: BubblePaintBox[]) {
+  const top = Math.floor(boxes[0].y);
+  const last = boxes.at(-1)!;
+  const viewport = page.viewportSize()!;
+  const clip = { x: 0, y: top, width: viewport.width, height: Math.ceil(last.y + last.height) - top };
+  const png = (await page.screenshot({ clip, scale: 'device', caret: 'hide' })).toString('base64');
+  return page.evaluate(async ({ png, clip, boxes }) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${png}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    const ratio = window.devicePixelRatio;
+    const edges = boxes.map(box => {
+      let top = Infinity;
+      let bottom = -Infinity;
+      const firstY = Math.max(0, Math.floor((box.y - clip.y) * ratio) - 1);
+      const lastY = Math.min(canvas.height, Math.ceil((box.y + box.height - clip.y) * ratio) + 1);
+      const firstX = Math.max(0, Math.floor(box.x * ratio));
+      const lastX = Math.min(canvas.width, Math.ceil((box.x + box.width) * ratio));
+      for (let y = firstY; y < lastY; y++) {
+        for (let x = firstX; x < lastX; x++) {
+          const offset = (y * canvas.width + x) * 4;
+          if (box.color.every((value, index) => Math.abs(value - pixels[offset + index]) <= 2)) {
+            top = Math.min(top, y);
+            bottom = Math.max(bottom, y);
+          }
+        }
+      }
+      if (!Number.isFinite(top) || !Number.isFinite(bottom)) throw new Error('Bubble fill or reaction border was missing from its screenshot region');
+      return { top, bottom, height: bottom - top + 1 };
+    });
+    return edges.map((edge, index) => ({ ...edge, gapAfter: index + 1 < edges.length ? edges[index + 1].top - edge.bottom - 1 : null }));
+  }, { png, clip, boxes });
 }
 
 async function openGallery(page: Page) {
@@ -806,17 +965,218 @@ test('ignores a superseded chat load after browser Back', async ({ page }) => {
   await expect(page.locator('#chat')).toContainText('needle from Facebook');
 });
 
+for (const ratio of [1.25, 2.625, 3]) {
+  test.describe(`message date paint at ${ratio} device pixels per CSS pixel`, () => {
+    test.use({ deviceScaleFactor: ratio });
+
+    test('preserves painted bubble and reaction heights and gaps when dates open and close', async ({ page }) => {
+      await installArchive(page, 'facebook');
+      await page.goto('');
+      await page.evaluate(async () => {
+        const fixture = window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } };
+        const inbox = await fixture.__testArchives.facebook.getDirectoryHandle('inbox');
+        const chat = await inbox.getDirectoryHandle('alice_chat');
+        const file = await chat.getFileHandle('message_1.json');
+        const data = JSON.parse(await (await file.getFile()).text());
+        const messages = [...Array.from({ length: 24 }, (_, index) => `Earlier message ${index}`), 'Message with a reaction', 'Short reply', 'Yes', 'Okay'];
+        data.messages = messages.map((content, index) => ({
+          sender_name: 'Tester', timestamp_ms: 1761836520000 + index * 1000, content,
+          ...(index === 24 ? { reactions: [
+            { reaction: '\u{1f60d}', actor: 'Alice' },
+            { reaction: '\u{1f602}', actor: 'Bob' },
+            { reaction: '\u2764\ufe0f', actor: 'Charlie' },
+          ] } : index === 25 ? { reactions: [{ reaction: '\u{1f44d}', actor: 'Alice' }] } : {}),
+        }));
+        const writer = await file.createWritable();
+        await writer.write(JSON.stringify(data));
+        await writer.close();
+      });
+      await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+      await page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' }).click();
+      await page.locator('#chat[aria-busy="false"]:not([data-opening="true"])').waitFor();
+      const first = page.locator('.message').filter({ hasText: 'Message with a reaction' });
+      const lower = page.locator('.message').filter({ hasText: 'Short reply' });
+      await first.scrollIntoViewIfNeeded();
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+        for (let i = 0; i < 8; i++) await new Promise(requestAnimationFrame);
+      });
+      for (const [message, count] of [[first, 4], [lower, 3]] as const) {
+        const boxes = await page.locator('#chat').evaluate((chat, count) => [...chat.querySelectorAll<HTMLElement>('.message')].slice(-count).map(element => {
+          const box = element.getBoundingClientRect();
+          const color = getComputedStyle(element).backgroundColor.match(/\d+/g)!.slice(0, 3).map(Number);
+          return { x: box.x, y: box.y, width: box.width, height: box.height, color };
+        }), count);
+        const before = await captureBubblePaint(page, boxes);
+        const reactions = await page.locator('#chat').evaluate((chat, count) => [...chat.querySelectorAll<HTMLElement>('.message')].slice(-count)
+          .flatMap(message => [...message.querySelectorAll<HTMLElement>('.reaction-bubble')].map(element => {
+            const box = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return {
+              x: box.x, y: box.y, width: box.width, height: box.height,
+              color: style.borderTopColor.match(/\d+/g)!.slice(0, 3).map(Number),
+              paddingTop: style.paddingTop, paddingBottom: style.paddingBottom,
+              contents: [...element.querySelectorAll('.reaction-emoji-simple, .reaction-count')].map(content => {
+                const rect = content.getBoundingClientRect();
+                return { height: rect.height, centerOffset: rect.y + rect.height / 2 - box.y - box.height / 2 };
+              }),
+            };
+          })), count);
+        for (const reaction of reactions) {
+          expect(reaction.height).toBe(24);
+          expect(reaction.paddingTop).toBe(reaction.paddingBottom);
+          for (const content of reaction.contents) {
+            expect(content.height).toBe(18);
+            expect(Math.abs(content.centerOffset)).toBeLessThanOrEqual(0.02);
+          }
+        }
+        const reactionPaintBefore = await captureBubblePaint(page, reactions);
+        await tapWithoutMovingFollowingMessages(page, message);
+        await expect(page.locator('.reaction-modal-overlay')).toHaveCount(0);
+        expect(await captureBubblePaint(page, boxes), 'Opening a date must preserve painted heights and gaps').toEqual(before);
+        expect(await captureBubblePaint(page, reactions), 'Opening a date must preserve the reaction outlines').toEqual(reactionPaintBefore);
+        await tapWithoutMovingFollowingMessages(page, message);
+        expect(await captureBubblePaint(page, boxes), 'Closing a date must preserve painted heights and gaps').toEqual(before);
+        expect(await captureBubblePaint(page, reactions), 'Closing a date must preserve the reaction outlines').toEqual(reactionPaintBefore);
+      }
+      await first.locator('.reaction-bubble').tap();
+      await expect(page.locator('.reaction-modal-overlay')).toBeVisible();
+      expect(await page.locator('.reaction-modal-overlay').boundingBox()).toEqual({ x: 0, y: 0, ...page.viewportSize()! });
+      await page.locator('.modal-actor').first().tap();
+      await expect(first).not.toHaveAttribute('data-timestamp-visible', 'true');
+      await page.getByRole('button', { name: 'Close', exact: true }).tap();
+      await expect(page.locator('.reaction-modal-overlay')).toHaveCount(0);
+    });
+  });
+}
+
+test('preserves bubbles, text, and separators when older message groups unload during date taps', async ({ page }) => {
+  test.setTimeout(90_000);
+  await installArchive(page, 'facebook');
+  await page.goto('');
+  await page.evaluate(async () => {
+    const fixture = window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } };
+    const chat = await (await fixture.__testArchives.facebook.getDirectoryHandle('inbox')).getDirectoryHandle('alice_chat');
+    const file = await chat.getFileHandle('message_1.json');
+    const data = JSON.parse(await (await file.getFile()).text());
+    const texts = [
+      'miming all saints day', 'wut', 'ah', 'ata', 'im not built for frontend bru HAHAHAHH',
+      "tanggappin pa kaya ng ma'am", 'bat kasi ang sudden, di naman ata nag sabi before na mag aral na mag ui/ux e T.T',
+      'tinitingnan siguro ni maam kung sino built for design', 'real', 'ganyan talaga yan', 'masanay na tayo', 'more to come',
+      'Wrapped text with mixed letters: minimum, winding, quick, jumping, and measuring bubble heights.',
+      'First line\nSecond line\nThird line',
+    ];
+    data.messages = Array.from({ length: 100 }, (_, index) => ({
+      sender_name: index % 10 < 5 ? 'Alice' : 'Tester',
+      timestamp_ms: 1761836520000 + Math.floor(index / 4) * 3600000 + index * 1000,
+      content: `${index}: ${texts[index % texts.length]}`,
+      ...(index % 7 === 0 ? { reactions: [{ reaction: '\u{1f60d}', actor: index % 10 < 5 ? 'Tester' : 'Alice' }] } : {}),
+    }));
+    const writer = await file.createWritable();
+    await writer.write(JSON.stringify(data));
+    await writer.close();
+  });
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  await page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' }).click();
+  await page.locator('#chat[aria-busy="false"]:not([data-opening="true"])').waitFor();
+  const older = page.locator('.message-chunk[data-chunk-index="0"]');
+  let unloadedDuringTap = false;
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const index of [72, 73, 84]) {
+      const message = page.locator(`.message[data-msg-index="${index}"]`);
+      await message.scrollIntoViewIfNeeded();
+      await page.locator('#chat').evaluate((chat, index) => {
+        const message = chat.querySelector(`.message[data-msg-index="${index}"]`)!;
+        chat.scrollTop += message.getBoundingClientRect().top - chat.getBoundingClientRect().top - 120;
+      }, index);
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+        for (let frame = 0; frame < 10; frame++) await new Promise(requestAnimationFrame);
+      });
+      const before = await older.evaluate(element => ({ rendered: element.getAttribute('data-rendered'), height: element.getBoundingClientRect().height }));
+      const paintBoxes = await page.locator('#chat').evaluate((chat, index) => {
+        const tapped = chat.querySelector(`.message[data-msg-index="${index}"]`)!;
+        const viewport = chat.getBoundingClientRect();
+        return [...chat.querySelectorAll('.message, .time-separator:not(.mobile-msg-timestamp)')]
+          .filter(element => tapped === element || !!(tapped.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING))
+          .map(element => element.getBoundingClientRect())
+          .filter(rect => rect.top > viewport.top && rect.bottom < viewport.bottom)
+          .map(rect => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height }));
+      }, index);
+      const paint = await captureRegionPaint(page, paintBoxes);
+      await tapWithoutMovingFollowingMessages(page, message);
+      const after = await older.evaluate(element => ({ rendered: element.getAttribute('data-rendered'), height: element.getBoundingClientRect().height }));
+      if (before.rendered === 'true' && after.rendered === 'false') unloadedDuringTap = true;
+      expect(Math.abs(after.height - before.height), 'Unloading must retain the full fractional group height').toBeLessThanOrEqual(0.02);
+      expect(await captureRegionPaint(page, paintBoxes), 'Complete bubble and separator pixels must stay unchanged when a date opens').toEqual(paint);
+      await tapWithoutMovingFollowingMessages(page, message);
+      expect(await captureRegionPaint(page, paintBoxes), 'Complete bubble and separator pixels must stay unchanged when a date closes').toEqual(paint);
+    }
+  }
+  expect(unloadedDuringTap, 'Exercise unloading an older group during a date tap').toBe(true);
+});
+
 test('keeps tapped bubbles stationary in short mobile chats without initial scrolling', async ({ page }) => {
   await openChat(page);
   const message = page.locator('.message').filter({ hasText: 'needle from Facebook' });
   const date = message.locator('..').locator('.mobile-msg-timestamp');
+  const bubbleDimensions = () => page.locator('#chat').evaluate(chat => ({
+    width: chat.clientWidth,
+    bubbles: [...chat.querySelectorAll<HTMLElement>('.message')].map(message => {
+      const { width, height } = message.getBoundingClientRect();
+      return { index: message.dataset.msgIndex, width, height };
+    }),
+  }));
   const before = await message.boundingBox();
-  await message.locator('.message-text').tap();
+  const dimensionsBefore = await bubbleDimensions();
+  await tapWithoutMovingFollowingMessages(page, message);
   await expect(date).toBeVisible();
   expect(Math.abs((await message.boundingBox())!.y - before!.y)).toBeLessThanOrEqual(1);
-  await message.locator('.message-text').tap();
+  expect(await bubbleDimensions()).toEqual(dimensionsBefore);
+  await tapWithoutMovingFollowingMessages(page, message);
   await expect(date).toBeHidden();
   expect(Math.abs((await message.boundingBox())!.y - before!.y)).toBeLessThanOrEqual(1);
+  expect(await bubbleDimensions()).toEqual(dimensionsBefore);
+});
+
+test('keeps following bubbles and text stable for wrapped dates, lower messages, and mobile resizing', async ({ page }) => {
+  test.setTimeout(90_000);
+  await openChat(page, 40);
+  await page.addStyleTag({ content: '@media (max-width: 768px) { .mobile-msg-timestamp { width: 35%; } }' });
+  const upper = page.locator('.message').filter({ hasText: 'History message 18 with enough text' });
+  const lower = page.locator('.message').filter({ hasText: 'History message 19 with enough text' });
+  const date = lower.locator('..').locator('.mobile-msg-timestamp');
+  for (const [width, height] of [[320, 844], [390, 844], [640, 320]]) {
+    await page.setViewportSize({ width, height });
+    if (await lower.getAttribute('data-timestamp-visible')) {
+      await expect.poll(() => date.evaluate(element => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const style = getComputedStyle(element);
+        const natural = Math.ceil(range.getClientRects().length * parseFloat(style.lineHeight));
+        const height = element.getBoundingClientRect().height;
+        if (height < natural || height >= natural + 16) return Infinity;
+        const outer = height + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+        return Math.max(Math.abs(outer - Math.round(outer)), Math.abs(outer * devicePixelRatio - Math.round(outer * devicePixelRatio)));
+      })).toBeLessThanOrEqual(0.02);
+      await tapWithoutMovingFollowingMessages(page, lower);
+    }
+    await tapWithoutMovingFollowingMessages(page, upper);
+    await tapWithoutMovingFollowingMessages(page, lower);
+    await expect(upper).not.toHaveAttribute('data-timestamp-visible', 'true');
+    await expect(date).toBeVisible();
+    if (height > 320) {
+      expect(await date.evaluate(element => element.getBoundingClientRect().height
+        > parseFloat(getComputedStyle(element).lineHeight) * 1.5)).toBe(true);
+    }
+    await tapWithoutMovingFollowingMessages(page, lower);
+    await tapWithoutMovingFollowingMessages(page, lower);
+  }
+  await tapWithoutMovingFollowingMessages(page, lower);
+  const last = page.locator('.message').filter({ hasText: 'History message 39 with enough text' });
+  await tapWithoutMovingFollowingMessages(page, last);
+  await tapWithoutMovingFollowingMessages(page, last);
 });
 
 test('reveals mobile dates above tapped messages without moving the tapped bubble', async ({ page }) => {
@@ -868,6 +1228,8 @@ test('reveals mobile dates above tapped messages without moving the tapped bubbl
     await expect(previous).toHaveAttribute('data-timestamp-visible', 'true');
     expect(Math.abs((await previous.boundingBox())!.y - otherBefore!.y)).toBeLessThanOrEqual(1);
     await page.locator('#chat').evaluate(element => { element.scrollTop -= 60; });
+    await expect(previous).toHaveAttribute('data-timestamp-visible', 'true');
+    await previous.locator('.message-text').tap();
     await expect(previous).not.toHaveAttribute('data-timestamp-visible', 'true');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   }

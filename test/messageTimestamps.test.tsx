@@ -38,12 +38,13 @@ function tap(target: HTMLElement) {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal('devicePixelRatio', 1);
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390, writable: true });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('mobile message timestamps', () => {
-  it('reveals on a tap without toggling twice, toggles off, and dismisses after a delay', () => {
+  it('reveals on a tap without toggling twice and hides only on a retap', () => {
     const view = render(<Harness />);
     const message = view.getByTestId('message');
     tap(message);
@@ -53,6 +54,8 @@ describe('mobile message timestamps', () => {
     expect(message.hasAttribute('data-timestamp-visible')).toBe(false);
     tap(message);
     vi.advanceTimersByTime(3000);
+    expect(message.hasAttribute('data-timestamp-visible')).toBe(true);
+    tap(message);
     expect(message.hasAttribute('data-timestamp-visible')).toBe(false);
     expect(view.getByTestId('date-message').getAttribute('aria-hidden')).toBe('true');
   });
@@ -81,15 +84,14 @@ describe('mobile message timestamps', () => {
     expect(message.hasAttribute('data-timestamp-visible')).toBe(false);
   });
 
-  it('dismisses for user scrolling and interactions outside the message', () => {
+  it('keeps the date visible while scrolling and interacting outside the message', () => {
     const view = render(<Harness />);
     const message = view.getByTestId('message');
     tap(message);
     view.getByTestId('chat').dispatchEvent(new Event('scroll'));
-    expect(message.hasAttribute('data-timestamp-visible')).toBe(false);
-    tap(message);
+    expect(message.hasAttribute('data-timestamp-visible')).toBe(true);
     pointer(document.body, 'pointerdown');
-    expect(message.hasAttribute('data-timestamp-visible')).toBe(false);
+    expect(message.hasAttribute('data-timestamp-visible')).toBe(true);
   });
 
   it('keeps the tapped bubble stationary when revealing, changing, or hiding dates', () => {
@@ -121,7 +123,7 @@ describe('mobile message timestamps', () => {
     expect(second.getBoundingClientRect().top).toBe(secondTop);
     vi.advanceTimersByTime(3000);
     expect(second.getBoundingClientRect().top).toBe(secondTop);
-    expect(chat.scrollTop).toBe(100);
+    expect(chat.scrollTop).toBe(132);
   });
 
   it('preserves interactive controls and desktop behavior', () => {
@@ -131,6 +133,126 @@ describe('mobile message timestamps', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200, writable: true });
     tap(view.getByTestId('message'));
     expect(view.getByTestId('message').hasAttribute('data-timestamp-visible')).toBe(false);
+  });
+
+  it('keeps fractional date rows aligned with rounded scroll offsets and clears their reservations', () => {
+    const view = render(<Harness />);
+    const chat = view.getByTestId('chat');
+    const messages = [view.getByTestId('message'), view.getByTestId('other')];
+    const rows = [view.getByTestId('date-message'), view.getByTestId('date-other')];
+    const naturalHeights = [16.1875, 32.375];
+    const height = (index: number) => Math.max(naturalHeights[index], parseFloat(rows[index].style.minHeight) || 0);
+    let scrollTop = 100;
+    Object.defineProperties(chat, {
+      scrollTop: { get: () => scrollTop, set: (value: number) => { scrollTop = Math.round(value); } },
+      scrollHeight: { get: () => 2000 },
+      clientHeight: { get: () => 600 },
+    });
+    rows.forEach((row, index) => vi.spyOn(row, 'getBoundingClientRect').mockImplementation(() => ({ height: height(index) } as DOMRect)));
+    messages.forEach((message, index) => vi.spyOn(message, 'getBoundingClientRect').mockImplementation(() => ({
+      top: 200 + index * 200 + messages.slice(0, index + 1).reduce((total, message, rowIndex) => (
+        total + (message.hasAttribute('data-timestamp-visible') ? height(rowIndex) + 20 : 0)
+      ), 0) - scrollTop,
+    } as DOMRect)));
+    const firstTop = messages[0].getBoundingClientRect().top;
+    tap(messages[0]);
+    expect(messages[0].getBoundingClientRect().top).toBe(firstTop);
+    expect(rows[0].style.minHeight).toBe('17px');
+    const secondTop = messages[1].getBoundingClientRect().top;
+    tap(messages[1]);
+    expect(messages[1].getBoundingClientRect().top).toBe(secondTop);
+    expect(rows[0].style.minHeight).toBe('');
+    expect(rows[1].style.minHeight).toBe('33px');
+    tap(messages[1]);
+    expect(messages[1].getBoundingClientRect().top).toBe(secondTop);
+    expect(rows[1].style.minHeight).toBe('');
+    tap(messages[0]);
+    view.unmount();
+    expect(rows[0].style.minHeight).toBe('');
+  });
+
+  it.each([1, 1.25, 1.5, 2, 2.625, 3])('aligns the date including its margins with CSS and device pixels at DPR %s', ratio => {
+    vi.stubGlobal('devicePixelRatio', ratio);
+    const view = render(<Harness />);
+    const message = view.getByTestId('message');
+    const row = view.getByTestId('date-message');
+    row.style.marginTop = '12px';
+    row.style.marginBottom = '8px';
+    let naturalHeight = 16.1875;
+    vi.spyOn(row, 'getBoundingClientRect').mockImplementation(() => ({
+      height: Math.max(naturalHeight, parseFloat(row.style.minHeight) || 0),
+    } as DOMRect));
+    for (naturalHeight of [16.1875, 32.375]) {
+      tap(message);
+      const reserved = parseFloat(row.style.minHeight);
+      const outer = reserved + 20;
+      expect(reserved).toBeGreaterThanOrEqual(naturalHeight);
+      expect(reserved - naturalHeight).toBeLessThan(16);
+      expect(outer).toBe(Math.round(outer));
+      expect(outer * ratio).toBeCloseTo(Math.round(outer * ratio), 5);
+      tap(message);
+      expect(row.style.minHeight).toBe('');
+    }
+  });
+
+  it('bounds the date spacing at uncommon display ratios and reacts to ratio changes without a viewport size change', () => {
+    const view = render(<Harness />);
+    const message = view.getByTestId('message');
+    const row = view.getByTestId('date-message');
+    row.style.marginTop = '12px';
+    row.style.marginBottom = '8px';
+    vi.spyOn(row, 'getBoundingClientRect').mockImplementation(() => ({
+      height: Math.max(16.1875, parseFloat(row.style.minHeight) || 0),
+    } as DOMRect));
+    tap(message);
+    expect(row.style.minHeight).toBe('17px');
+    vi.stubGlobal('devicePixelRatio', 1.25);
+    window.dispatchEvent(new Event('resize'));
+    expect(row.style.minHeight).toBe('20px');
+    vi.stubGlobal('devicePixelRatio', 1.23456789);
+    window.dispatchEvent(new Event('resize'));
+    expect(parseFloat(row.style.minHeight)).toBeGreaterThanOrEqual(16.1875);
+    expect(parseFloat(row.style.minHeight)).toBeLessThan(32.1875);
+    view.unmount();
+    window.dispatchEvent(new Event('resize'));
+    expect(row.style.minHeight).toBe('');
+  });
+
+  it('refreshes a visible date reservation on viewport resize without observing its own row', () => {
+    let resize: () => void = () => {};
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback; }
+      observe = observe;
+      disconnect = disconnect;
+    });
+    const view = render(<Harness />);
+    const chat = view.getByTestId('chat');
+    const message = view.getByTestId('message');
+    const row = view.getByTestId('date-message');
+    let width = 390;
+    let naturalHeight = 16.1875;
+    Object.defineProperty(chat, 'clientWidth', { get: () => width });
+    vi.spyOn(row, 'getBoundingClientRect').mockImplementation(() => ({
+      height: Math.max(naturalHeight, parseFloat(row.style.minHeight) || 0),
+    } as DOMRect));
+    resize();
+    tap(message);
+    expect(row.style.minHeight).toBe('17px');
+    width = 320;
+    naturalHeight = 32.375;
+    resize();
+    expect(row.style.minHeight).toBe('33px');
+    width = 640;
+    naturalHeight = 16.1875;
+    resize();
+    expect(row.style.minHeight).toBe('17px');
+    expect(observe).toHaveBeenCalledExactlyOnceWith(chat, { box: 'border-box' });
+    expect(message.getAttribute('data-timestamp-visible')).toBe('true');
+    view.unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(row.style.minHeight).toBe('');
   });
 
   it('preserves native context menus and cleans up a revealed date on unmount', () => {
