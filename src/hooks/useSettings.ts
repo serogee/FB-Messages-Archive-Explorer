@@ -10,6 +10,7 @@ export interface Settings {
   hideLikelyReactionNotices: boolean;
   reactionTimestampGuessingMode: ReactionGuessingMode;
   autoCollapseDateNav: boolean;
+  viewerNavigation: 'auto' | 'show' | 'hide';
   dateAttachmentFilenames: boolean;
   attachmentFilenameTemplate: string;
   longAttachmentFilenames: boolean;
@@ -30,6 +31,7 @@ const DEFAULTS: Settings = {
   hideLikelyReactionNotices: true,
   reactionTimestampGuessingMode: 'aggressive',
   autoCollapseDateNav: true,
+  viewerNavigation: 'auto',
   dateAttachmentFilenames: true,
   attachmentFilenameTemplate: '{-chat}_{date}_{time}_{ms}',
   longAttachmentFilenames: false,
@@ -57,6 +59,7 @@ function loadSettings(): Settings {
       }
     } else if (typeof defaultVal === 'string') {
       if (key === 'reactionTimestampGuessingMode' && !['off', 'near', 'aggressive'].includes(stored)) continue;
+      if (key === 'viewerNavigation' && !['auto', 'show', 'hide'].includes(stored)) continue;
       let storedValue = stored;
       if (key === 'attachmentFilenameTemplate') {
         storedValue = storedValue.replace(/\.?\{ext\}\s*$/g, '');

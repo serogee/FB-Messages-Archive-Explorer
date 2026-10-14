@@ -24,6 +24,61 @@ const chat: NavigationLocation = { ...HOME_LOCATION, screen: 'chat', chatId: 'al
 const image = (messageIndex: number) => ({ category: 'photos', mediaPath: './photos/image.jpg', messageIndex } as SelectableItem);
 
 describe('mobile navigation', () => {
+  it('returns from an attachment jump through history without adding an entry and supports Forward', () => {
+    const { controller, history } = harness();
+    controller.setMobile(true);
+    controller.navigate({ ...chat, screen: 'gallery' });
+    controller.openPreview({ items: [image(2), image(9)], index: 0, source: 'gallery' });
+    controller.updatePreview(image(9));
+    controller.capture = () => ({ gallery: { tab: 'photos' } } as ReturnType<typeof controller.capture>);
+    controller.navigate({ ...chat, messageTarget: 9 }, 'attachment');
+    const count = history.pushState.mock.calls.length;
+    expect(controller.getState().returnTo?.label).toBe('attachment');
+    controller.returnFromJump();
+    expect(controller.getState().location.preview?.currentKey).toBe(getNavigationItemKey(image(9)));
+    expect(controller.getState().snapshot?.gallery?.tab).toBe('photos');
+    expect(history.pushState).toHaveBeenCalledTimes(count);
+    history.forward();
+    expect(controller.getState().returnTo?.label).toBe('attachment');
+    controller.parent();
+    expect(controller.getState().returnTo).toBeUndefined();
+  });
+
+  it('restores a desktop jump origin without changing browser history and lets the action be dismissed', () => {
+    const { controller, history } = harness();
+    controller.navigate(chat);
+    controller.capture = () => ({ message: { index: 7, offset: 35, scrollTop: 100, atBottom: false } });
+    controller.navigate({ ...chat, screen: 'gallery' }, 'message');
+    controller.returnFromJump();
+    expect(controller.getState().location).toEqual(chat);
+    expect(controller.getState().snapshot?.message?.offset).toBe(35);
+    expect(controller.getState().restoring).toBe(true);
+    expect(history.pushState).not.toHaveBeenCalled();
+    controller.navigate({ ...chat, screen: 'gallery' }, 'message');
+    controller.dismissJumpReturn();
+    const state = controller.getState();
+    controller.returnFromJump();
+    expect(controller.getState()).toEqual(state);
+    controller.reset();
+    expect(controller.getState().returnTo).toBeUndefined();
+  });
+
+  it('starts on desktop and resets sessions when randomUUID is unavailable', () => {
+    const getRandomValues = vi.fn(crypto.getRandomValues.bind(crypto));
+    vi.stubGlobal('crypto', { getRandomValues });
+    try {
+      const { controller, history } = harness();
+      controller.navigate(chat);
+      expect(history.pushState).not.toHaveBeenCalled();
+      controller.setMobile(true);
+      controller.reset();
+      expect(controller.getState().location).toEqual(HOME_LOCATION);
+      expect(getRandomValues).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('uses fixed parents even when an attachment was reached directly from chat', () => {
     const { controller, history } = harness();
     controller.setMobile(true);

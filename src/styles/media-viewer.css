@@ -68,6 +68,8 @@
 }
 
 .media-viewer-btn {
+    flex: 0 0 auto;
+    box-sizing: border-box;
     width: 38px;
     height: 38px;
     border: none;
@@ -157,6 +159,8 @@
     box-shadow: 0 8px 30px rgba(0,0,0,0.5);
     z-index: 5020;
     animation: media-viewer-menu-in 0.12s ease;
+    max-height: calc(100dvh - 100px);
+    overflow-y: auto;
 }
 
 @keyframes media-viewer-menu-in {
@@ -194,6 +198,10 @@
     width: 20px;
     text-align: center;
 }
+.media-viewer-menu-item svg, .media-viewer-btn svg, .media-viewer-nav svg { flex: 0 0 auto; }
+.media-viewer-menu-item:disabled, .media-viewer-nav:disabled { opacity: 0.35; cursor: default; }
+.media-viewer-navigation { display: contents; }
+.media-viewer-nav span { display: none; }
 
 .media-viewer-nav {
     position: absolute;

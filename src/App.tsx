@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, X } from 'lucide-react';
 import { useSettings } from './hooks/useSettings';
 import { useMobileLayout, useMobileNavigation } from './hooks/useMobileNavigation';
 import { getNavigationItemKey, type NavigationSnapshot, type SidebarView, type PreviewRequest } from './services/mobileNavigation';
@@ -17,10 +17,13 @@ import { useAttachments, useSharedLinks } from './hooks/useAttachments';
 import { useBookmarks } from './hooks/useBookmarks';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatView, type ChatViewHandle } from './components/Chat/ChatView';
+import type { MessageJumpOptions } from './components/Chat/MessageList';
 import { DateNavigator } from './components/Chat/DateNavigator';
 import { InfoPanel } from './components/InfoPanel/InfoPanel';
 import { SelectionHeader, SelectionPanel } from './components/InfoPanel/SelectionPanel';
 import { MediaViewer } from './components/MediaViewer/MediaViewer';
+import { ParentBackButton } from './components/Navigation/ParentBackButton';
+import { ENABLE_CONTEXTUAL_BACK_NAVIGATION } from './config/uiFeatures';
 import { TrustModal } from './components/Modals/TrustModal';
 import { ReloadPrompt } from './components/ReloadPrompt';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
@@ -425,27 +428,34 @@ export default function App() {
 
   const chatViewRef = useRef<ChatViewHandle>(null);
   const chatScrollContainerRef = useMemo(() => ({ get current() { return chatViewRef.current?.getChatContainer() ?? null; } }), []);
-  const pendingJumpCompletion = useRef<{ revision: number; resolve: () => void } | null>(null);
+  const pendingJumpCompletion = useRef<{ revision: number; resolve: () => void; options?: MessageJumpOptions } | null>(null);
 
-  const handleJumpToMessage = useCallback(async (index: number, folderName?: string) => {
+  const handleJumpToMessage = useCallback(async (index: number, folderName?: string, options?: MessageJumpOptions) => {
     const entry = folderName ? archiveList.find(entry => entry.folderName === folderName) : chat.activeEntry;
     if (!entry) return;
     const previousRevision = navigation.getState().revision;
-    navigation.navigate({ ...navigation.getState().location, screen: 'chat', chatId: getBookmarkChatId(entry),
-      preview: undefined, messageTarget: index, attachmentTarget: undefined });
+    const source = navigation.getState().location;
+    const fromAttachment = source.screen === 'gallery' || source.screen === 'selected' || !!source.preview;
+    navigation.navigate({ ...source, screen: 'chat', chatId: getBookmarkChatId(entry),
+      preview: undefined, messageTarget: index, attachmentTarget: undefined },
+      ENABLE_CONTEXTUAL_BACK_NAVIGATION && fromAttachment ? 'attachment' : undefined);
     const revision = navigation.getState().revision;
     if (revision === previousRevision) {
-      await chatViewRef.current?.jumpToMessage(index);
+      await chatViewRef.current?.jumpToMessage(index, options);
       return;
     }
     pendingJumpCompletion.current?.resolve();
-    const completion = new Promise<void>(resolve => { pendingJumpCompletion.current = { revision, resolve }; });
+    const completion = new Promise<void>(resolve => { pendingJumpCompletion.current = { revision, resolve, options }; });
     setGalleryOpen(false);
     if (getBookmarkChatId(entry) !== (chat.activeEntry ? getBookmarkChatId(chat.activeEntry) : undefined)) {
       await loadChatEntry(entry);
     }
     await completion;
   }, [archiveList, chat.activeEntry, loadChatEntry, navigation]);
+
+  const handleChatMessageJump = useCallback((index: number, options?: MessageJumpOptions) => (
+    handleJumpToMessage(index, undefined, options)
+  ), [handleJumpToMessage]);
 
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {
@@ -463,8 +473,10 @@ export default function App() {
 
   const handleJumpToAttachment = useCallback((item: SelectableItem) => {
     const tab = getAttachmentJumpTab(galleryDefaultTab, item.category);
-    navigation.navigate({ ...navigation.getState().location, screen: 'gallery', galleryTab: tab,
-      preview: undefined, messageTarget: undefined, attachmentTarget: getNavigationItemKey(item) });
+    const source = navigation.getState().location;
+    navigation.navigate({ ...source, screen: 'gallery', galleryTab: tab,
+      preview: undefined, messageTarget: undefined, attachmentTarget: getNavigationItemKey(item) },
+      ENABLE_CONTEXTUAL_BACK_NAVIGATION && (source.screen === 'chat' || source.preview?.source === 'chat') ? 'message' : undefined);
     setGalleryDefaultTab(tab);
     setGalleryOpen(true);
   }, [galleryDefaultTab, navigation]);
@@ -563,7 +575,8 @@ export default function App() {
             pendingJumpCompletion.current = null;
           }
         };
-        void chatViewRef.current?.jumpToMessage(destination.messageTarget).then(finish, finish);
+        const options = pendingJumpCompletion.current?.revision === revision ? pendingJumpCompletion.current.options : undefined;
+        void chatViewRef.current?.jumpToMessage(destination.messageTarget, options).then(finish, finish);
       }
       if (destination.attachmentTarget) {
         const item = viewerLookup.get(destination.attachmentTarget);
@@ -645,7 +658,7 @@ export default function App() {
         onBack={parent}
         onOpenSelection={() => navigation.navigate({ ...location, screen: 'selected', preview: undefined })}
         onOpenViewer={openViewer}
-        onNavigateToMessage={handleJumpToMessage}
+        onNavigateToMessage={handleChatMessageJump}
         onNavigateToAttachment={handleJumpToAttachment}
         attachmentJumpTarget={attachmentJumpTarget}
         onAttachmentJumpHandled={() => setAttachmentJumpTarget(null)}
@@ -747,7 +760,7 @@ export default function App() {
       {isMobile && location.screen === 'selected' && (!chat.chatData || navigatingChat) && (
         <div className="chat-info-panel selection-panel">
           <div className="mobile-page-header">
-            <button type="button" className="mobile-back-btn" onClick={parent} aria-label="Back to attachments"><ArrowLeft size={18} /></button>
+            <ParentBackButton destination="attachments" ariaLabel="Back to attachments" onClick={parent} />
             <h3>Selected attachments</h3>
           </div>
           <p className="info-empty" role="status">Loading selected attachments...</p>
@@ -796,6 +809,8 @@ export default function App() {
         <MediaViewer
           key={navigationState.revision}
           mobile={isMobile}
+          navigationVisible={settings.viewerNavigation === 'auto' ? !isMobile : settings.viewerNavigation === 'show'}
+          onToggleNavigation={() => setSetting('viewerNavigation', (settings.viewerNavigation === 'auto' ? !isMobile : settings.viewerNavigation === 'show') ? 'hide' : 'show')}
           items={viewerItems}
           initialIndex={Math.max(0, viewerItems.findIndex(item => getNavigationItemKey(item) === preview.currentKey))}
           mediaState={chat.mediaState}
@@ -818,6 +833,12 @@ export default function App() {
         />
       )}
       <div className="app-toast-stack">
+        {ENABLE_CONTEXTUAL_BACK_NAVIGATION && navigationState.returnTo && !preview && <div className="jump-return-banner">
+          <button type="button" className="jump-return-action" onClick={() => navigation.returnFromJump()}>
+            <ArrowLeft size={16} />Return to {navigationState.returnTo.label}
+          </button>
+          <button type="button" className="jump-return-dismiss" aria-label="Dismiss return action" onClick={() => navigation.dismissJumpReturn()}><X size={16} /></button>
+        </div>}
         {settings.offlineSupportEnabled && (
           <ReloadPrompt canAutoReload={!archive.rootHandle && !archive.loading} />
         )}

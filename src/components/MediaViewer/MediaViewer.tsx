@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { MoreVertical, ExternalLink, Download, Copy, X, ChevronLeft, ChevronRight, Check, CheckSquare, SquareX, Paperclip, Music, FileText, Bookmark, Link as LinkIcon, UserRound } from 'lucide-react';
-import type { ResolvedAttachment, SelectableItem } from '../../types/messenger';
+import { MoreVertical, ExternalLink, Download, Copy, X, ChevronLeft, ChevronRight, Check, CheckSquare, SquareX, Paperclip, Music, FileText, Bookmark, Link as LinkIcon, UserRound, Eye, EyeOff } from 'lucide-react';
+import type { MediaEntry, ResolvedAttachment, SelectableItem } from '../../types/messenger';
 import { findMediaFile } from '../../services/media';
 import { blobCache } from '../../services/blobCache';
 import type { MediaState } from '../../types/messenger';
@@ -14,6 +14,8 @@ import { useViewerSwipe } from '../../hooks/useViewerSwipe';
 
 interface MediaViewerProps {
   mobile?: boolean;
+  navigationVisible?: boolean;
+  onToggleNavigation?: () => void;
   items: SelectableItem[];
   initialIndex: number;
   mediaState: MediaState;
@@ -38,38 +40,48 @@ interface MediaViewerProps {
 type MediaUrlState = { url: string | null; status: 'loading' | 'ready' | 'missing' };
 
 function useResolvedUrl(attachment: ResolvedAttachment | null, mediaState: MediaState): MediaUrlState {
-  const [state, setState] = useState<MediaUrlState>({ url: null, status: 'loading' });
+  const entry = attachment ? attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath) : null;
+  const [state, setState] = useState<MediaUrlState & { entry: MediaEntry | null }>({ entry: null, url: null, status: 'loading' });
 
   useEffect(() => {
-    if (!attachment) { setState({ url: null, status: 'missing' }); return; }
-
-    const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
-    if (!entry) { setState({ url: null, status: 'missing' }); return; }
+    if (!entry) { setState({ entry, url: null, status: 'missing' }); return; }
 
     const cached = blobCache.get(entry);
-    if (cached) { setState({ url: cached, status: 'ready' }); return; }
+    if (cached) { setState({ entry, url: cached, status: 'ready' }); return; }
     if (entry.url) {
       blobCache.put(entry, entry.url);
-      setState({ url: entry.url, status: 'ready' });
+      setState({ entry, url: entry.url, status: 'ready' });
       return;
     }
 
     if (entry.handle) {
       let cancelled = false;
-      setState({ url: null, status: 'loading' });
+      setState({ entry, url: null, status: 'loading' });
       blobCache.getOrCreate(entry).then(blobUrl => {
         if (!cancelled) {
           setState(blobUrl
-            ? { url: blobUrl, status: 'ready' }
-            : { url: null, status: 'missing' });
+            ? { entry, url: blobUrl, status: 'ready' }
+            : { entry, url: null, status: 'missing' });
         }
       });
       return () => { cancelled = true; };
     }
-    setState({ url: null, status: 'missing' });
-  }, [attachment, mediaState]);
+    setState({ entry, url: null, status: 'missing' });
+  }, [entry, mediaState]);
 
-  return state;
+  if (!entry) return { url: null, status: 'missing' };
+  // Effects run after the render; never display the previous entry's URL meanwhile.
+  return state.entry === entry ? state : { url: null, status: 'loading' };
+}
+
+function prepareViewerImage(image: HTMLImageElement | null) {
+  if (!image?.complete || !image.naturalWidth || !image.naturalHeight || image.dataset.imageReady) return;
+  image.style.setProperty('--media-image-ratio', String(image.naturalWidth / image.naturalHeight));
+  image.style.setProperty('--media-image-natural-width', `${image.naturalWidth}px`);
+  // Settle the fitted width while initial transitions are disabled, then reveal it.
+  // The ref also handles decoded images from the browser cache before the first paint.
+  image.getBoundingClientRect();
+  image.dataset.imageReady = 'true';
 }
 
 function getDisplayType(attachment: ResolvedAttachment): 'image' | 'video' | 'audio' | 'file' {
@@ -82,6 +94,8 @@ function getDisplayType(attachment: ResolvedAttachment): 'image' | 'video' | 'au
 
 export function MediaViewer({
   mobile = false,
+  navigationVisible,
+  onToggleNavigation,
   items,
   initialIndex,
   mediaState,
@@ -104,6 +118,13 @@ export function MediaViewer({
 }: MediaViewerProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [navigationOverride, setNavigationOverride] = useState<boolean | undefined>();
+  const showNavigation = navigationVisible ?? navigationOverride ?? !mobile;
+  const toggleNavigation = () => {
+    if (onToggleNavigation) onToggleNavigation();
+    else setNavigationOverride(!showNavigation);
+    setMenuOpen(false);
+  };
   const [expandedImage, setExpandedImage] = useState<SelectableItem | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [filenameCopiedFor, setFilenameCopiedFor] = useState<ResolvedAttachment | null>(null);
@@ -281,6 +302,7 @@ export function MediaViewer({
         return;
       }
       if (e.key === ' ' || e.code === 'Space') {
+        if (e.target instanceof Element && e.target.closest('button, a, input, select, textarea, [role="button"]')) return;
         const mediaElement = mediaElementRef.current;
         if (mediaElement) {
           e.preventDefault();
@@ -307,7 +329,13 @@ export function MediaViewer({
         return;
       }
       if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
         if (imageExpanded) setExpandedImage(null);
+        else if (menuOpen) {
+          setMenuOpen(false);
+          menuRef.current?.querySelector<HTMLButtonElement>('.media-viewer-menu-btn')?.focus({ preventScroll: true });
+        }
         else closeViewer();
         return;
       }
@@ -326,7 +354,7 @@ export function MediaViewer({
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [closeViewer, hasLeft, hasRight, goLeft, goRight, imageExpanded]);
+  }, [closeViewer, hasLeft, hasRight, goLeft, goRight, imageExpanded, menuOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -347,7 +375,7 @@ export function MediaViewer({
   return createPortal(
     <div
       ref={overlayRef}
-      className={`media-viewer-overlay${imageExpanded ? ' image-expanded' : ''}`}
+      className={`media-viewer-overlay${imageExpanded ? ' image-expanded' : ''}${showNavigation ? ' navigation-visible' : ''}`}
       role="dialog"
       aria-modal="true"
       aria-label="Attachment viewer"
@@ -402,12 +430,17 @@ export function MediaViewer({
               className="media-viewer-btn media-viewer-menu-btn"
               onClick={() => setMenuOpen(!menuOpen)}
               aria-label="More options"
+              aria-expanded={menuOpen}
               title="More options"
             >
               <MoreVertical size={20} />
             </button>
             {menuOpen && (
               <div className="media-viewer-menu-dropdown">
+                <button type="button" className="media-viewer-menu-item" onClick={toggleNavigation}>
+                  {showNavigation ? <EyeOff size={16} className="media-viewer-menu-icon" /> : <Eye size={16} className="media-viewer-menu-icon" />}
+                  {showNavigation ? 'Hide Navigation' : 'Show Navigation'}
+                </button>
                 {item && selection && (
                   <button className="media-viewer-menu-item" onClick={() => {
                     if (selectionMode) selection.deselectAll();
@@ -475,28 +508,27 @@ export function MediaViewer({
         </div>
       </div>
 
-      {!mobile && hasLeft && (
+      {showNavigation && (hasLeft || hasRight) && <div className="media-viewer-navigation" aria-label="Attachment navigation"
+        inert={imageExpanded || undefined} aria-hidden={imageExpanded || undefined}>
         <button
+          type="button"
           className="media-viewer-nav media-viewer-nav-prev"
-          inert={imageExpanded || undefined}
-          aria-hidden={imageExpanded || undefined}
+          disabled={!hasLeft}
           onClick={goLeft}
           aria-label={reverseNavigation ? 'Newer item' : 'Previous item'}
         >
-          <ChevronLeft size={36} />
+          <ChevronLeft size={mobile ? 22 : 36} /><span>{reverseNavigation ? 'Newer' : 'Previous'}</span>
         </button>
-      )}
-      {!mobile && hasRight && (
         <button
+          type="button"
           className="media-viewer-nav media-viewer-nav-next"
-          inert={imageExpanded || undefined}
-          aria-hidden={imageExpanded || undefined}
+          disabled={!hasRight}
           onClick={goRight}
           aria-label={reverseNavigation ? 'Older item' : 'Next item'}
         >
-          <ChevronRight size={36} />
+          <span>{reverseNavigation ? 'Older' : 'Next'}</span><ChevronRight size={mobile ? 22 : 36} />
         </button>
-      )}
+      </div>}
 
       <div className={`media-viewer-content ${isSelected ? 'viewer-selected' : ''}`}>
         {!item ? (
@@ -547,7 +579,8 @@ export function MediaViewer({
           </div>
         ) : displayType === 'image' ? (
           <img
-            key={currentIndex}
+            key={`${currentIndex}:${url}`}
+            ref={prepareViewerImage}
             src={url}
             alt={filename}
             className={`media-viewer-image${attachment?.category === 'stickers' ? ' media-viewer-sticker' : ''}`}
@@ -563,13 +596,7 @@ export function MediaViewer({
                 toggleImage();
               }
             } : undefined}
-            onLoad={event => {
-              const image = event.currentTarget;
-              if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-                image.style.setProperty('--media-image-ratio', String(image.naturalWidth / image.naturalHeight));
-                image.style.setProperty('--media-image-natural-width', `${image.naturalWidth}px`);
-              }
-            }}
+            onLoad={event => prepareViewerImage(event.currentTarget)}
             onError={() => setFailedItem(item)}
           />
         ) : displayType === 'video' ? (

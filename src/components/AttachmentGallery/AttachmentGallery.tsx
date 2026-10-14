@@ -1,6 +1,7 @@
 import { forwardRef, memo, useImperativeHandle, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { MessengerThread, MediaState, ResolvedAttachment, ResolvedLink, SelectableItem } from '../../types/messenger';
-import { ArrowLeft, CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, CircleHelp, Info, ExternalLink, Link as LinkIcon, MessageSquare, UserRound, Bookmark, Filter, ListMinus, ListPlus, Minus, Plus, Search, X } from 'lucide-react';
+import { CheckSquare, Image as ImageIcon, Film, Music, FileText, Play, Check, CircleHelp, Info, ExternalLink, Link as LinkIcon, MessageSquare, UserRound, Bookmark, Filter, ListMinus, ListPlus, Minus, Plus, Search, X } from 'lucide-react';
+import { ParentBackButton } from '../Navigation/ParentBackButton';
 import type { Settings } from '../../hooks/useSettings';
 import { useAttachments, useSharedLinks, type GalleryCategory } from '../../hooks/useAttachments';
 import { AttachmentUsageIndicators } from '../AttachmentUsageIndicators';
@@ -115,6 +116,7 @@ function groupByMonth(items: GalleryItem[]): GalleryGroup[] {
 }
 
 interface GalleryThumbnailProps {
+  mobile: boolean;
   attachment: ResolvedAttachment;
   mediaState: MediaState;
   onOpen: (attachment: ResolvedAttachment) => void;
@@ -223,6 +225,7 @@ function AudioAuthorDurationAndSize({ attachment, mediaState }: { attachment: Re
 }
 
 const GalleryThumbnail = memo(function GalleryThumbnail({
+  mobile,
   attachment,
   mediaState,
   onOpen,
@@ -318,7 +321,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
     event.preventDefault();
     event.stopPropagation();
     if (selectionMode) onSelect(attachment);
-    else if (category === 'files') onOpenFile(attachment);
+    else if (category === 'files' && !mobile) onOpenFile(attachment);
     else onOpen(attachment);
   };
 
@@ -388,7 +391,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
                 <UserRound size={12} />
                 <span>{attachment.sender}</span>
               </span>
-              {!selectionMode && (
+              {!selectionMode && !mobile && (
                 <span className="gallery-file-open"><FileText size={12} /> Open file</span>
               )}
             </div>
@@ -396,7 +399,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         </>
       )}
 
-      {selectionMode && (
+      {selectionMode && !mobile && (
         <button
           type="button"
           className="gallery-open-viewer-btn"
@@ -412,7 +415,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         </button>
       )}
 
-      {!selectionMode && category === 'files' && (
+      {!selectionMode && !mobile && category === 'files' && (
         <button
           type="button"
           className="gallery-open-viewer-btn with-jump"
@@ -428,7 +431,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
         </button>
       )}
 
-      {!selectionMode && (
+      {!selectionMode && !mobile && (
         <button
           type="button"
           className="gallery-link-message"
@@ -455,6 +458,7 @@ const GalleryThumbnail = memo(function GalleryThumbnail({
   );
 }, (previous, next) => (
   previous.attachment === next.attachment
+  && previous.mobile === next.mobile
   && previous.mediaState === next.mediaState
   && previous.onOpen === next.onOpen
   && previous.onOpenFile === next.onOpenFile
@@ -478,6 +482,8 @@ function getLinkHostname(url: string): string {
 }
 
 const GalleryLinkCard = memo(function GalleryLinkCard({
+  mobile,
+  squareCard,
   link,
   onJumpToMessage,
   onOpen,
@@ -488,6 +494,8 @@ const GalleryLinkCard = memo(function GalleryLinkCard({
   isJumpHighlighted,
   openViewerOnCard,
 }: {
+  mobile: boolean;
+  squareCard: boolean;
   link: ResolvedLink;
   onJumpToMessage: (messageIndex: number, item?: SelectableItem) => void;
   onOpen: (link: ResolvedLink) => void;
@@ -522,7 +530,7 @@ const GalleryLinkCard = memo(function GalleryLinkCard({
   );
   return (
     <div
-      className={`gallery-thumb gallery-link-card ${openViewerOnCard ? 'gallery-link-card-square' : ''} ${isSelected ? 'selected' : ''} ${isJumpHighlighted ? 'jump-highlight' : ''}`}
+      className={`gallery-thumb gallery-link-card ${squareCard ? 'gallery-link-card-square' : ''} ${isSelected ? 'selected' : ''} ${isJumpHighlighted ? 'jump-highlight' : ''}`}
       title={link.url}
       onClick={activateLink}
       onKeyDown={event => {
@@ -559,7 +567,7 @@ const GalleryLinkCard = memo(function GalleryLinkCard({
           {isSelected && <Check size={14} />}
         </div>
       )}
-      {(selectionMode || !openViewerOnCard) && (
+      {!mobile && (selectionMode || !openViewerOnCard) && (
         <button
           type="button"
           className={`gallery-open-viewer-btn ${selectionMode ? '' : 'with-jump'}`}
@@ -574,7 +582,7 @@ const GalleryLinkCard = memo(function GalleryLinkCard({
           <Info size={15} />
         </button>
       )}
-      {!selectionMode && <button
+      {!selectionMode && !mobile && <button
         type="button"
         className="gallery-link-message"
         onClick={event => {
@@ -1211,30 +1219,22 @@ const AttachmentGalleryBase = forwardRef<AttachmentGalleryHandle, AttachmentGall
   }), [allItems, byCategory, links]);
 
   const visibleTabs = showStickers ? TABS : TABS.filter(tab => tab.key !== 'stickers');
+  const selectAllControl = selectionMode && <button type="button" className="gallery-add-all"
+    onClick={handleToggleAllSelection} disabled={filteredItems.length === 0}
+    title={allFilteredItemsSelected ? `Unselect all ${filteredItemCount.toLocaleString()} matching items` : `Select all ${filteredItemCount.toLocaleString()} matching items`}>
+    {allFilteredItemsSelected ? <ListMinus size={17} /> : <ListPlus size={17} />}
+    <span>{allFilteredItemsSelected ? 'Unselect all' : 'Select all'}</span>
+  </button>;
 
   return (
     <>
-      <div className="chat-header">
-        <button className="gallery-back-btn" onClick={handleClose} aria-label={mobile ? 'Back to chat info' : 'Back to chat'} title={mobile ? 'Back to chat info' : 'Back to chat'}>
-          <ArrowLeft size={18} />
-        </button>
+      <div className="chat-header gallery-header">
+        <ParentBackButton className="gallery-back-btn" destination={mobile ? 'info' : 'chat'} ariaLabel={mobile ? 'Back to chat info' : 'Back to chat'} onClick={handleClose} />
         <h3>Attachments</h3>
         {indexingReferences && <span className="gallery-reference-status" role="status"><AnimatedProgressLabel>Scanning for shared attachments</AnimatedProgressLabel></span>}
 
-        {selectionMode && (
-          <button
-            type="button"
-            className="gallery-add-all"
-            onClick={handleToggleAllSelection}
-            disabled={filteredItems.length === 0}
-            title={allFilteredItemsSelected
-              ? `Unselect all ${filteredItemCount.toLocaleString()} matching items`
-              : `Select all ${filteredItemCount.toLocaleString()} matching items`}
-          >
-            {allFilteredItemsSelected ? <ListMinus size={17} /> : <ListPlus size={17} />}
-            <span>{allFilteredItemsSelected ? 'Unselect all' : 'Select all'}</span>
-          </button>
-        )}
+        {!mobile && selectAllControl}
+        <div className="gallery-header-actions">
         <button
           className={`gallery-select-mode-toggle ${selectionMode ? 'active' : ''}`}
           onClick={() => {
@@ -1266,11 +1266,16 @@ const AttachmentGalleryBase = forwardRef<AttachmentGalleryHandle, AttachmentGall
         >
           <Info size={18} />
         </button>
+        </div>
       </div>
 
-      {mobile && selection.selectedCount > 0 && <button type="button" className="mobile-selected-btn" onClick={onOpenSelection}>
-        {selection.selectedCount.toLocaleString()} selected ? Review and download
-      </button>}
+      {mobile && (selectionMode || selection.selectedCount > 0) && <div className="mobile-selection-toolbar">
+        {selectAllControl}
+        {selection.selectedCount > 0 && <div className="mobile-selection-review">
+          <span className="mobile-selection-count" aria-live="polite">{selection.selectedCount.toLocaleString()} selected</span>
+          <button type="button" className="mobile-selected-btn" onClick={onOpenSelection}>Review selection</button>
+        </div>}
+      </div>}
       <div className="gallery-tabs" ref={tabsContainerRef}>
         {visibleTabs.map(tab => (
           <button
@@ -1595,6 +1600,8 @@ const AttachmentGalleryBase = forwardRef<AttachmentGalleryHandle, AttachmentGall
                 >
                   {row.items.map(item => item.category === 'links' ? (
                     <GalleryLinkCard
+                      mobile={mobile}
+                      squareCard={activeTab === 'all'}
                       key={`link:${item.messageIndex}:${item.url}`}
                       link={item}
                       onJumpToMessage={handleViewerJump}
@@ -1604,10 +1611,11 @@ const AttachmentGalleryBase = forwardRef<AttachmentGalleryHandle, AttachmentGall
                       isSelected={selection.isSelected(item)}
                       isBookmarked={attachmentBookmarkingEnabled && isAttachmentBookmarked(item)}
                       isJumpHighlighted={jumpHighlightedKey === getGalleryItemKey(item)}
-                      openViewerOnCard={activeTab === 'all'}
+                      openViewerOnCard={mobile || activeTab === 'all'}
                     />
                   ) : (
                     <GalleryThumbnail
+                      mobile={mobile}
                       key={getGalleryItemKey(item)}
                       attachment={item}
                       mediaState={mediaState}

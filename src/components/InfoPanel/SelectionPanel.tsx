@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ResolvedAttachment, ResolvedLink, SelectableItem, MediaState, MessengerThread, ChatListEntry } from '../../types/messenger';
-import { ArrowLeft, MoreHorizontal, X, Check, Image as ImageIcon, Film, Music, FileText, Play, FolderOutput, Archive, Bookmark, BookmarkX, Link as LinkIcon, UserRound, Info } from 'lucide-react';
+import { MoreHorizontal, X, Check, Image as ImageIcon, Film, Music, FileText, Play, FolderOutput, Archive, Bookmark, BookmarkX, Link as LinkIcon, UserRound, Info } from 'lucide-react';
+import { ParentBackButton } from '../Navigation/ParentBackButton';
 import { formatFileSize, formatInfoNumber } from '../../services/storage';
 import { saveToFolder, downloadAsZip } from '../../services/saveAttachments';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
@@ -341,7 +342,7 @@ export function SelectionPanel({
 
   return (
     <div className="chat-info-panel selection-panel" inert={hidden || undefined} aria-hidden={hidden || undefined}>
-      {onBack && <div className="mobile-page-header"><button type="button" className="mobile-back-btn" onClick={onBack} aria-label="Back to attachments"><ArrowLeft size={18} /></button><h3>Selected attachments</h3></div>}
+      {onBack && <div className="mobile-page-header"><ParentBackButton destination="attachments" ariaLabel="Back to attachments" onClick={onBack} /><h3>Selected attachments</h3></div>}
       <SelectionHeader
         activeEntry={activeEntry}
         chatData={chatData}
@@ -381,18 +382,18 @@ export function SelectionPanel({
                   <div
                     key={`links:${item.messageIndex}:${item.url}`}
                     className="gallery-thumb gallery-link-card selection-link-card selected"
-                    onClick={() => onDeselect(item)}
+                    onClick={() => onBack ? onOpenViewer(index) : onDeselect(item)}
                     onKeyDown={event => {
                       if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
                         event.preventDefault();
-                        onDeselect(item);
+                        if (onBack) onOpenViewer(index); else onDeselect(item);
                       }
                     }}
                     role="button"
                     tabIndex={0}
                     title={item.url}
                   >
-                    <div className="select-checkbox"><Check size={14} /></div>
+                    <button type="button" className="select-checkbox" aria-label={`Deselect ${hostname}`} onClick={event => { event.stopPropagation(); onDeselect(item); }}><Check size={14} /></button>
                     <LinkIcon size={24} className="gallery-link-icon" />
                     <strong className="gallery-link-host">{hostname}</strong>
                     <span className="gallery-link-url" data-url={!item.label || item.label === item.url}>{item.label || item.url}</span>
@@ -407,7 +408,7 @@ export function SelectionPanel({
                         <Bookmark size={15} fill="currentColor" />
                       </span>
                     )}
-                    <button
+                    {!onBack && <button
                       type="button"
                       className="gallery-open-viewer-btn"
                       onClick={event => {
@@ -419,7 +420,7 @@ export function SelectionPanel({
                       title="Open in viewer"
                     >
                       <Info size={15} />
-                    </button>
+                    </button>}
                   </div>
                 );
               }
@@ -434,18 +435,18 @@ export function SelectionPanel({
                 <div
                   key={key}
                   className={`gallery-thumb ${cat === 'audio' || cat === 'files' ? 'gallery-thumb-file' : ''} ${cat === 'stickers' ? 'gallery-thumb-sticker' : ''} selected`}
-                  onClick={() => onDeselect(att)}
+                  onClick={() => onBack ? onOpenViewer(index) : onDeselect(att)}
                   onKeyDown={event => {
                     if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
                       event.preventDefault();
-                      onDeselect(att);
+                      if (onBack) onOpenViewer(index); else onDeselect(att);
                     }
                   }}
                   role="button"
                   tabIndex={0}
                   title={basename}
                 >
-                  <div className="select-checkbox"><Check size={14} /></div>
+                  <button type="button" className="select-checkbox" aria-label={`Deselect ${basename}`} onClick={event => { event.stopPropagation(); onDeselect(att); }}><Check size={14} /></button>
 
                   <AttachmentUsageIndicators attachment={att} />
 
@@ -483,7 +484,7 @@ export function SelectionPanel({
                       </div>
                     </>
                   )}
-                  <button
+                  {!onBack && <button
                     type="button"
                     className="gallery-open-viewer-btn"
                     onClick={event => {
@@ -495,7 +496,7 @@ export function SelectionPanel({
                     title="Open in viewer"
                   >
                     <Info size={15} />
-                  </button>
+                  </button>}
                 </div>
               );
             })}

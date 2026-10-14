@@ -1,4 +1,8 @@
 #line { border-bottom: 1.5px solid var(--border); }
+.jump-return-banner { display: flex; align-self: flex-end; align-items: center; max-width: 100%; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-bg); box-shadow: 0 4px 14px rgba(0, 0, 0, .15); }
+.jump-return-action, .jump-return-dismiss { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 6px; min-height: 44px; padding: 8px 12px; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.jump-return-dismiss { width: 44px; padding: 0; color: var(--muted); }
+.jump-return-action svg, .jump-return-dismiss svg { flex: 0 0 auto; }
 .container { display:grid; grid-template-columns:minmax(260px, var(--sidebar-width)) 28px minmax(0, 1fr) 0 0; height:100vh; }
 .container.info-open { grid-template-columns:minmax(260px, var(--sidebar-width)) 28px minmax(0, 1fr) 28px minmax(240px, var(--info-panel-width)); }
 .container.resizing { cursor:col-resize; user-select:none; }

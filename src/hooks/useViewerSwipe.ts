@@ -5,6 +5,23 @@ const SWIPE_DISTANCE = 48;
 const HORIZONTAL_DOMINANCE = 1.3;
 const INTERACTIVE_CONTROLS = 'button, a, input, select, textarea, video, audio, [contenteditable="true"], [role="button"]:not(.media-viewer-image), .media-viewer-menu-dropdown';
 
+function suppressReleasedControlClick() {
+  // A control can unmount the viewer before its compatibility click arrives.
+  // Keep this one-click guard on the document; a new press clears it immediately.
+  const clear = () => {
+    document.removeEventListener('click', block, true);
+    document.removeEventListener('pointerdown', clear, true);
+  };
+  const block = (event: globalThis.MouseEvent) => {
+    if (event.detail === 0) return; // Programmatic/keyboard activation remains available.
+    clear();
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  document.addEventListener('click', block, true);
+  document.addEventListener('pointerdown', clear, true);
+}
+
 interface SwipeGesture {
   pointerId: number;
   x: number;
@@ -12,6 +29,7 @@ interface SwipeGesture {
   moved: boolean;
   vertical: boolean;
   image: Element | null;
+  control: HTMLButtonElement | HTMLAnchorElement | null;
 }
 
 export function useViewerSwipe({ enabled, item, onPrevious, onNext, onImageTap }: {
@@ -36,10 +54,18 @@ export function useViewerSwipe({ enabled, item, onPrevious, onNext, onImageTap }
     suppressClick.current = false;
     gesture.current = null;
     if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
-    if (event.target instanceof Element && event.target.closest(INTERACTIVE_CONTROLS)) return;
+    if (event.target instanceof Element && event.target.closest(INTERACTIVE_CONTROLS)) {
+      const control = event.target.closest<HTMLButtonElement | HTMLAnchorElement>('button, a');
+      if (!control || control.matches(':disabled')) return;
+      gesture.current = {
+        pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false, vertical: false,
+        image: null, control,
+      };
+      return;
+    }
     gesture.current = {
       pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false, vertical: false,
-      image: event.target instanceof Element ? event.target.closest('.media-viewer-image') : null,
+      image: event.target instanceof Element ? event.target.closest('.media-viewer-image') : null, control: null,
     };
   };
 
@@ -61,6 +87,17 @@ export function useViewerSwipe({ enabled, item, onPrevious, onNext, onImageTap }
     const dx = event.clientX - current.x;
     const dy = event.clientY - current.y;
     suppressClick.current = current.moved || Math.max(Math.abs(dx), Math.abs(dy)) > MOVE_TOLERANCE;
+    if (current.control) {
+      // Touch browsers can omit the click after a swipe. Activate short control
+      // taps on release and swallow any compatibility click so each runs once.
+      const tap = !suppressClick.current && event.target instanceof Node && current.control.contains(event.target);
+      suppressClick.current = tap;
+      if (tap) {
+        suppressReleasedControlClick();
+        current.control.click();
+      }
+      return;
+    }
     if (!current.vertical && Math.abs(dx) >= SWIPE_DISTANCE && Math.abs(dx) > Math.abs(dy) * HORIZONTAL_DOMINANCE) {
       if (dx < 0) onNext();
       else onPrevious();

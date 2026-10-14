@@ -68,6 +68,7 @@ export interface NavigationState {
   snapshot?: NavigationSnapshot;
   revision: number;
   restoring: boolean;
+  returnTo?: { label: 'attachment' | 'message'; location: NavigationLocation; snapshot: NavigationSnapshot; entry: number | null };
 }
 
 export const HOME_LOCATION: NavigationLocation = {
@@ -89,12 +90,17 @@ type Marker = { session: string; entry: number };
 const HISTORY_KEY = '__fbArchiveNavigation';
 const collectionKeys = new WeakMap<SelectableItem[], string[]>();
 
+function createSessionId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 /** Only descriptors and IDs enter browser history. File handles and media stay in the app. */
 export class MobileNavigationController {
   private state: NavigationState = { location: { ...HOME_LOCATION }, revision: 0, restoring: false };
   private listeners = new Set<() => void>();
   private entries = new Map<number, NavigationState>();
-  private session = crypto.randomUUID();
+  private session = createSessionId();
   private sequence = 0;
   private currentEntry: number | null = null;
   private trail: number[] = [];
@@ -146,10 +152,11 @@ export class MobileNavigationController {
       this.entries.set(this.currentEntry, { ...this.state, snapshot: this.capture() });
     }
   }
-  navigate(location: NavigationLocation) {
+  navigate(location: NavigationLocation, returnLabel?: 'attachment' | 'message') {
     if (JSON.stringify(location) === JSON.stringify(this.state.location)) return;
+    const returnTo = returnLabel ? { label: returnLabel, location: this.state.location, snapshot: this.capture(), entry: this.currentEntry } : undefined;
     this.saveCurrent();
-    this.publish({ location, revision: this.state.revision + 1, restoring: false });
+    this.publish({ location, revision: this.state.revision + 1, restoring: false, ...(returnTo ? { returnTo } : {}) });
     if (this.mobile) this.writeEntry(true);
     else if (this.currentEntry !== null) this.entries.set(this.currentEntry, this.state);
   }
@@ -158,6 +165,25 @@ export class MobileNavigationController {
     if (this.currentEntry !== null) this.entries.set(this.currentEntry, this.state);
   }
   parent() { this.navigate(getParentLocation(this.state.location)); }
+  returnFromJump() {
+    const target = this.state.returnTo;
+    if (!target) return;
+    const index = this.currentEntry === null ? -1 : this.trail.indexOf(this.currentEntry);
+    if (this.mobile && target.entry !== null && index > 0 && this.trail[index - 1] === target.entry
+      && this.marker()?.session === this.session && this.entries.has(target.entry)) {
+      this.port.history.back();
+      return;
+    }
+    this.saveCurrent();
+    this.publish({ location: target.location, snapshot: target.snapshot, revision: this.state.revision + 1, restoring: true });
+    if (this.mobile) this.writeEntry(true);
+    else if (this.currentEntry !== null) this.entries.set(this.currentEntry, this.state);
+  }
+  dismissJumpReturn() {
+    const { returnTo: _returnTo, ...state } = this.state;
+    this.publish(state);
+    if (this.currentEntry !== null) this.entries.set(this.currentEntry, this.state);
+  }
   openPreview(request: PreviewRequest) {
     const item = request.items[request.index];
     if (!item) return;
@@ -182,7 +208,7 @@ export class MobileNavigationController {
     else this.update({ ...this.state.location, preview: undefined });
   }
   reset(location: NavigationLocation = { ...HOME_LOCATION }) {
-    this.session = crypto.randomUUID();
+    this.session = createSessionId();
     this.entries.clear();
     this.trail = [];
     this.currentEntry = null;

@@ -182,7 +182,7 @@ test('reaction hints dismiss and timestamped names show blue hover dates across 
   await expect(hiddenNotice.getByRole('button', { name: 'Show all', exact: true })).toBeVisible();
   await expect(page.locator('.chat-header .reaction-hidden-control')).toHaveCount(0);
   await expect(hiddenNotice.locator('[title]')).toHaveCount(0);
-  const headerBox = await page.locator('.chat-view-layer.active > .chat-header').boundingBox();
+  const headerBox = await page.locator('.chat-view-layer.active .chat-header').boundingBox();
   const noticeBox = await hiddenNotice.boundingBox();
   expect(noticeBox!.y).toBeGreaterThan(headerBox!.y + headerBox!.height);
   await expect(hiddenNotice).toHaveCount(0, { timeout: 5000 });

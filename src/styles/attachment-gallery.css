@@ -15,6 +15,7 @@
     font: inherit;
     font-size: 18px;
 }
+.gallery-header-actions { display: contents; }
 .gallery-back-btn:hover {
     border-color: var(--accent);
     color: var(--accent);
@@ -83,7 +84,8 @@
 .gallery-add-all {
     flex: 0 0 auto;
     box-sizing: border-box;
-    width: 112px;
+    min-width: 112px;
+    width: max-content;
     height: 34px;
     display: inline-flex;
     align-items: center;
@@ -100,6 +102,7 @@
     font-weight: 600;
     white-space: nowrap;
 }
+.gallery-add-all svg { flex: 0 0 auto; }
 .gallery-add-all:hover { background: rgba(62,166,255,0.15); }
 .gallery-add-all:disabled {
     opacity: 0.5;

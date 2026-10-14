@@ -92,7 +92,10 @@ test('wraps long viewer filenames and copies the original filename from options'
     await viewer.getByRole('button', { name: 'Copy filename' }).click();
     await expect(viewer.getByRole('button', { name: 'Filename copied' })).toBeVisible();
     await expect.poll(() => page.evaluate(() => sessionStorage.getItem('__copiedFilename'))).toBe(viewerFilenames[i]);
-    if (i < viewerFilenames.length - 1) await viewer.getByRole('button', { name: 'Next item' }).click();
+    if (i < viewerFilenames.length - 1) {
+      await page.setViewportSize({ width: 1280, height: 844 });
+      await viewer.getByRole('button', { name: 'Next item' }).click();
+    }
   }
 });
 

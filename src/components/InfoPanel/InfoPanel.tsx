@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
 import type { MessengerThread, MessengerMessage, MediaState, ChatListEntry } from '../../types/messenger';
-import { ArrowLeft, Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon, Sticker, ChevronRight } from 'lucide-react';
+import { Image as ImageIcon, Film, Music, FileText, Smile, Link as LinkIcon, Sticker, ChevronRight } from 'lucide-react';
+import { ParentBackButton } from '../Navigation/ParentBackButton';
 import {
   formatCompactInfoDate,
   formatCompactInfoNumber,
@@ -134,7 +135,7 @@ export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, s
 
   return (
     <div className="chat-info-panel" id="chatInfoPanel" inert={hidden || undefined} aria-hidden={hidden || (!chatData && !onBack)}>
-      {onBack && <div className="mobile-page-header"><button type="button" className="mobile-back-btn" onClick={onBack} aria-label="Back to chat"><ArrowLeft size={18} /></button><h3>Chat info</h3></div>}
+      {onBack && <div className="mobile-page-header"><ParentBackButton destination="chat" ariaLabel="Back to chat" onClick={onBack} /><h3>Chat info</h3></div>}
       {header || (
         <div className="info-panel-header">
           <strong>{chatData?.title || activeEntry?.title || 'Chat Info'}</strong>

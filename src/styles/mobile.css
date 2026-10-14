@@ -50,13 +50,18 @@
   .load-progress-block { max-width: 280px; }
   .message { max-width: 70%; }
   .message.has-media-grid { width: min(340px, 70%); }
-  .message-wrapper { container-type: inline-size; }
-  .msg-timestamp { white-space: normal; overflow-wrap: break-word; line-height: 1.35; width: min(180px, max(0px, calc(100cqw - 100% - 20px))); }
-  .message:hover .msg-timestamp { opacity: 0; }
-  .message[data-timestamp-visible] .msg-timestamp { opacity: 1; }
-  .message[data-timestamp-press],
-  .message[data-timestamp-visible] { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-  .chat-header { gap: 6px; flex-wrap: wrap; padding: 6px 0; }
+  .msg-timestamp { display: none; }
+  #chat { padding-bottom: calc(10px + var(--timestamp-bottom-space, 0px)); }
+  .message-wrapper:has(> .message[data-timestamp-visible]) > .mobile-msg-timestamp {
+    display: block;
+    align-self: stretch;
+    margin: 12px 0 8px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+  .chat-header, .mobile-page-header { flex: 0 0 auto; gap: 6px; min-height: 52px; padding: 6px 0; }
+  .chat-header { flex-wrap: wrap; }
   .chat-header h3 { flex-basis: 0; }
   .mobile-back-btn,
   .gallery-back-btn,
@@ -75,8 +80,21 @@
     color: var(--text);
     cursor: pointer;
   }
-  .mobile-page-header { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
-  .mobile-selected-btn { flex: 0 0 auto; padding: 12px; margin: 0 8px 8px 0; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-bg); color: var(--text); font: inherit; cursor: pointer; }
+  .mobile-page-header { display: flex; align-items: center; padding-inline: 8px; border-bottom: 1.5px solid var(--border); }
+  .chat-info-toggle { border: 0; background: transparent; }
+  .mobile-page-header h3 { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .selection-panel { border-left: 0; }
+  .mobile-selection-toolbar { display: flex; flex: 0 0 auto; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 8px 8px 0; }
+  .mobile-selection-review { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; margin-left: auto; }
+  .mobile-selection-count { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .mobile-selected-btn { flex: 0 0 auto; min-height: 44px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-bg); color: var(--text); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
+  .gallery-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+  .selection-header-actions { flex: 0 0 auto; }
+  .selection-panel .select-checkbox { box-sizing: border-box; width: 28px; height: 28px; padding: 0; display: flex; align-items: center; justify-content: center; }
+  .selection-panel .select-checkbox svg { flex: 0 0 auto; }
+  .selection-menu-btn, .selection-clear-btn { box-sizing: border-box; flex: 0 0 44px; width: 44px; height: 44px; min-width: 44px; padding: 0; }
+  .mobile-back-btn, .gallery-back-btn, .gallery-select-mode-toggle, .gallery-filter-toggle, .chat-info-toggle { box-sizing: border-box; min-width: 44px; padding: 0; }
+  .mobile-back-btn svg, .gallery-back-btn svg, .gallery-select-mode-toggle svg, .gallery-filter-toggle svg, .chat-info-toggle svg, .selection-menu-btn svg, .selection-clear-btn svg { flex: 0 0 auto; }
   .gallery-add-all { width: auto; min-height: 44px; }
   .gallery-tabs { flex-shrink: 0; }
   .gallery-tab { min-height: 44px; }
@@ -85,6 +103,8 @@
   .gallery-open-viewer-btn,
   .gallery-link-message { opacity: 1; visibility: visible; pointer-events: auto; min-width: 36px; min-height: 36px; }
   .gallery-open-viewer-btn.with-jump { right: 46px; }
+  .gallery-thumb .gallery-open-viewer-btn,
+  .gallery-thumb .gallery-link-message { bottom: 0; }
   .chat-list-item { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .chat-list-item[data-long-press] { background: var(--hover-overlay); }
   .chat-item-meta { padding-right: 0; }
@@ -104,6 +124,36 @@
   .media-viewer-counter { grid-row: 2; grid-column: 1 / -1; justify-self: start; padding: 0; border-radius: 0; background: none; color: rgba(255, 255, 255, 0.6); font-size: 12px; font-weight: 400; letter-spacing: normal; line-height: 1.35; }
   .media-viewer-actions { grid-area: 1 / 2; align-self: center; }
   .media-viewer-btn { width: 44px; height: 44px; }
+  .media-viewer-navigation {
+    position: absolute;
+    z-index: 5010;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    left: 16px;
+    right: 16px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    transition: opacity 220ms ease;
+  }
+  .media-viewer-navigation .media-viewer-nav {
+    position: static;
+    transform: none;
+    flex: 0 0 auto;
+    width: auto;
+    height: 44px;
+    min-width: 96px;
+    padding: 0 12px;
+    gap: 6px;
+    border-radius: 22px;
+    background: rgba(25, 25, 25, 0.85);
+    font-size: 13px;
+  }
+  .media-viewer-nav span { display: inline; }
+  .media-viewer-overlay.navigation-visible:not(.image-expanded) .media-viewer-content { max-height: calc(100dvh - 160px); }
+  .media-viewer-overlay.navigation-visible:not(.image-expanded) .media-viewer-image {
+    width: min(var(--media-image-natural-width, 100vw), 100vw, calc((100dvh - 160px) * var(--media-image-ratio, 1)));
+  }
+  .image-expanded .media-viewer-navigation { opacity: 0; pointer-events: none; }
   .media-viewer-btn:not(.selected):not(.bookmarked):active { background: rgba(255, 255, 255, 0.2); }
   .media-viewer-select-toggle:not(.selected):active { border-color: white; background: rgba(255, 255, 255, 0.16); }
   .media-viewer-select-toggle.selected:active,
@@ -122,6 +172,7 @@
     cursor: zoom-in;
     transition: width 220ms ease, border-radius 220ms ease, box-shadow 220ms ease;
   }
+  .media-viewer-image:not([data-image-ready]) { visibility: hidden; transition: none; animation: none; }
   .media-viewer-overlay.image-expanded { background: #000; backdrop-filter: blur(0); }
   .image-expanded .media-viewer-topbar,
   .image-expanded .media-viewer-nav { opacity: 0; pointer-events: none; }

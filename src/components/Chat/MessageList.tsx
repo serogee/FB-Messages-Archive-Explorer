@@ -64,9 +64,15 @@ interface MessageListProps {
   onHiddenCountChange?: (count: number) => void;
 }
 
+export interface MessageJumpOptions {
+  offset?: number;
+  minimumOffset?: () => number | undefined;
+  highlight?: boolean;
+}
+
 export interface MessageListHandle {
   cancelJump: () => void;
-  jumpToMessage: (index: number, options?: { offset?: number; highlight?: boolean }) => Promise<void>;
+  jumpToMessage: (index: number, options?: MessageJumpOptions) => Promise<void>;
   capturePosition: () => MessagePosition | undefined;
   restorePosition: (position: MessagePosition) => Promise<void>;
   getChatContainer: () => HTMLDivElement | null;
@@ -547,7 +553,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
         await messageListRefForRestore.current?.jumpToMessage(position.index, { offset: position.offset, highlight: false });
       } else if (chatContainerRef.current) chatContainerRef.current.scrollTop = position.scrollTop;
     },
-    jumpToMessage: async (index: number, options?: { offset?: number; highlight?: boolean }) => {
+    jumpToMessage: async (index: number, options?: MessageJumpOptions) => {
       const container = chatContainerRef.current;
       if (!container) return;
       if (chatData) setReadyChat(chatData);
@@ -598,8 +604,20 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
 
       if (msgEl) {
         const containerRect = container.getBoundingClientRect();
-        const elRect = msgEl.getBoundingClientRect();
-        container.scrollTop += elRect.top - containerRect.top - (options?.offset ?? 120);
+        // Resolve overlay clearance after the destination and its media are ready.
+        const minimumOffset = options?.minimumOffset?.();
+        const offset = Math.max(options?.offset ?? 120, minimumOffset ?? -Infinity);
+        const content = container.querySelector<HTMLElement>('.message-list-content');
+        if (content) {
+          content.style.paddingTop = '';
+          // The first message has no earlier content to scroll into view. Add only
+          // the space needed for an overlay jump or its saved return position.
+          if (minimumOffset !== undefined || options?.offset !== undefined) {
+            const startOffset = msgEl.getBoundingClientRect().top - containerRect.top + container.scrollTop;
+            content.style.paddingTop = `${Math.max(0, offset - startOffset)}px`;
+          }
+        }
+        container.scrollTop += msgEl.getBoundingClientRect().top - containerRect.top - offset;
         container.dataset.lastScrollTop = String(container.scrollTop);
         container.dataset.isAtBottom = String(
           Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 20,
@@ -623,6 +641,8 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     scrollToBottom: () => {
       const container = chatContainerRef.current;
       if (container) {
+        const content = container.querySelector<HTMLElement>('.message-list-content');
+        if (content) content.style.paddingTop = '';
         if (chatData) setReadyChat(chatData);
         clearJumpSettling();
         container.dataset.isAtBottom = 'true';

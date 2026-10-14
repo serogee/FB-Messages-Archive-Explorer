@@ -1,0 +1,8 @@
+.parent-back-button.mobile-back-btn, .parent-back-button.gallery-back-btn { border: 0; background: transparent; padding: 0; }
+.parent-back-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.parent-back-button:active { color: var(--accent); }
+.parent-back-glyph { position: relative; isolation: isolate; display: block; flex: 0 0 auto; width: 26px; height: 26px; }
+.parent-back-glyph > svg { position: absolute; }
+.parent-back-arrow { top: 0; right: 0; z-index: 0; }
+.parent-back-destination { bottom: 1px; right: -3px; z-index: 1; }
+.parent-back-info { bottom: -1px; right: -6px; z-index: 2; fill: var(--panel-bg); }

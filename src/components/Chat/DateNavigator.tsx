@@ -207,6 +207,7 @@ function findMessageIndexAtActiveLine(container: HTMLDivElement): number | null 
 }
 
 interface DateNavigatorProps {
+  headerControlled?: boolean;
   embedded?: boolean;
   mobile?: boolean;
   chatData?: MessengerThread | null;
@@ -215,7 +216,7 @@ interface DateNavigatorProps {
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-export function DateNavigator({ chatData: providedThread, settings: _settings, onJumpToMessage, chatContainerRef, mobile = false, embedded = false }: DateNavigatorProps) {
+export function DateNavigator({ chatData: providedThread, settings: _settings, onJumpToMessage, chatContainerRef, mobile = false, embedded = false, headerControlled = false }: DateNavigatorProps) {
   const chatData = useThreadData(providedThread);
   const [scale, setScale] = useState<DateScale>('month');
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -369,10 +370,14 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
 
   if (!hasDates) return null;
 
+  const currentPeriodLabel = <span className="date-nav-current" id="dateNavCurrent">
+    {activeBucket?.label || ''}
+  </span>;
+
   return (
     <div
       ref={controlsRef}
-      className={`date-nav-controls${hasDates ? ' active' : ''}${manualCollapse && !_settings.autoCollapseDateNav ? ' manual-collapsed' : ''}${mobile ? ` mobile-date-nav${mobileExpanded ? ' expanded' : ''}` : ''}`}
+      className={`date-nav-controls${hasDates ? ' active' : ''}${manualCollapse && !_settings.autoCollapseDateNav && !headerControlled ? ' manual-collapsed' : ''}${mobile ? ` mobile-date-nav${mobileExpanded ? ' expanded' : ''}` : ''}`}
       id="dateNavControls"
     >
       <div className="date-nav-scale">
@@ -409,7 +414,11 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
         </button>
       </div>
 
-      <button
+      {headerControlled ? (
+        <div className="date-nav-current-box" id="dateNavCurrentBox" aria-live="polite">
+          {currentPeriodLabel}
+        </div>
+      ) : <button
         className="date-nav-current-box"
         disabled={embedded || (!mobile && _settings.autoCollapseDateNav)}
         onClick={() => { if (mobile) setMobileExpanded(v => !v); else if (!_settings.autoCollapseDateNav) setManualCollapse(v => !v); }}
@@ -419,10 +428,8 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
         id="dateNavCurrentBox"
         aria-live="polite"
       >
-        <span className="date-nav-current" id="dateNavCurrent">
-          {activeBucket?.label || ''}
-        </span>
-      </button>
+        {currentPeriodLabel}
+      </button>}
 
       {/* Track — shown when header hovered (CSS handles auto-collapse), or toggled manually */}
       {scale === 'month' ? (

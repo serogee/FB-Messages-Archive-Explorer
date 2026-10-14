@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MediaViewer } from '../src/components/MediaViewer/MediaViewer';
 import { createMediaState } from '../src/services/media';
@@ -21,6 +22,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  fireEvent.pointerDown(document);
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -48,6 +50,71 @@ function gesture(target: Element, dx: number, dy = 0, cancel = false) {
 }
 
 describe('mobile viewer gestures', () => {
+  it.each([true, false])('never commits a previous file URL under the next attachment, mobile=%s', async mobile => {
+    const mediaState = createMediaState();
+    const sources: (string | null)[] = [];
+    const first: ResolvedAttachment = { ...items[0], mediaEntry: { type: 'image', url: 'blob:first-frame' } };
+    const next: ResolvedAttachment = { ...items[1], mediaEntry: { type: 'image', url: 'blob:next-frame' } };
+    function Preview({ attachment }: { attachment: ResolvedAttachment }) {
+      useLayoutEffect(() => {
+        sources.push(document.querySelector<HTMLImageElement>('.media-viewer-image')?.getAttribute('src') ?? null);
+      }, [attachment]);
+      return <MediaViewer mobile={mobile} items={[attachment]} initialIndex={0} mediaState={mediaState}
+        onClose={() => {}} onJumpToMessage={() => {}} />;
+    }
+    const { rerender } = render(<Preview attachment={first} />);
+    await waitFor(() => expect(document.querySelector('.media-viewer-image')?.getAttribute('src')).toBe('blob:first-frame'));
+    rerender(<Preview attachment={next} />);
+    expect(sources.at(-1)).toBeNull();
+    await waitFor(() => expect(document.querySelector('.media-viewer-image')?.getAttribute('src')).toBe('blob:next-frame'));
+  });
+
+  it('activates short toolbar taps without a browser click and ignores the compatibility click', async () => {
+    const { onClose } = openViewer();
+    const image = await screen.findByRole('button', { name: 'Expand image' });
+    const menu = screen.getByRole('button', { name: 'More options' });
+    gesture(menu.querySelector('svg')!, 0);
+    expect(menu.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(menu, { detail: 1 });
+    expect(menu.getAttribute('aria-expanded')).toBe('true');
+    expect(image.getAttribute('aria-pressed')).toBe('false');
+    const close = screen.getByRole('button', { name: 'Close' });
+    gesture(close.querySelector('svg')!, 0);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(close, { detail: 1 });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks the released Close tap from activating the page after the viewer unmounts', async () => {
+    const onClose = vi.fn();
+    const { unmount } = render(<MediaViewer mobile items={items} initialIndex={1}
+      mediaState={createMediaState()} onClose={onClose} onJumpToMessage={() => {}} />);
+    gesture(screen.getByRole('button', { name: 'Close' }), 0);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    unmount();
+    const pageButton = document.createElement('button');
+    const onPageClick = vi.fn();
+    pageButton.addEventListener('click', onPageClick);
+    document.body.append(pageButton);
+    try {
+      fireEvent.click(pageButton, { detail: 1 });
+      expect(onPageClick).not.toHaveBeenCalled();
+      fireEvent.pointerDown(pageButton);
+      fireEvent.click(pageButton, { detail: 1 });
+      expect(onPageClick).toHaveBeenCalledTimes(1);
+    } finally { pageButton.remove(); }
+  });
+
+  it('leaves canceled control taps inactive and allows keyboard activation after a touch', async () => {
+    openViewer();
+    const menu = screen.getByRole('button', { name: 'More options' });
+    gesture(menu, 0, 0, true);
+    fireEvent.click(menu, { detail: 1 });
+    expect(menu.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(menu, { detail: 0 });
+    expect(menu.getAttribute('aria-expanded')).toBe('true');
+  });
+
   it.each([false, true])('swipes across the backdrop in both directions with reverse=%s and clamps at the ends', async reverse => {
     const { onClose, onCurrentItemChange } = openViewer(true, reverse);
     const viewer = screen.getByRole('dialog');
