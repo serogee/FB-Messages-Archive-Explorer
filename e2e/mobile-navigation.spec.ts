@@ -1,10 +1,11 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { installArchive } from './helpers/archive';
 
 // These workflows traverse multiple screens; Windows WebKit is slower than Chromium.
 test.setTimeout(60_000);
 
-async function openChat(page: Page, longMessages = 0, withValidImage = false, unavailableMedia = false) {
+async function openChat(page: Page, longMessages = 0, withValidImage = false, unavailableMedia = false, withViewerMedia = false, beforeSelect?: (page: Page) => Promise<void>) {
   await installArchive(page, 'facebook', false, unavailableMedia, false, longMessages);
   await page.goto('');
   if (withValidImage) {
@@ -26,6 +27,33 @@ async function openChat(page: Page, longMessages = 0, withValidImage = false, un
       await writer.close();
     });
   }
+  if (withViewerMedia) {
+    const video = [...readFileSync(new URL('./fixtures/portrait.mp4', import.meta.url))];
+    const audio = [...readFileSync(new URL('./fixtures/silence.wav', import.meta.url))];
+    await page.evaluate(async ({ video, audio }) => {
+      const fixture = window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } };
+      const inbox = await fixture.__testArchives.facebook.getDirectoryHandle('inbox');
+      const alice = await inbox.getDirectoryHandle('alice_chat');
+      for (const [directory, name, bytes] of [['videos', 'portrait.mp4', video], ['audio', 'silence.wav', audio], ['files', 'sample.txt', [65, 66, 67]]] as const) {
+        const folder = await alice.getDirectoryHandle(directory, { create: true });
+        const file = await folder.getFileHandle(name, { create: true });
+        const writer = await file.createWritable();
+        await writer.write(new Uint8Array(bytes));
+        await writer.close();
+      }
+      const file = await alice.getFileHandle('message_1.json');
+      const data = JSON.parse(await (await file.getFile()).text());
+      data.messages.push(
+        { sender_name: 'Alice', timestamp_ms: 25, videos: [{ uri: 'videos/portrait.mp4' }] },
+        { sender_name: 'Alice', timestamp_ms: 26, audio_files: [{ uri: 'audio/silence.wav' }] },
+        { sender_name: 'Alice', timestamp_ms: 27, files: [{ uri: 'files/sample.txt' }] },
+      );
+      const writer = await file.createWritable();
+      await writer.write(JSON.stringify(data));
+      await writer.close();
+    }, { video, audio });
+  }
+  await beforeSelect?.(page);
   await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
   await page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' }).click();
   await expect(page.locator('#chat')).toHaveAttribute('aria-busy', 'false', { timeout: 15_000 });
@@ -35,6 +63,22 @@ async function openChat(page: Page, longMessages = 0, withValidImage = false, un
 
 async function expectScreen(page: Page, screen: string) {
   await expect(page.locator('.container')).toHaveAttribute('data-mobile-screen', screen);
+}
+
+async function useNearbyMessageTimes(page: Page) {
+  await page.evaluate(async () => {
+    const fixture = window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } };
+    const chat = await (await fixture.__testArchives.facebook.getDirectoryHandle('inbox')).getDirectoryHandle('alice_chat');
+    const file = await chat.getFileHandle('message_1.json');
+    const data = JSON.parse(await (await file.getFile()).text());
+    for (const message of data.messages) {
+      const index = /^History message (\d+) /.exec(message.content ?? '')?.[1];
+      if (index !== undefined) message.timestamp_ms = 1700000000000 + Number(index) * 60_000;
+    }
+    const writer = await file.createWritable();
+    await writer.write(JSON.stringify(data));
+    await writer.close();
+  });
 }
 
 async function tapWithoutMovingFollowingMessages(page: Page, message: Locator) {
@@ -82,20 +126,27 @@ async function tapWithoutMovingFollowingMessages(page: Page, message: Locator) {
         return { ...box(rect), lines: [...range.getClientRects()].map(box) };
       }),
     });
-    const capture = { before: measure(), frames: [] as ReturnType<typeof measure>[], done: false };
+    const capture = { before: measure(), frames: [] as ReturnType<typeof measure>[], done: false, start: () => {} };
     (window as unknown as { timestampStability: typeof capture }).timestampStability = capture;
     const sample = () => {
       capture.frames.push(measure());
       if (capture.frames.length >= 8) capture.done = true;
       else requestAnimationFrame(sample);
     };
-    const observer = new MutationObserver(() => {
+    let started = false;
+    const start = () => {
+      if (started) return;
+      started = true;
       observer.disconnect();
       sample();
-    });
+    };
+    const observer = new MutationObserver(start);
+    capture.start = start;
     observer.observe(chat, { subtree: true, attributes: true, attributeFilter: ['data-timestamp-visible'] });
   }, index);
   await message.locator('.message-text').tap();
+  // A message with its own separator deliberately makes no timestamp mutation.
+  await page.evaluate(() => (window as unknown as { timestampStability: { start: () => void } }).timestampStability.start());
   await page.waitForFunction(() => (window as unknown as { timestampStability: { done: boolean } }).timestampStability.done);
   const maximumDrift = await page.evaluate(() => {
     type Box = { x: number; y: number; width: number; height: number };
@@ -203,8 +254,9 @@ async function openGallery(page: Page) {
 }
 
 async function viewerAction(page: Page, action: string) {
-  await page.getByRole('button', { name: 'More options', exact: true }).click();
-  await page.getByRole('button', { name: action, exact: true }).click();
+  const viewer = page.getByRole('dialog', { name: 'Attachment viewer' });
+  await viewer.getByRole('button', { name: 'More options', exact: true }).click();
+  await viewer.getByRole('button', { name: action, exact: true }).click();
 }
 
 async function swipeViewer(page: Page, direction: 'left' | 'right', target = '.media-viewer-overlay', yFraction = 0.85) {
@@ -653,6 +705,184 @@ test('restores gallery scroll and the preview occurrence through the return acti
   await page.screenshot({ path: test.info().outputPath('gallery.png') });
 });
 
+for (const source of ['chat', 'gallery', 'selected'] as const) {
+  for (const startMobile of [true, false]) {
+    test(`closes returned ${source} previews once after resizing from ${startMobile ? 'mobile' : 'desktop'}`, async ({ page }) => {
+      if (source === 'selected' && !startMobile) await page.addInitScript(() => {
+        localStorage.setItem('majv_' + location.hostname + '_setting_infoPanelOpen', 'true');
+      });
+      await page.setViewportSize({ width: startMobile || source === 'selected' ? 390 : 1280, height: 844 });
+      await openChat(page, source === 'chat' ? 0 : 80, true);
+      if (source !== 'chat') {
+        await page.getByRole('button', { name: startMobile || source === 'selected' ? 'Open chat info' : 'Toggle chat info panel', exact: true }).click();
+        await page.getByRole('button', { name: 'Attachments', exact: true }).click();
+        await page.locator('.gallery-tab').filter({ hasText: 'Photos' }).click();
+        if (source === 'selected') {
+          await page.getByTitle('Select attachments and links', { exact: true }).click();
+          await page.locator('.gallery-thumb').first().click();
+          await page.getByRole('button', { name: 'Review selection', exact: true }).click();
+          if (!startMobile) await page.setViewportSize({ width: 1280, height: 844 });
+          const selected = page.locator('.selection-panel .gallery-thumb').first();
+          if (startMobile) await selected.click();
+          else await selected.locator('.gallery-open-viewer-btn').click();
+        } else await page.locator('.gallery-thumb').first().click();
+      } else {
+        const attachment = page.locator('#chat .lazy-media-wrapper').first();
+        await attachment.scrollIntoViewIfNeeded();
+        await expect(attachment.locator('img')).toBeVisible();
+        await attachment.locator('img').click();
+      }
+      const viewer = page.locator('.media-viewer-overlay');
+      await expect(viewer).toBeVisible();
+      const date = await viewer.locator('.media-viewer-date').textContent();
+      await viewerAction(page, source === 'chat' ? 'Jump to attachment' : 'Jump to message');
+      await page.setViewportSize({ width: startMobile ? 1280 : 390, height: 844 });
+      await page.getByRole('button', { name: source === 'chat' ? 'Return to message' : 'Return to attachment', exact: true }).click();
+      await expect(viewer.locator('.media-viewer-date')).toHaveText(date!);
+      const historyLength = await page.evaluate(() => history.length);
+      await viewer.getByRole('button', { name: 'Close', exact: true }).tap();
+      await expect(viewer).toHaveCount(0);
+      await expectScreen(page, source === 'selected' && !startMobile ? 'gallery' : source);
+      expect(await page.evaluate(() => history.length)).toBe(historyLength);
+      if (source !== 'chat') await expect(page.locator('.gallery-tab.active')).toContainText('Photos');
+      else await expect(page.locator('#chat .message')).not.toHaveCount(0);
+    });
+  }
+}
+
+test('fits every attachment type between mobile viewer controls in portrait and landscape', async ({ page }) => {
+  test.setTimeout(120_000);
+  const layoutOnlyMedia = process.platform === 'win32' && test.info().project.name.includes('webkit');
+  if (layoutOnlyMedia) {
+    test.info().annotations.push({ type: 'platform', description: 'Windows WebKit cannot decode these media fixtures; native-element sizing is tested with deterministic dimensions. Chromium verifies playback.' });
+    await page.addInitScript(() => {
+      document.addEventListener('error', event => {
+        if (event.target instanceof HTMLMediaElement) event.stopImmediatePropagation();
+      }, true);
+      new MutationObserver(() => {
+        const video = document.querySelector<HTMLVideoElement>('.media-viewer-video');
+        if (video && !video.hasAttribute('width')) {
+          video.width = 120; video.height = 360;
+        }
+      }).observe(document, { childList: true, subtree: true });
+    });
+  }
+  await openChat(page, 0, true, false, true);
+  await openGallery(page);
+  for (const [width, height] of [[320, 640], [390, 844], [640, 320]]) {
+    await page.setViewportSize({ width, height });
+    for (const [title, selector] of [
+      ['portrait.mp4', '.media-viewer-video'], ['silence.wav', '.media-viewer-audio-wrap'],
+      ['sample.txt', '.media-viewer-placeholder'], ['https://example.com/report', '.media-viewer-link-card'],
+    ]) {
+      await page.locator(`.gallery-thumb[title="${title}"]`).click();
+      const viewer = page.locator('.media-viewer-overlay');
+      const content = viewer.locator(selector);
+      await expect(content).toBeVisible();
+      const media = viewer.locator('video, audio');
+      if (!layoutOnlyMedia && await media.count()) {
+        await expect.poll(() => media.evaluate(element => (element as HTMLMediaElement).readyState)).toBeGreaterThanOrEqual(2);
+        await media.evaluate(async element => { const media = element as HTMLMediaElement; media.loop = true; await media.play(); });
+      }
+      for (const navigation of [true, false]) {
+        const visible = await viewer.locator('.media-viewer-navigation').count() > 0;
+        if (visible !== navigation) await viewerAction(page, navigation ? 'Show Navigation' : 'Hide Navigation');
+        await expect.poll(() => content.evaluate(element => {
+          const box = element.getBoundingClientRect();
+          const header = document.querySelector('.media-viewer-topbar')!.getBoundingClientRect();
+          const footer = document.querySelector('.media-viewer-navigation')?.getBoundingClientRect();
+          return box.top >= header.bottom + 11.9 && box.bottom <= (footer?.top ?? innerHeight) - 11.9;
+        })).toBe(true);
+        if (navigation) {
+          const footer = viewer.locator('.media-viewer-navigation');
+          const footerHit = await footer.evaluate(element => {
+            const box = element.getBoundingClientRect();
+            const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+            return { pointer: getComputedStyle(element).pointerEvents, hit: hit?.outerHTML.slice(0, 200),
+              blocked: !!hit?.closest('.media-viewer-navigation') };
+          });
+          expect(footerHit.blocked, `${width}x${height} ${title}: ${JSON.stringify(footerHit)}`).toBe(false);
+          for (const button of await footer.getByRole('button').all()) expect((await button.boundingBox())!.height).toBe(44);
+        }
+        if (await media.count()) {
+          await media.scrollIntoViewIfNeeded();
+          expect(await media.evaluate(element => {
+            const box = element.getBoundingClientRect();
+            return document.elementFromPoint(box.x + box.width / 2, box.bottom - 8) === element;
+          })).toBe(true);
+        }
+        const lastAction = content.locator('button, a, audio, video').last();
+        if (await lastAction.count()) {
+          await lastAction.scrollIntoViewIfNeeded();
+          expect(await lastAction.evaluate(element => {
+            const box = element.getBoundingClientRect();
+            const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+            return hit === element || element.contains(hit);
+          })).toBe(true);
+        }
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await viewer.getByRole('button', { name: 'Close', exact: true }).tap();
+      await expect(viewer).toHaveCount(0);
+      await expectScreen(page, 'gallery');
+    }
+  }
+});
+
+test('does not activate viewer buttons or links after a moved touch', async ({ page }) => {
+  await openChat(page, 0, true);
+  await openGallery(page);
+  await page.getByTitle('Select attachments and links', { exact: true }).click();
+  await page.locator('.gallery-thumb[title="photo.jpg"]').click();
+  await page.getByRole('button', { name: 'Review selection' }).click();
+  await page.locator('.selection-panel .gallery-thumb').click();
+  const viewer = page.getByRole('dialog', { name: 'Attachment viewer' });
+  const drag = async (control: Locator) => {
+    const target = control.locator('svg').first();
+    const pointer = { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 };
+    await target.dispatchEvent('pointerdown', pointer);
+    await target.dispatchEvent('pointermove', { ...pointer, clientX: 44 });
+    await target.dispatchEvent('pointerup', pointer);
+    await target.dispatchEvent('click', { detail: 1 });
+  };
+  for (const name of ['Deselect item', 'Close', 'More options']) {
+    await drag(viewer.getByRole('button', { name, exact: true }));
+    await expect(viewer).toBeVisible();
+    await expect(viewer.getByRole('button', { name: 'Deselect item' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(viewer.getByRole('button', { name: 'More options' })).toHaveAttribute('aria-expanded', 'false');
+  }
+  await viewer.getByRole('button', { name: 'More options' }).tap();
+  let downloads = 0;
+  page.on('download', () => { downloads++; });
+  await drag(viewer.getByRole('button', { name: 'Download', exact: true }));
+  expect(downloads).toBe(0);
+  await expect(viewer.locator('.media-viewer-menu-dropdown')).toBeVisible();
+  await viewer.getByRole('button', { name: 'Close', exact: true }).tap();
+  await page.getByRole('button', { name: 'Back to attachments' }).click();
+  await page.getByTitle('Select attachments and links', { exact: true }).click();
+  await page.locator('.gallery-tab').filter({ hasText: 'Links' }).click();
+  await page.locator('.gallery-link-card').click();
+  await viewer.getByRole('button', { name: 'More options' }).tap();
+  const pageCount = page.context().pages().length;
+  await drag(viewer.getByRole('link', { name: 'Open link', exact: true }).first());
+  expect(page.context().pages()).toHaveLength(pageCount);
+  await expect(viewer).toBeVisible();
+});
+
+test('keeps the mobile viewer backdrop clickable outside the fitted attachment', async ({ page }) => {
+  await openChat(page, 0, true);
+  await openGallery(page);
+  await page.locator('.gallery-thumb[title="photo.jpg"]').tap();
+  const viewer = page.locator('.media-viewer-overlay');
+  await expect(viewer.locator('.media-viewer-image')).toBeVisible();
+  const content = (await viewer.locator('.media-viewer-content').boundingBox())!;
+  const position = { x: content.x + 8, y: content.y + content.height / 2 };
+  expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.classList.contains('media-viewer-overlay'), position)).toBe(true);
+  await page.touchscreen.tap(position.x, position.y);
+  await expect(viewer).toHaveCount(0);
+  await expectScreen(page, 'gallery');
+});
+
 test('fits three or four media columns on mobile and preserves the desktop grid', async ({ page }) => {
   await openChat(page, 120);
   await openGallery(page);
@@ -709,37 +939,42 @@ test('opens mobile images at their fitted size without a viewport flash', async 
   await openGallery(page);
   for (const [width, height] of [[390, 844], [320, 640], [640, 320]]) {
     await page.setViewportSize({ width, height });
-    await page.evaluate(() => {
-      const capture = { frames: [] as { width: number; height: number }[], done: false };
-      (window as unknown as { viewerSizingCapture: typeof capture }).viewerSizingCapture = capture;
-      const sample = () => {
-        const image = document.querySelector<HTMLImageElement>('.media-viewer-image');
-        if (image?.naturalWidth && getComputedStyle(image).visibility !== 'hidden') {
-          const bounds = image.getBoundingClientRect();
-          capture.frames.push({ width: bounds.width, height: bounds.height });
-        }
-        if (capture.frames.length >= 20) capture.done = true;
-        else requestAnimationFrame(sample);
-      };
-      requestAnimationFrame(sample);
-    });
-    await page.locator('.gallery-thumb[title="photo.jpg"]').first().click();
-    await expect(page.locator('.media-viewer-image')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => (
-      (window as unknown as { viewerSizingCapture: { done: boolean } }).viewerSizingCapture.done
-    ))).toBe(true);
-    const frames = await page.evaluate(() => (
-      (window as unknown as { viewerSizingCapture: { frames: { width: number; height: number }[] } }).viewerSizingCapture.frames
-    ));
-    const fittedWidth = Math.min(120, width, (height - 100) / 3);
-    for (const frame of frames) {
-      expect(frame.width).toBeLessThanOrEqual(fittedWidth + 1);
-      expect(frame.height).toBeLessThanOrEqual(fittedWidth * 3 + 1);
+    // The second open uses a decoded image and saved visible navigation.
+    for (const navigation of [false, true]) {
+      await page.evaluate(() => {
+        const capture = { frames: [] as { width: number; height: number }[], done: false };
+        (window as unknown as { viewerSizingCapture: typeof capture }).viewerSizingCapture = capture;
+        const sample = () => {
+          const image = document.querySelector<HTMLImageElement>('.media-viewer-image');
+          if (image?.naturalWidth && getComputedStyle(image).visibility !== 'hidden') {
+            const bounds = image.getBoundingClientRect();
+            capture.frames.push({ width: bounds.width, height: bounds.height });
+          }
+          if (capture.frames.length >= 20) capture.done = true;
+          else requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      });
+      await page.locator('.gallery-thumb[title="photo.jpg"]').first().click();
+      await expect(page.locator('.media-viewer-image')).toBeVisible();
+      await expect.poll(() => page.evaluate(() => (
+        (window as unknown as { viewerSizingCapture: { done: boolean } }).viewerSizingCapture.done
+      ))).toBe(true);
+      const frames = await page.evaluate(() => (
+        (window as unknown as { viewerSizingCapture: { frames: { width: number; height: number }[] } }).viewerSizingCapture.frames
+      ));
+      const contentHeight = await page.locator('.media-viewer-overlay').evaluate(element => parseFloat((element as HTMLElement).style.getPropertyValue('--viewer-content-height')));
+      const fittedWidth = Math.min(120, width, contentHeight / 3);
+      for (const frame of frames) {
+        expect(frame.width).toBeLessThanOrEqual(fittedWidth + 1);
+        expect(frame.height).toBeLessThanOrEqual(fittedWidth * 3 + 1);
+      }
+      expect(frames.at(-1)!.width).toBeCloseTo(fittedWidth, 0);
+      await viewerAction(page, navigation ? 'Hide Navigation' : 'Show Navigation');
+      await page.getByRole('button', { name: 'Close', exact: true }).tap();
+      await expect(page.locator('.media-viewer-overlay')).toHaveCount(0);
+      await expectScreen(page, 'gallery');
     }
-    expect(frames.at(-1)!.width).toBeCloseTo(fittedWidth, 0);
-    await page.getByRole('button', { name: 'Close', exact: true }).tap();
-    await expect(page.locator('.media-viewer-overlay')).toHaveCount(0);
-    await expectScreen(page, 'gallery');
   }
 });
 
@@ -1068,7 +1303,7 @@ test('preserves bubbles, text, and separators when older message groups unload d
     ];
     data.messages = Array.from({ length: 100 }, (_, index) => ({
       sender_name: index % 10 < 5 ? 'Alice' : 'Tester',
-      timestamp_ms: 1761836520000 + Math.floor(index / 4) * 3600000 + index * 1000,
+      timestamp_ms: 1761836520000 + Math.floor((index + 1) / 4) * 3600000 + index * 1000,
       content: `${index}: ${texts[index % texts.length]}`,
       ...(index % 7 === 0 ? { reactions: [{ reaction: '\u{1f60d}', actor: index % 10 < 5 ? 'Tester' : 'Alice' }] } : {}),
     }));
@@ -1117,6 +1352,36 @@ test('preserves bubbles, text, and separators when older message groups unload d
   expect(unloadedDuringTap, 'Exercise unloading an older group during a date tap').toBe(true);
 });
 
+test('avoids duplicate mobile dates for messages with their own separator', async ({ page }) => {
+  await openChat(page);
+  const first = page.locator('.message').filter({ hasText: 'first message' });
+  const next = page.locator('.message').filter({ hasText: 'needle from Facebook' });
+  const separator = page.locator('#chat .time-separator:not(.mobile-msg-timestamp)');
+  const existingDate = await separator.textContent();
+  await expect(first.locator('.msg-timestamp')).toHaveText(existingDate!);
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await tapWithoutMovingFollowingMessages(page, first);
+    await tapWithoutMovingFollowingMessages(page, first);
+    await expect(first).not.toHaveAttribute('data-timestamp-visible', 'true');
+    await expect(first.locator('..').locator('.mobile-msg-timestamp')).toBeHidden();
+    await expect(separator).toHaveCount(1);
+    await expect(separator).toHaveText(existingDate!);
+    await tapWithoutMovingFollowingMessages(page, next);
+    await expect(next.locator('..').locator('.mobile-msg-timestamp')).toBeVisible();
+    await first.locator('.message-text').scrollIntoViewIfNeeded();
+    const before = await first.boundingBox();
+    await first.locator('.message-text').tap();
+    await expect(next.locator('..').locator('.mobile-msg-timestamp')).toBeHidden();
+    await expect(first.locator('..').locator('.mobile-msg-timestamp')).toBeHidden();
+    await expect.poll(async () => Math.abs((await first.boundingBox())!.y - before!.y)).toBeLessThanOrEqual(0.02);
+    await expect(separator).toHaveText(existingDate!);
+  }
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await first.hover();
+  await expect(first.locator('.msg-timestamp')).toHaveCSS('opacity', '1');
+});
+
 test('keeps tapped bubbles stationary in short mobile chats without initial scrolling', async ({ page }) => {
   await openChat(page);
   const message = page.locator('.message').filter({ hasText: 'needle from Facebook' });
@@ -1142,7 +1407,7 @@ test('keeps tapped bubbles stationary in short mobile chats without initial scro
 
 test('keeps following bubbles and text stable for wrapped dates, lower messages, and mobile resizing', async ({ page }) => {
   test.setTimeout(90_000);
-  await openChat(page, 40);
+  await openChat(page, 40, false, false, false, useNearbyMessageTimes);
   await page.addStyleTag({ content: '@media (max-width: 768px) { .mobile-msg-timestamp { width: 35%; } }' });
   const upper = page.locator('.message').filter({ hasText: 'History message 18 with enough text' });
   const lower = page.locator('.message').filter({ hasText: 'History message 19 with enough text' });
@@ -1179,8 +1444,61 @@ test('keeps following bubbles and text stable for wrapped dates, lower messages,
   await tapWithoutMovingFollowingMessages(page, last);
 });
 
+test('keeps a revealed date through delayed media sizing and live orientation changes', async ({ page }) => {
+  test.setTimeout(90_000);
+  let release = () => {};
+  const mediaReady = new Promise<void>(resolve => { release = resolve; });
+  let pendingRequests = 0;
+  try {
+    await openChat(page, 40, true, false, false, async page => {
+      await useNearbyMessageTimes(page);
+      const bytes = await page.evaluate(async () => {
+        const fixture = window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } };
+        const inbox = await fixture.__testArchives.facebook.getDirectoryHandle('inbox');
+        const alice = await inbox.getDirectoryHandle('alice_chat');
+        const photos = await alice.getDirectoryHandle('photos');
+        const file = await photos.getFileHandle('photo.jpg');
+        const bytes = [...new Uint8Array(await (await file.getFile()).arrayBuffer())];
+        const create = URL.createObjectURL.bind(URL);
+        // Exercise the supported image-element decoding path so the request can be held.
+        Object.defineProperty(window, 'createImageBitmap', { configurable: true, value: undefined });
+        URL.createObjectURL = blob => blob instanceof File && blob.name === 'photo.jpg'
+          ? new URL('e2e-delayed-photo.png', location.href).href : create(blob);
+        return bytes;
+      });
+      await page.route('**/e2e-delayed-photo.png', async route => {
+        pendingRequests++;
+        await mediaReady;
+        await route.fulfill({ body: Buffer.from(bytes), contentType: 'image/png' });
+      });
+    });
+    const message = page.locator('.message').filter({ hasText: 'History message 37 with enough text' });
+    await tapWithoutMovingFollowingMessages(page, message);
+    const date = message.locator('..').locator('.mobile-msg-timestamp');
+    await expect(date).toBeVisible();
+    await expect.poll(() => pendingRequests).toBeGreaterThan(0);
+    release();
+    await expect.poll(() => page.locator('#chat img').evaluateAll(images => images.some(image => (image as HTMLImageElement).naturalHeight > 0))).toBe(true);
+    await expect(date).toBeVisible();
+    // Media dimensions may change legitimately; compare timestamp taps only once sizing settles.
+    await tapWithoutMovingFollowingMessages(page, message);
+    await tapWithoutMovingFollowingMessages(page, message);
+    for (const [width, height] of [[320, 640], [640, 320], [390, 844]]) {
+      await page.setViewportSize({ width, height });
+      await expect(date).toBeVisible();
+      await expect.poll(() => date.evaluate(element => {
+        const style = getComputedStyle(element);
+        const outer = element.getBoundingClientRect().height + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+        return Math.max(Math.abs(outer - Math.round(outer)), Math.abs(outer * devicePixelRatio - Math.round(outer * devicePixelRatio)));
+      })).toBeLessThanOrEqual(0.02);
+      await tapWithoutMovingFollowingMessages(page, message);
+      await tapWithoutMovingFollowingMessages(page, message);
+    }
+  } finally { release(); }
+});
+
 test('reveals mobile dates above tapped messages without moving the tapped bubble', async ({ page }) => {
-  await openChat(page, 20);
+  await openChat(page, 20, false, false, false, useNearbyMessageTimes);
   const message = page.locator('.message').filter({ hasText: 'History message 19 with enough text' });
   const previous = page.locator('.message').filter({ hasText: 'History message 18 with enough text' });
   const timestamp = message.locator('.msg-timestamp');

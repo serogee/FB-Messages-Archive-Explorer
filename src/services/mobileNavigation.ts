@@ -63,12 +63,19 @@ export interface NavigationLocation {
   preview?: PreviewLocation;
 }
 
+interface PreviewBase {
+  location: NavigationLocation;
+  snapshot: NavigationSnapshot;
+  entry: number | null;
+}
+
 export interface NavigationState {
   location: NavigationLocation;
   snapshot?: NavigationSnapshot;
   revision: number;
   restoring: boolean;
-  returnTo?: { label: 'attachment' | 'message'; location: NavigationLocation; snapshot: NavigationSnapshot; entry: number | null };
+  previewBase?: PreviewBase;
+  returnTo?: { label: 'attachment' | 'message'; location: NavigationLocation; snapshot: NavigationSnapshot; entry: number | null; previewBase?: PreviewBase };
 }
 
 export const HOME_LOCATION: NavigationLocation = {
@@ -105,6 +112,7 @@ export class MobileNavigationController {
   private currentEntry: number | null = null;
   private trail: number[] = [];
   private mobile = false;
+  private previewClosePending = false;
   capture: () => NavigationSnapshot = () => ({});
 
   constructor(privatePort: HistoryPort) { this.port = privatePort; }
@@ -148,20 +156,29 @@ export class MobileNavigationController {
     this.port.history[push ? 'pushState' : 'replaceState'](historyState, '');
   }
   private saveCurrent() {
+    const snapshot = this.capture();
+    this.state = { ...this.state, snapshot,
+      ...(this.state.previewBase ? { previewBase: { ...this.state.previewBase, snapshot } } : {}) };
     if (this.currentEntry !== null) {
-      this.entries.set(this.currentEntry, { ...this.state, snapshot: this.capture() });
+      this.entries.set(this.currentEntry, this.state);
     }
+    return this.state;
   }
   navigate(location: NavigationLocation, returnLabel?: 'attachment' | 'message') {
     if (JSON.stringify(location) === JSON.stringify(this.state.location)) return;
-    const returnTo = returnLabel ? { label: returnLabel, location: this.state.location, snapshot: this.capture(), entry: this.currentEntry } : undefined;
-    this.saveCurrent();
-    this.publish({ location, revision: this.state.revision + 1, restoring: false, ...(returnTo ? { returnTo } : {}) });
+    const source = this.saveCurrent();
+    const returnTo = returnLabel ? { label: returnLabel, location: source.location, snapshot: source.snapshot!, entry: this.currentEntry,
+      ...(source.previewBase ? { previewBase: source.previewBase } : {}) } : undefined;
+    const previewBase = location.preview ? source.previewBase ?? {
+      location: { ...source.location, preview: undefined }, snapshot: source.snapshot!, entry: this.currentEntry,
+    } : undefined;
+    this.publish({ location, revision: this.state.revision + 1, restoring: false,
+      ...(returnTo ? { returnTo } : {}), ...(previewBase ? { previewBase } : {}) });
     if (this.mobile) this.writeEntry(true);
     else if (this.currentEntry !== null) this.entries.set(this.currentEntry, this.state);
   }
   update(location: NavigationLocation) {
-    this.publish({ ...this.state, location });
+    this.publish({ ...this.state, location, previewBase: location.preview ? this.state.previewBase : undefined });
     if (this.currentEntry !== null) this.entries.set(this.currentEntry, this.state);
   }
   parent() { this.navigate(getParentLocation(this.state.location)); }
@@ -170,12 +187,14 @@ export class MobileNavigationController {
     if (!target) return;
     const index = this.currentEntry === null ? -1 : this.trail.indexOf(this.currentEntry);
     if (this.mobile && target.entry !== null && index > 0 && this.trail[index - 1] === target.entry
-      && this.marker()?.session === this.session && this.entries.has(target.entry)) {
+      && this.marker()?.session === this.session && this.marker()?.entry === this.currentEntry
+      && JSON.stringify(this.entries.get(target.entry)?.location) === JSON.stringify(target.location)) {
       this.port.history.back();
       return;
     }
     this.saveCurrent();
-    this.publish({ location: target.location, snapshot: target.snapshot, revision: this.state.revision + 1, restoring: true });
+    this.publish({ location: target.location, snapshot: target.snapshot, revision: this.state.revision + 1, restoring: true,
+      ...(target.previewBase ? { previewBase: target.previewBase } : {}) });
     if (this.mobile) this.writeEntry(true);
     else if (this.currentEntry !== null) this.entries.set(this.currentEntry, this.state);
   }
@@ -202,12 +221,28 @@ export class MobileNavigationController {
     }
   }
   closePreview() {
-    if (!this.state.location.preview) return;
+    if (!this.state.location.preview || this.previewClosePending) return;
+    const source = this.saveCurrent();
+    const base = source.previewBase ?? {
+      location: { ...source.location, preview: undefined }, snapshot: source.snapshot!, entry: null,
+    };
     const index = this.currentEntry === null ? -1 : this.trail.indexOf(this.currentEntry);
-    if (this.mobile && index > 0 && this.marker()?.session === this.session) this.port.history.back();
-    else this.update({ ...this.state.location, preview: undefined });
+    const previousEntry = index > 0 ? this.trail[index - 1] : undefined;
+    const previous = previousEntry === undefined ? undefined : this.entries.get(previousEntry);
+    if (this.mobile && base.entry !== null && previousEntry === base.entry && previous
+      && !previous.location.preview && JSON.stringify(previous.location) === JSON.stringify(base.location)
+      && this.marker()?.session === this.session && this.marker()?.entry === this.currentEntry) {
+      // Only traverse history when the adjacent entry is the actual underlying page.
+      this.entries.set(base.entry, { ...previous, snapshot: base.snapshot });
+      this.previewClosePending = true;
+      this.port.history.back();
+      return;
+    }
+    this.publish({ location: base.location, snapshot: base.snapshot, revision: source.revision + 1, restoring: true });
+    if (this.currentEntry !== null) this.entries.set(this.currentEntry, this.state);
   }
   reset(location: NavigationLocation = { ...HOME_LOCATION }) {
+    this.previewClosePending = false;
     this.session = createSessionId();
     this.entries.clear();
     this.trail = [];
@@ -216,6 +251,7 @@ export class MobileNavigationController {
     if (this.mobile) this.writeEntry(false);
   }
   private onPopState = () => {
+    this.previewClosePending = false;
     const marker = this.marker();
     if (!marker) return; // Leave the browser's previous document/initial entry alone.
     this.saveCurrent();

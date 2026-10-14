@@ -162,8 +162,10 @@
     .chat-header div.date-nav-current-box { cursor: default; }
     .chat-header .date-nav-track { position: static; flex-basis: 100%; width: 100%; }
     .chat-header.date-nav-auto .date-nav-track,
+    .chat-header[data-date-expanded='true'] > .date-nav-controls .date-nav-track,
     .chat-header.date-nav-auto:is(:focus-visible, [data-date-keyboard]:focus-within) .date-nav-track { display: flex; }
     .chat-header.date-nav-auto .date-nav-track.slider-mode,
+    .chat-header[data-date-expanded='true'] > .date-nav-controls .date-nav-track.slider-mode,
     .chat-header.date-nav-auto:is(:focus-visible, [data-date-keyboard]:focus-within) .date-nav-track.slider-mode { display: block; }
   }
 }

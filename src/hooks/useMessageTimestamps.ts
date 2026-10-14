@@ -110,6 +110,14 @@ export function useMessageTimestamps(containerRef: RefObject<HTMLElement | null>
       if (visible) setVisible(null);
     };
     const toggle = (message: HTMLElement) => {
+      const separator = message.closest('.message-wrapper')?.previousElementSibling;
+      if (separator?.matches('.time-separator:not(.mobile-msg-timestamp)')
+        && separator.textContent?.trim() === message.querySelector('.msg-timestamp')?.textContent?.trim()) {
+        // This message already owns a date separator. Clear any other revealed
+        // date while keeping this bubble anchored, rather than adding a copy.
+        if (visible) setVisible(null, message);
+        return;
+      }
       setVisible(visible === message ? null : message, message);
     };
     const down = (event: PointerEvent) => {

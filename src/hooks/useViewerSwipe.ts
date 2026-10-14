@@ -91,7 +91,7 @@ export function useViewerSwipe({ enabled, item, onPrevious, onNext, onImageTap }
       // Touch browsers can omit the click after a swipe. Activate short control
       // taps on release and swallow any compatibility click so each runs once.
       const tap = !suppressClick.current && event.target instanceof Node && current.control.contains(event.target);
-      suppressClick.current = tap;
+      suppressClick.current ||= tap;
       if (tap) {
         suppressReleasedControlClick();
         current.control.click();

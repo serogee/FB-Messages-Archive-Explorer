@@ -12,6 +12,7 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium', testIgnore: '**/mobile-navigation.spec.ts', use: { ...devices['Desktop Chrome'] } },
+    { name: 'desktop-webkit', testMatch: '**/chat-header.spec.ts', grep: /pinned compact|crowded desktop/, use: { ...devices['Desktop Safari'] } },
     { name: 'mobile-chromium', testMatch: '**/mobile-navigation.spec.ts', use: { ...devices['Pixel 7'], viewport: { width: 390, height: 844 } } },
     { name: 'mobile-webkit', testMatch: '**/mobile-navigation.spec.ts', use: { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } } },
   ],
