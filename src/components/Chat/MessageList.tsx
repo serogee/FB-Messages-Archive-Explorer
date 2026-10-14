@@ -4,6 +4,7 @@ import type { Settings } from '../../hooks/useSettings';
 import { isReactionNoticeMessage } from '../../services/reactions';
 import { useReactionContext } from '../../hooks/useReactionFeature';
 import { useThreadData } from '../../hooks/useThreadData';
+import { useMessageTimestamps } from '../../hooks/useMessageTimestamps';
 import { getMessageTimestamp } from '../../services/parser';
 import { getMediaReferencePath, getMediaType, getMessageMediaItems, resolveMessageMediaItems } from '../../services/media';
 import { scanMediaDimensions } from '../../services/mediaDimensions';
@@ -11,6 +12,8 @@ import { chunkArray } from '../../services/storage';
 import { resolveMessageJumpTarget } from '../../services/messageJump';
 import { getVisibleMessageNeighbors } from '../../services/messageVisibility';
 import { MessageBubble } from './MessageBubble';
+import { formatMessageSeparatorDate } from '../../services/dateTime';
+import type { MessagePosition } from '../../services/mobileNavigation';
 import { ReactionVisibilityAnchor } from './ReactionVisibilityAnchor';
 import {
   captureChatScrollAnchor,
@@ -62,8 +65,17 @@ interface MessageListProps {
   onHiddenCountChange?: (count: number) => void;
 }
 
+export interface MessageJumpOptions {
+  offset?: number;
+  minimumOffset?: () => number | undefined;
+  highlight?: boolean;
+}
+
 export interface MessageListHandle {
-  jumpToMessage: (index: number) => Promise<void>;
+  cancelJump: () => void;
+  jumpToMessage: (index: number, options?: MessageJumpOptions) => Promise<void>;
+  capturePosition: () => MessagePosition | undefined;
+  restorePosition: (position: MessagePosition) => Promise<void>;
   getChatContainer: () => HTMLDivElement | null;
   scrollToBottom: () => void;
 }
@@ -101,27 +113,6 @@ function estimateChunkHeight(messages: Messages, chunkIndex: number, allMessages
     failedMediaCount * 118 +
     separatorCount * CHUNK_ESTIMATED_SEPARATOR_HEIGHT
   );
-}
-
-function formatSeparatorDate(ts: number): string {
-  const date = new Date(ts);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const messageDay = new Date(ts);
-  messageDay.setHours(0, 0, 0, 0);
-  if (messageDay.getTime() === today.getTime()) {
-    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  }
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (messageDay.getTime() === yesterday.getTime()) {
-    return `Yesterday, ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-  }
-  return date.toLocaleString([], {
-    weekday: 'short', month: 'short', day: 'numeric',
-    ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}),
-    hour: 'numeric', minute: '2-digit'
-  });
 }
 
 function getChunkDimensionEntries(messages: Messages, mediaState: MediaState): MediaEntry[] {
@@ -241,7 +232,7 @@ const MessageChunk = React.memo(function MessageChunk({
           else if (!forcedRef.current && rendered) {
             // Keep its measured space while releasing message DOM outside the
             // preload margin. Visited chunks must not accumulate forever.
-            measuredRef.current = { visibility, height: el.offsetHeight };
+            measuredRef.current = { visibility, height: el.getBoundingClientRect().height };
             setRendered(false);
           }
         });
@@ -267,7 +258,7 @@ const MessageChunk = React.memo(function MessageChunk({
 
   React.useLayoutEffect(() => {
     if (shouldRender && chunkRef.current && chatContainerRef.current) {
-      const actualHeight = chunkRef.current.offsetHeight;
+      const actualHeight = chunkRef.current.getBoundingClientRect().height;
       measuredRef.current = { visibility, height: actualHeight };
       const container = chatContainerRef.current;
       onHeightMeasured(chunkIndex, actualHeight);
@@ -280,8 +271,9 @@ const MessageChunk = React.memo(function MessageChunk({
     const element = chunkRef.current;
     if (!rendered || !element) return;
     const observer = new ResizeObserver(() => {
-      measuredRef.current = { visibility, height: element.offsetHeight };
-      onHeightMeasured(chunkIndex, element.offsetHeight);
+      const height = element.getBoundingClientRect().height;
+      measuredRef.current = { visibility, height };
+      onHeightMeasured(chunkIndex, height);
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -320,7 +312,7 @@ const MessageChunk = React.memo(function MessageChunk({
       const ts = getMessageTimestamp(msg) || 0;
       items.push(
         <div key={`sep-${globalIdx}`} className="time-separator">
-          {ts ? formatSeparatorDate(ts) : ''}
+          {ts ? formatMessageSeparatorDate(ts) : ''}
         </div>
       );
     }
@@ -426,6 +418,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     setRevealed(prev => prev.indices.size > 0 && (prev.data !== chatData || prev.hide !== reactionFeature.hide) ? { data: chatData, hide: reactionFeature.hide, indices: new Set() } : prev);
   }, [chatData, reactionFeature.hide]);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  useMessageTimestamps(chatContainerRef, chatData);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jumpSettlingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -515,8 +508,33 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     if (SCROLL_KEYS.has(event.key)) clearJumpSettling();
   }, [clearJumpSettling]);
 
-  useImperativeHandle(ref, () => ({
-    jumpToMessage: async (index: number) => {
+  const messageListRefForRestore = useRef<MessageListHandle | null>(null);
+  useImperativeHandle(ref, () => (messageListRefForRestore.current = {
+    cancelJump: () => {
+      jumpRequestIdRef.current++;
+      cancelPendingChunkRender();
+      clearJumpSettling();
+    },
+    capturePosition: () => {
+      const container = chatContainerRef.current;
+      if (!container) return;
+      const viewport = container.getBoundingClientRect();
+      const message = [...container.querySelectorAll<HTMLElement>('.message[data-msg-index]')]
+        .find(element => element.getBoundingClientRect().bottom > viewport.top);
+      return {
+        index: message ? Number(message.dataset.msgIndex) : undefined,
+        offset: message ? message.getBoundingClientRect().top - viewport.top : 0,
+        scrollTop: container.scrollTop,
+        atBottom: Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 20,
+      };
+    },
+    restorePosition: async (position: MessagePosition) => {
+      if (position.atBottom) { messageListRefForRestore.current?.scrollToBottom(); return; }
+      if (position.index !== undefined) {
+        await messageListRefForRestore.current?.jumpToMessage(position.index, { offset: position.offset, highlight: false });
+      } else if (chatContainerRef.current) chatContainerRef.current.scrollTop = position.scrollTop;
+    },
+    jumpToMessage: async (index: number, options?: MessageJumpOptions) => {
       const container = chatContainerRef.current;
       if (!container) return;
       if (chatData) setReadyChat(chatData);
@@ -567,8 +585,20 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
 
       if (msgEl) {
         const containerRect = container.getBoundingClientRect();
-        const elRect = msgEl.getBoundingClientRect();
-        container.scrollTop += elRect.top - containerRect.top - 120;
+        // Resolve overlay clearance after the destination and its media are ready.
+        const minimumOffset = options?.minimumOffset?.();
+        const offset = Math.max(options?.offset ?? 120, minimumOffset ?? -Infinity);
+        const content = container.querySelector<HTMLElement>('.message-list-content');
+        if (content) {
+          content.style.paddingTop = '';
+          // The first message has no earlier content to scroll into view. Add only
+          // the space needed for an overlay jump or its saved return position.
+          if (minimumOffset !== undefined || options?.offset !== undefined) {
+            const startOffset = msgEl.getBoundingClientRect().top - containerRect.top + container.scrollTop;
+            content.style.paddingTop = `${Math.max(0, offset - startOffset)}px`;
+          }
+        }
+        container.scrollTop += msgEl.getBoundingClientRect().top - containerRect.top - offset;
         container.dataset.lastScrollTop = String(container.scrollTop);
         container.dataset.isAtBottom = String(
           Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 20,
@@ -578,6 +608,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
         const landedMessageRect = msgEl.getBoundingClientRect();
         beginJumpSettling(container, index, landedMessageRect.top - landedContainerRect.top);
 
+        if (options?.highlight === false) return;
         msgEl.classList.add('highlight-target', 'temporary-highlight');
         highlightedMessageRef.current = msgEl;
         highlightScrollTopRef.current = container.scrollTop;
@@ -591,6 +622,8 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     scrollToBottom: () => {
       const container = chatContainerRef.current;
       if (container) {
+        const content = container.querySelector<HTMLElement>('.message-list-content');
+        if (content) content.style.paddingTop = '';
         if (chatData) setReadyChat(chatData);
         clearJumpSettling();
         container.dataset.isAtBottom = 'true';

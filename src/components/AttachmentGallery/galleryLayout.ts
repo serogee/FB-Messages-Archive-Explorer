@@ -47,12 +47,13 @@ export function calculateGalleryLayout(
   minWidth = GRID_MIN_WIDTH,
   gap = GRID_GAP,
   fixedItemHeight?: number,
+  columnCount?: number,
 ): GalleryLayout {
   if (width <= 0 || groups.length === 0) {
     return { columns: 1, itemSize: minWidth, itemHeight: fixedItemHeight || minWidth, totalHeight: 0, rows: [] };
   }
 
-  const columns = Math.max(1, Math.floor((width + gap) / (minWidth + gap)));
+  const columns = columnCount ?? Math.max(1, Math.floor((width + gap) / (minWidth + gap)));
   const itemSize = Math.max(1, (width - gap * (columns - 1)) / columns);
   const itemHeight = fixedItemHeight || itemSize;
   const rows: GalleryLayoutRow[] = [];

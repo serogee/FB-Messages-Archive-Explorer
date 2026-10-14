@@ -122,6 +122,8 @@ test('nearby completes delayed reaction pairs and closes the extended block', as
   await page.locator('label[for="hideLikelyReactionNotices"]').click();
   await expect(hiddenNotice).toContainText('5 reaction notices hidden');
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+  await page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' }).click();
   await hiddenNotice.scrollIntoViewIfNeeded();
   const noticeBox = await hiddenNotice.boundingBox();
   const chatBox = await page.locator('.chat-container').boundingBox();
@@ -180,7 +182,7 @@ test('reaction hints dismiss and timestamped names show blue hover dates across 
   await expect(hiddenNotice.getByRole('button', { name: 'Show all', exact: true })).toBeVisible();
   await expect(page.locator('.chat-header .reaction-hidden-control')).toHaveCount(0);
   await expect(hiddenNotice.locator('[title]')).toHaveCount(0);
-  const headerBox = await page.locator('.chat-view-layer.active > .chat-header').boundingBox();
+  const headerBox = await page.locator('.chat-view-layer.active .chat-header').boundingBox();
   const noticeBox = await hiddenNotice.boundingBox();
   expect(noticeBox!.y).toBeGreaterThan(headerBox!.y + headerBox!.height);
   await expect(hiddenNotice).toHaveCount(0, { timeout: 5000 });
@@ -202,6 +204,24 @@ test('reaction hints dismiss and timestamped names show blue hover dates across 
   await page.screenshot({ path: test.info().outputPath('reaction-controls-desktop.png') });
   const bubble = page.locator('.reaction-bubble').last();
   await bubble.hover();
+  const reactionGeometry = await bubble.evaluate(element => {
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      height: box.height, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom,
+      contents: [...element.querySelectorAll('.reaction-emoji-simple, .reaction-count')].map(content => {
+        const rect = content.getBoundingClientRect();
+        return { height: rect.height, centerOffset: rect.y + rect.height / 2 - box.y - box.height / 2 };
+      }),
+    };
+  });
+  expect(reactionGeometry.height).toBe(24);
+  expect(reactionGeometry.paddingTop).toBe(reactionGeometry.paddingBottom);
+  for (const content of reactionGeometry.contents) {
+    expect(content.height).toBe(18);
+    expect(Math.abs(content.centerOffset)).toBeLessThanOrEqual(0.02);
+  }
+  await expect(bubble.locator('.reaction-count')).toHaveText('2');
   const localName = bubble.locator('.popover-actor').filter({ hasText: 'Alice' });
   const recordedName = bubble.locator('.popover-actor').filter({ hasText: 'Ghost' });
   await expect(localName).toHaveAttribute('title', /^~ [^~]/);
@@ -230,6 +250,7 @@ test('reaction hints dismiss and timestamped names show blue hover dates across 
   await page.getByRole('listbox', { name: 'Search results' }).getByRole('option').click();
   const oldBubble = page.locator('.message[data-msg-index="1"] .reaction-bubble');
   await oldBubble.hover();
+  await expect(oldBubble).toHaveCSS('height', '24px');
   await expect(oldBubble.locator('.popover-actor')).toHaveAttribute('title', /^~~ /);
   await expect(oldBubble.locator('.popover-actor')).toHaveCSS('color', 'rgb(62, 166, 255)');
   await oldBubble.click();

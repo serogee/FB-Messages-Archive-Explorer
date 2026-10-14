@@ -529,7 +529,7 @@ export function SettingsPanel({
                 />
                 <ToggleRow
                     id="autoCollapseDateNavToggle"
-                    label="Auto-collapse date navigator"
+                    label="Open date navigator on hover"
                     checked={settings.autoCollapseDateNav}
                     onChange={(v) =>
                         setSetting(

@@ -207,18 +207,22 @@ function findMessageIndexAtActiveLine(container: HTMLDivElement): number | null 
 }
 
 interface DateNavigatorProps {
+  headerControlled?: boolean;
+  embedded?: boolean;
+  mobile?: boolean;
   chatData?: MessengerThread | null;
   settings: Settings;
   onJumpToMessage: (index: number) => Promise<void>;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-export function DateNavigator({ chatData: providedThread, settings: _settings, onJumpToMessage, chatContainerRef }: DateNavigatorProps) {
+export function DateNavigator({ chatData: providedThread, settings: _settings, onJumpToMessage, chatContainerRef, mobile = false, embedded = false, headerControlled = false }: DateNavigatorProps) {
   const chatData = useThreadData(providedThread);
   const [scale, setScale] = useState<DateScale>('month');
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [buckets, setBuckets] = useState<BucketsByScale>({ month: [], week: [], day: [] });
   const [manualCollapse, setManualCollapse] = useState(false);
+  const [mobileExpanded, setMobileExpanded] = useState(false);
   const syncingRef = useRef(false);
   const sliderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const controlsRef = useRef<HTMLDivElement>(null);
@@ -307,9 +311,10 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
         const next = Math.min(currentBuckets.length - 1, Math.max(0, (cur >= 0 ? cur : fallback) + direction));
         const bucket = currentBuckets[next];
         if (!bucket) return;
-        syncingRef.current = true;
         setActiveKey(bucket.key);
         keepBucketVisible(bucket.key);
+        if (embedded) return;
+        syncingRef.current = true;
         await onJumpToMessage(bucket.index);
         setTimeout(() => { syncingRef.current = false; }, DATE_NAV_SYNC_LOCK_MS);
       };
@@ -319,7 +324,7 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [hasDates, currentBuckets, activeKey, keepBucketVisible, onJumpToMessage]);
+  }, [embedded, hasDates, currentBuckets, activeKey, keepBucketVisible, onJumpToMessage]);
 
   const step = async (direction: number) => {
     const cur = currentBuckets.findIndex(b => b.key === activeKey);
@@ -327,9 +332,10 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
     const next = Math.min(currentBuckets.length - 1, Math.max(0, (cur >= 0 ? cur : fallback) + direction));
     const bucket = currentBuckets[next];
     if (!bucket) return;
-    syncingRef.current = true;
     setActiveKey(bucket.key);
     keepBucketVisible(bucket.key);
+    if (embedded) return;
+    syncingRef.current = true;
     await onJumpToMessage(bucket.index);
     setTimeout(() => { syncingRef.current = false; }, DATE_NAV_SYNC_LOCK_MS);
   };
@@ -354,6 +360,7 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
     if (!bucket) return;
     setActiveKey(bucket.key);
     if (sliderTimerRef.current) clearTimeout(sliderTimerRef.current);
+    if (embedded) return;
     sliderTimerRef.current = setTimeout(async () => {
       syncingRef.current = true;
       await onJumpToMessage(bucket.index);
@@ -363,10 +370,14 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
 
   if (!hasDates) return null;
 
+  const currentPeriodLabel = <span className="date-nav-current" id="dateNavCurrent">
+    {activeBucket?.label || ''}
+  </span>;
+
   return (
     <div
       ref={controlsRef}
-      className={`date-nav-controls${hasDates ? ' active' : ''}${manualCollapse && !_settings.autoCollapseDateNav ? ' manual-collapsed' : ''}`}
+      className={`date-nav-controls${hasDates ? ' active' : ''}${manualCollapse && !_settings.autoCollapseDateNav && !headerControlled ? ' manual-collapsed' : ''}${mobile ? ` mobile-date-nav${mobileExpanded ? ' expanded' : ''}` : ''}`}
       id="dateNavControls"
     >
       <div className="date-nav-scale">
@@ -403,18 +414,22 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
         </button>
       </div>
 
-      <button
+      {headerControlled ? (
+        <div className="date-nav-current-box" id="dateNavCurrentBox" aria-live="polite">
+          {currentPeriodLabel}
+        </div>
+      ) : <button
         className="date-nav-current-box"
-        disabled={_settings.autoCollapseDateNav}
-        onClick={() => { if (!_settings.autoCollapseDateNav) setManualCollapse(v => !v); }}
+        disabled={embedded || (!mobile && _settings.autoCollapseDateNav)}
+        onClick={() => { if (mobile) setMobileExpanded(v => !v); else if (!_settings.autoCollapseDateNav) setManualCollapse(v => !v); }}
+        aria-label={embedded ? 'Current period' : mobile ? 'Toggle date navigator' : undefined}
+        aria-expanded={mobile && !embedded ? mobileExpanded : undefined}
         title={!_settings.autoCollapseDateNav ? (manualCollapse ? 'Show date navigator' : 'Hide date navigator') : ''}
         id="dateNavCurrentBox"
         aria-live="polite"
       >
-        <span className="date-nav-current" id="dateNavCurrent">
-          {activeBucket?.label || ''}
-        </span>
-      </button>
+        {currentPeriodLabel}
+      </button>}
 
       {/* Track — shown when header hovered (CSS handles auto-collapse), or toggled manually */}
       {scale === 'month' ? (

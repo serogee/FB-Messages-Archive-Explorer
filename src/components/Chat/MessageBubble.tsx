@@ -17,7 +17,7 @@ import { useReactionContext } from '../../hooks/useReactionFeature';
 import { highlightText } from '../../services/search';
 import { escapeHtml } from '../../services/storage';
 import { getMessageLinks, MESSAGE_URL_PATTERN, normalizeExternalUrl, trimTrailingUrlPunctuation } from '../../services/messageLinks';
-import { formatMessageDateTime } from '../../services/dateTime';
+import { formatMessageSeparatorDate } from '../../services/dateTime';
 import { getMessageBump } from '../../services/messageBump';
 import { ReactionModal } from './ReactionModal';
 import { registerChatAnchorCandidate, stabilizeChatScrollAnchor } from './chatScrollAnchoring';
@@ -120,7 +120,7 @@ interface MessageBubbleProps {
 }
 
 function formatTimestamp(ts: number): string {
-  return formatMessageDateTime(ts);
+  return formatMessageSeparatorDate(ts);
 }
 
 
@@ -909,6 +909,7 @@ export const MessageBubble = memo(function MessageBubble({
 
   return (
     <div className={`message-wrapper ${isMe ? 'from-me-wrapper' : 'from-them-wrapper'}`}>
+      <div className="time-separator mobile-msg-timestamp" aria-hidden="true" />
       {showName && isFirstInClump && (
         <div className="sender-name">{sender}</div>
       )}
@@ -1032,22 +1033,22 @@ export const MessageBubble = memo(function MessageBubble({
                 </div>
               </div>
             )}
-            
-            {isModalOpen && msg.reactions && (
-              <ReactionModal 
-                reactions={msg.reactions}
-                messageIndex={msgIndex}
-                onClose={() => setIsModalOpen(false)} 
-              />
-            )}
           </>
         )}
 
         <div className="msg-timestamp">
           {timestamp ? formatTimestamp(timestamp) : ''}
         </div>
+        </div>
       </div>
-    </div>
+      {/* Fixed dialogs must stay outside the composited mobile bubble. */}
+      {isModalOpen && !msg.is_unsent && msg.reactions && (
+        <ReactionModal
+          reactions={msg.reactions}
+          messageIndex={msgIndex}
+          onClose={() => setIsModalOpen(false)}
+        />
+      )}
     </div>
   );
 });

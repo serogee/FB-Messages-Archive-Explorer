@@ -18,12 +18,14 @@ function pointerEvent(type: string, clientX: number, pointerId = 1): Event {
   return event;
 }
 
-function Harness({ side = 'left', initialWidth = 300, onWidthChange }: {
+function Harness({ side = 'left', initialWidth = 300, onWidthChange, enabled = true }: {
+  enabled?: boolean;
   side?: 'left' | 'right';
   initialWidth?: number;
   onWidthChange: (width: number) => void;
 }) {
   const { handleRef } = useResizable({
+    enabled,
     minWidth: 240,
     maxWidthFraction: 0.5,
     maxWidthAbsolute: 600,
@@ -65,6 +67,22 @@ afterEach(() => {
 });
 
 describe('resizable hook lifecycle', () => {
+  it('keeps saved desktop widths while disabled and cancels a drag when entering mobile', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200, writable: true });
+    vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1);
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+    const onWidthChange = vi.fn();
+    const view = render(<Harness initialWidth={400} onWidthChange={onWidthChange} />);
+    const handle = view.getByRole('separator');
+    installGeometry(view.container.querySelector('.container')!, handle, 'left');
+    handle.dispatchEvent(pointerEvent('pointerdown', 305));
+    view.rerender(<Harness initialWidth={400} onWidthChange={onWidthChange} enabled={false} />);
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390, writable: true });
+    window.dispatchEvent(new Event('resize'));
+    expect(onWidthChange).not.toHaveBeenCalled();
+    expect(document.documentElement.style.getPropertyValue('--test-panel-width')).toBe('400px');
+    expect(view.container.querySelector('.container')?.classList.contains('resizing')).toBe(false);
+  });
   it('commits pointer movement and updates ARIA state', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200, writable: true });
     vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1);

@@ -189,6 +189,7 @@ export function shouldClearFiltersForGalleryJump(
 
 export function useGalleryFilters() {
   const [filters, setFilters] = useState<GalleryFilterState>(EMPTY_FILTER_STATE);
+  const restoreFilters = useCallback((state: GalleryFilterState) => setFilters(state), []);
 
   const toggleIncludeSender = useCallback((name: string) => {
     setFilters(previous => toggleGallerySenderFilter(previous, name, 'include'));
@@ -245,8 +246,10 @@ export function useGalleryFilters() {
     setBookmarkFilter,
     setSearchQuery,
     clearAllFilters,
+    restoreFilters,
   }), [
     clearAllFilters,
+    restoreFilters,
     filters,
     hasActiveFilters,
     removeSenderFilter,

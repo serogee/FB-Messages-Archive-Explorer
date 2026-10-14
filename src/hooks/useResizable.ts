@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 interface UseResizableOptions {
+  enabled?: boolean;
   minWidth: number;
   maxWidthFraction: number;
   maxWidthAbsolute: number;
@@ -75,6 +76,7 @@ export function useResizable(options: UseResizableOptions): {
   handleRef: React.RefObject<HTMLDivElement | null>;
 } {
   const {
+    enabled = true,
     minWidth,
     maxWidthFraction,
     maxWidthAbsolute,
@@ -116,6 +118,7 @@ export function useResizable(options: UseResizableOptions): {
   }, [clampWidth, setLiveWidth]);
 
   useLayoutEffect(() => {
+    if (!enabled) return;
     const handle = handleRef.current;
     const container = handle?.closest('.container') as HTMLElement | null;
     const hasVisibleHandle = (handle?.getBoundingClientRect().width ?? 0) > 0;
@@ -130,9 +133,10 @@ export function useResizable(options: UseResizableOptions): {
     handle?.setAttribute('aria-valuemax', String(clampWidth(Number.POSITIVE_INFINITY, layoutMaximum)));
     handle?.setAttribute('aria-valuenow', String(clamped));
     if (clamped !== initialWidth) onWidthChangeRef.current(clamped);
-  }, [clampWidth, cssVariable, initialWidth, layoutDependency, minMainWidth, minWidth, side]);
+  }, [enabled, clampWidth, cssVariable, initialWidth, layoutDependency, minMainWidth, minWidth, side]);
 
   useEffect(() => {
+    if (!enabled) return;
     const handle = handleRef.current;
     if (!handle) return;
 
@@ -293,6 +297,10 @@ export function useResizable(options: UseResizableOptions): {
     };
 
     const onWindowResize = () => {
+      if (handle.getBoundingClientRect().width === 0) {
+        finishResize(false);
+        return;
+      }
       const maximum = getLayoutMaximum(container, handle, side, currentWidthRef.current, minMainWidth);
       commitWidth(currentWidthRef.current, maximum);
     };
@@ -312,7 +320,7 @@ export function useResizable(options: UseResizableOptions): {
       window.removeEventListener('resize', onWindowResize);
       removeDragListeners();
     };
-  }, [clampWidth, commitWidth, cssVariable, minMainWidth, setLiveWidth, side]);
+  }, [enabled, clampWidth, commitWidth, cssVariable, minMainWidth, setLiveWidth, side]);
 
   return { handleRef };
 }
