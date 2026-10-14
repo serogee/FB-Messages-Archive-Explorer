@@ -38,7 +38,8 @@
     z-index: 0;
 }
 #chat {
-    overflow-y: auto;
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
     flex: 1 1 auto;
     min-height: 0;
     padding: 10px;
@@ -552,6 +553,8 @@
     right: 8px;
     background: var(--panel-bg);
     border: 1px solid var(--border);
+    box-sizing: border-box;
+    height: 24px;
     padding: 2px 6px;
     border-radius: 999px;
     display: flex;
@@ -569,9 +572,14 @@
     right: 8px;
     left: auto;
 }
-.reaction-emoji-simple {
-    display: inline-block;
-    line-height: 1;
+.reaction-emoji-simple,
+.reaction-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    height: 18px;
+    line-height: 18px;
 }
 .reaction-count {
     font-size: 11px;
@@ -604,18 +612,20 @@
     left: 0;
     right: auto;
 }
-.reaction-bubble:hover .reaction-popover {
-    display: flex;
-}
-.reaction-bubble::before {
-    content: '';
-    position: absolute;
-    top: -16px;
-    left: 0;
-    width: 100%;
-    height: 32px;
-    background: transparent;
-    z-index: 1;
+@media (hover: hover) {
+    .reaction-bubble:hover .reaction-popover {
+        display: flex;
+    }
+    .reaction-bubble::before {
+        content: '';
+        position: absolute;
+        top: -16px;
+        left: 0;
+        width: 100%;
+        height: 32px;
+        background: transparent;
+        z-index: 1;
+    }
 }
 .reaction-popover-item {
     display: flex;
