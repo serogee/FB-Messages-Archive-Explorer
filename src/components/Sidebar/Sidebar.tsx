@@ -19,6 +19,7 @@ import { AttachmentScanStatus } from './AttachmentScanStatus';
 import type { AttachmentReferenceScan } from '../../services/attachmentReferenceIndex';
 
 interface SidebarProps {
+    hidden?: boolean;
     settings: Settings;
     setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
     inboxList: ChatListEntry[];
@@ -57,6 +58,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({
+    hidden = false,
     settings,
     setSetting,
     inboxList,
@@ -202,7 +204,7 @@ export function Sidebar({
     };
 
     return (
-        <div className="sub-container" id="sidebar">
+        <div className="sub-container" id="sidebar" inert={hidden || undefined} aria-hidden={hidden || undefined}>
             <div className="title-row">
                 <div className="title-text">
                     <strong>
@@ -318,6 +320,7 @@ export function Sidebar({
                 )}
                 {sidebarView === 'chats' && rootHandle && !loading && (
                     <ChatList
+                        hidden={hidden}
                         chatList={mainChatList}
                         extraFilterLists={extraFilterLists}
                         activeEntry={activeEntry}

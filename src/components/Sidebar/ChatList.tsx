@@ -8,8 +8,11 @@ import { getOrderedMessageFileNames } from '../../services/parser';
 import { getBookmarkChatId } from '../../services/bookmarks';
 import { filterAndOrderChats, type ChatSortOption } from '../../services/chatList';
 import { formatEntrySize, getAvatarChar, getAvatarColor } from '../../services/chatListPresentation';
+import { useMobileLayout } from '../../hooks/useMobileNavigation';
+import { useLongPress } from '../../hooks/useLongPress';
 
 interface ChatListProps {
+  hidden?: boolean;
   chatList: ChatListEntry[];
   activeEntry: ChatListEntry | null;
   onSelectChat: (entry: ChatListEntry) => Promise<void>;
@@ -27,6 +30,8 @@ interface ChatListProps {
 }
 
 interface ChatItemProps {
+  mobile: boolean;
+  hidden: boolean;
   entry: ChatListEntry;
   isActive: boolean;
   onSelect: () => void;
@@ -102,6 +107,8 @@ async function openChatJson(entry: ChatListEntry, jsonFileName?: string) {
 }
 
 function ChatItem({
+  mobile,
+  hidden,
   entry,
   isActive,
   onSelect,
@@ -116,22 +123,42 @@ function ChatItem({
   onTogglePin,
 }: ChatItemProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [jsonSubmenuOpen, setJsonSubmenuOpen] = useState(false);
   const [dropUp, setDropUp] = useState(false);
   const [jsonFileNames, setJsonFileNames] = useState<string[] | null>(null);
   const [menuPosition, setMenuPosition] = useState<CSSProperties | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   const updateMenuPosition = useCallback((button: HTMLElement) => {
     const rect = button.getBoundingClientRect();
-    const nextDropUp = window.innerHeight - rect.bottom < MENU_DROP_UP_THRESHOLD_PX;
-    const left = Math.max(8, rect.right - MENU_WIDTH_PX);
+    const below = Math.max(0, window.innerHeight - rect.bottom - 12);
+    const above = Math.max(0, rect.top - 12);
+    const nextDropUp = mobile ? below < 200 && above > below : window.innerHeight - rect.bottom < MENU_DROP_UP_THRESHOLD_PX;
+    const left = mobile ? Math.max(8, Math.min(rect.right - MENU_WIDTH_PX, window.innerWidth - MENU_WIDTH_PX - 8)) : Math.max(8, rect.right - MENU_WIDTH_PX);
     setDropUp(nextDropUp);
-    setMenuPosition(nextDropUp
+    const position = nextDropUp
       ? { left, bottom: window.innerHeight - rect.top + 4 }
-      : { left, top: rect.bottom + 4 }
-    );
-  }, []);
+      : { left, top: rect.bottom + 4 };
+    setMenuPosition(mobile ? { ...position, maxHeight: Math.max(44, nextDropUp ? above : below) } : position);
+  }, [mobile]);
+
+  const openOptions = useCallback((row: HTMLElement) => {
+    updateMenuPosition(row);
+    setJsonSubmenuOpen(false);
+    setDropdownOpen(true);
+  }, [updateMenuPosition]);
+  const longPress = useLongPress(mobile && !hidden && !selectionMode, openOptions);
+
+  useEffect(() => {
+    setDropdownOpen(false);
+    setJsonSubmenuOpen(false);
+  }, [mobile, hidden, selectionMode]);
+
+  useLayoutEffect(() => {
+    if (mobile && dropdownOpen) dropdownRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+  }, [mobile, dropdownOpen]);
 
   useEffect(() => {
     if (!dropdownOpen) return;
@@ -145,9 +172,19 @@ function ChatItem({
         setDropdownOpen(false);
       }
     };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setDropdownOpen(false);
+      setJsonSubmenuOpen(false);
+      if (mobile) rowRef.current?.focus({ preventScroll: true });
+    };
     document.addEventListener('pointerdown', handler);
-    return () => document.removeEventListener('pointerdown', handler);
-  }, [dropdownOpen]);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', handler);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [dropdownOpen, mobile]);
 
   useEffect(() => {
     if (!dropdownOpen || jsonFileNames) return;
@@ -203,7 +240,14 @@ function ChatItem({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.target !== e.currentTarget) return;
+    if (mobile && !selectionMode && (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) {
+      e.preventDefault();
+      openOptions(e.currentTarget as HTMLElement);
+      return;
+    }
     if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
       if (selectionMode && onToggleSelect) {
         onToggleSelect(e, !isSelected);
       } else {
@@ -214,6 +258,7 @@ function ChatItem({
 
   const closeDropdown = () => {
     setDropdownOpen(false);
+    setJsonSubmenuOpen(false);
   };
 
   const dropdown = dropdownOpen && menuPosition ? createPortal(
@@ -238,11 +283,11 @@ function ChatItem({
       )}
       {jsonFileNames && jsonFileNames.length > 1 ? (
         <div className="chat-item-submenu-wrap">
-          <button className="chat-item-submenu-trigger" onClick={e => e.stopPropagation()}>
+          <button className="chat-item-submenu-trigger" aria-expanded={jsonSubmenuOpen} onClick={e => { e.stopPropagation(); setJsonSubmenuOpen(open => !open); }}>
             <span>Open JSON</span>
             <span className="chat-item-submenu-arrow">&gt;</span>
           </button>
-          <div className="chat-item-submenu">
+          <div className={`chat-item-submenu${jsonSubmenuOpen ? ' open' : ''}`}>
             {jsonFileNames.map(name => (
               <button
                 key={name}
@@ -285,7 +330,9 @@ function ChatItem({
 
   return (
     <div
+      ref={rowRef}
       className={`chat-list-item ${isActive && !selectionMode ? 'active' : ''} ${isSelected ? 'selected' : ''} ${selectionMode ? 'selection-mode' : ''} ${isPinned ? 'pinned' : ''}`}
+      {...longPress}
       onClick={handleClick}
       role="button"
       tabIndex={0}
@@ -327,7 +374,7 @@ function ChatItem({
             {formatEntrySize(entry)}
           </span>
         </div>
-        {showMenu && (
+        {showMenu && !mobile && (
           <div className="chat-item-menu-wrap">
             <button
               ref={menuButtonRef}
@@ -347,6 +394,7 @@ function ChatItem({
 }
 
 export function ChatList({
+  hidden = false,
   chatList,
   activeEntry,
   onSelectChat,
@@ -362,6 +410,7 @@ export function ChatList({
   bookmarkBusy = false,
   onToggleChatPin,
 }: ChatListProps) {
+  const mobile = useMobileLayout();
   const [filter, setFilter] = useState('');
   const [sortBy, setSortBy] = useState<ChatSortOption>('recent');
   const lastSelectedRef = useRef<string | null>(null);
@@ -493,6 +542,8 @@ export function ChatList({
           return (
             <ChatItem
               key={chatId}
+              mobile={mobile}
+              hidden={hidden}
               entry={entry}
               isActive={!!activeEntry && getBookmarkChatId(activeEntry) === chatId}
               onSelect={() => onSelectChat(entry)}
@@ -517,6 +568,8 @@ export function ChatList({
               return (
                 <ChatItem
                   key={chatId}
+                  mobile={mobile}
+                  hidden={hidden}
                   entry={entry}
                   isActive={!!activeEntry && getBookmarkChatId(activeEntry) === chatId}
                   onSelect={() => onSelectChat(entry)}
