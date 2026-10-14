@@ -2,6 +2,52 @@ import { expect, test } from '@playwright/test';
 import { installArchive } from './helpers/archive';
 
 for (const autoCollapse of [true, false]) {
+  test(`keeps all pinned compact date tracks visible after hover ends with auto-collapse ${autoCollapse}`, async ({ page }) => {
+    test.setTimeout(60_000);
+    await installArchive(page, 'facebook', false, false, false, 120);
+    await page.addInitScript(value => {
+      const prefix = 'majv_' + location.hostname + '_setting_';
+      localStorage.setItem(prefix + 'autoCollapseDateNav', String(value));
+      localStorage.setItem(prefix + 'infoPanelOpen', 'true');
+    }, autoCollapse);
+    await page.setViewportSize({ width: 1000, height: 900 });
+    await page.goto('');
+    await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+    await page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' }).click();
+    await expect(page.locator('#chat')).not.toHaveAttribute('data-opening', 'true');
+    const header = page.locator('.chat-header-region > .chat-header');
+    const toggle = header.getByRole('button', { name: 'Browse dates' });
+    const dates = header.locator('.date-nav-controls');
+    await page.mouse.move(1, 1);
+    await expect(dates).toBeHidden();
+    const before = await page.locator('#chat').boundingBox();
+    // Keyboard activation pins the panel independently of transient hover opening.
+    await toggle.focus();
+    await toggle.press('Escape');
+    await toggle.press('Enter');
+    await expect(header).toHaveAttribute('data-date-expanded', 'true');
+    for (const scale of ['Month', 'Week', 'Day']) {
+      await dates.getByRole('button', { name: scale, exact: true }).click();
+      await page.mouse.move(500, 850);
+      await toggle.blur();
+      await expect(header).not.toHaveCSS('display', 'flex');
+      await expect(dates).toBeVisible();
+      await expect(dates.locator('.date-nav-track')).toBeVisible();
+      await expect(dates.locator('.date-nav-track')).toHaveCSS('display', scale === 'Month' ? 'flex' : 'block');
+      expect(await page.locator('#chat').boundingBox()).toEqual(before);
+    }
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await expect(dates.locator('.date-nav-track')).toBeVisible();
+    await toggle.press('Escape');
+    await expect(dates).toBeHidden();
+    await toggle.press('Enter');
+    await expect(dates.locator('.date-nav-track')).toBeVisible();
+    await page.locator('#chat').click({ position: { x: 10, y: 200 } });
+    await expect(dates).toBeHidden();
+  });
+}
+
+for (const autoCollapse of [true, false]) {
   test(`keeps crowded desktop chat headers usable with auto-collapse ${autoCollapse}`, async ({ page }) => {
     test.setTimeout(60_000);
     await installArchive(page, 'facebook', false, false, false, 120);
