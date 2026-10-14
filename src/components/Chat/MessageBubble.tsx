@@ -909,6 +909,7 @@ export const MessageBubble = memo(function MessageBubble({
 
   return (
     <div className={`message-wrapper ${isMe ? 'from-me-wrapper' : 'from-them-wrapper'}`}>
+      <div className="time-separator mobile-msg-timestamp" aria-hidden="true" />
       {showName && isFirstInClump && (
         <div className="sender-name">{sender}</div>
       )}
