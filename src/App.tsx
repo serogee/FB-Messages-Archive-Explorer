@@ -1,5 +1,9 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { useSettings } from './hooks/useSettings';
+import { useMobileLayout, useMobileNavigation } from './hooks/useMobileNavigation';
+import { getNavigationItemKey, type NavigationSnapshot, type SidebarView, type PreviewRequest } from './services/mobileNavigation';
+import { getAttachmentJumpTab } from './components/AttachmentGallery/attachmentJump';
 import { ReactionFeatureContext, useReactionFeature } from './hooks/useReactionFeature';
 import { useArchive } from './hooks/useArchive';
 import { useChat } from './hooks/useChat';
@@ -13,6 +17,7 @@ import { useAttachments, useSharedLinks } from './hooks/useAttachments';
 import { useBookmarks } from './hooks/useBookmarks';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatView, type ChatViewHandle } from './components/Chat/ChatView';
+import { DateNavigator } from './components/Chat/DateNavigator';
 import { InfoPanel } from './components/InfoPanel/InfoPanel';
 import { SelectionHeader, SelectionPanel } from './components/InfoPanel/SelectionPanel';
 import { MediaViewer } from './components/MediaViewer/MediaViewer';
@@ -48,6 +53,9 @@ function getErrorMessage(error: unknown): string {
 
 export default function App() {
   const { settings, setSetting } = useSettings();
+  const isMobile = useMobileLayout();
+  const { controller: navigation, state: navigationState } = useMobileNavigation(isMobile);
+  const location = navigationState.location;
   const archive = useArchive(settings.deletionEnabled);
   const chat = useChat();
   const attachmentReferences = useMemo(() => ({
@@ -60,6 +68,8 @@ export default function App() {
     () => [...archive.inboxList, ...archive.archivedList, ...archive.requestsList],
     [archive.inboxList, archive.archivedList, archive.requestsList]
   );
+  const navigatingChat = !!location.chatId && (!chat.activeEntry || getBookmarkChatId(chat.activeEntry) !== location.chatId);
+  const viewEntry = navigatingChat ? archiveList.find(entry => getBookmarkChatId(entry) === location.chatId) ?? chat.activeEntry : chat.activeEntry;
   const showAllReactionNotices = useCallback(() => setSetting('hideLikelyReactionNotices', false), [setSetting]);
   const reactionFeature = useReactionFeature({
     root: archive.rootHandle, revision: archive.reactionSourceRevision, standalone: archive.standaloneMessenger,
@@ -113,9 +123,13 @@ export default function App() {
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryDefaultTab, setGalleryDefaultTab] = useState<GalleryCategory>('all');
-  const [selectedViewer, setSelectedViewer] = useState<{ items: SelectableItem[]; index: number } | null>(null);
+  const repeatedAttachments = useAttachments(chat.chatData, chat.mediaState, { includeRepeated: true });
+  const viewerLookup = useMemo(() => new Map([...repeatedAttachments.all, ...sharedLinks].map(item => [getNavigationItemKey(item), item])), [repeatedAttachments.all, sharedLinks]);
+  const preview = location.preview;
+  const viewerItems = useMemo(() => preview?.keys.map(key => viewerLookup.get(key)).filter((item): item is SelectableItem => !!item) ?? [], [preview?.keys, viewerLookup]);
 
   const { handleRef: sidebarHandleRef } = useResizable({
+    enabled: !isMobile,
     minWidth: 260,
     maxWidthFraction: 0.55,
     maxWidthAbsolute: 640,
@@ -128,6 +142,7 @@ export default function App() {
   });
 
   const { handleRef: infoHandleRef } = useResizable({
+    enabled: !isMobile,
     minWidth: 240,
     maxWidthFraction: 0.45,
     maxWidthAbsolute: 520,
@@ -290,6 +305,7 @@ export default function App() {
         entry => getBookmarkChatId(entry) === getBookmarkChatId(chat.activeEntry!)
       )) {
         chat.clearChat();
+        navigation.reset();
         selection.deselectAll();
       }
 
@@ -337,10 +353,9 @@ export default function App() {
       const retryTarget = retryTargets.length === 1 ? retryTargets[0] : retryTargets;
       prepareDeleteTarget(retryTarget, true);
     }
-  }, [deleteTarget, archive, bookmarks, chat, selection, prepareDeleteTarget]);
+  }, [deleteTarget, archive, bookmarks, chat, selection, prepareDeleteTarget, navigation]);
 
-  const handleSelectChat = useCallback(async (entry: ChatListEntry) => {
-    setGalleryOpen(false);
+  const loadChatEntry = useCallback(async (entry: ChatListEntry) => {
     await archive.suspendSizeWork();
     try {
       await chat.loadChat(
@@ -353,6 +368,14 @@ export default function App() {
       archive.resumeSizeWork();
     }
   }, [archive, chat]);
+
+  const handleSelectChat = useCallback(async (entry: ChatListEntry) => {
+    navigation.navigate({ ...navigation.getState().location, screen: 'chat', chatId: getBookmarkChatId(entry),
+      preview: undefined, messageTarget: undefined, attachmentTarget: undefined });
+    setGalleryOpen(false);
+    if (chat.activeEntry && getBookmarkChatId(chat.activeEntry) === getBookmarkChatId(entry) && chat.chatData) return;
+    await loadChatEntry(entry);
+  }, [navigation, loadChatEntry, chat.activeEntry, chat.chatData]);
 
   useEffect(() => {
     return () => {
@@ -374,7 +397,7 @@ export default function App() {
         search.clearWideSearchCache();
         selection.deselectAll();
         setGalleryOpen(false);
-        pendingJumpIndexRef.current = null;
+        navigation.reset();
       }
     );
     if (picked) {
@@ -386,7 +409,7 @@ export default function App() {
       setDeleteBusy(false);
       setDeleteProgress(null);
     }
-  }, [settings.deletionEnabled, settings.attachmentBookmarkingEnabled, archive, chat, search, selection]);
+  }, [settings.deletionEnabled, settings.attachmentBookmarkingEnabled, archive, chat, search, selection, navigation]);
 
   const handleAttachmentBookmarkingChange = useCallback(async (enabled: boolean): Promise<boolean> => {
     if (!enabled) {
@@ -401,43 +424,161 @@ export default function App() {
   }, [archive.originalRootHandle, archive.rootHandle, setSetting]);
 
   const chatViewRef = useRef<ChatViewHandle>(null);
+  const chatScrollContainerRef = useMemo(() => ({ get current() { return chatViewRef.current?.getChatContainer() ?? null; } }), []);
+  const pendingJumpCompletion = useRef<{ revision: number; resolve: () => void } | null>(null);
 
-  const pendingJumpIndexRef = useRef<number | null>(null);
-
-  const handleJumpToMessage = useCallback((index: number, folderName?: string) => {
-    if (folderName && folderName !== chat.activeEntry?.folderName) {
-      const entry = archiveList.find(e => e.folderName === folderName);
-      if (entry) {
-        pendingJumpIndexRef.current = index;
-        handleSelectChat(entry);
-        selection.deselectAll();
-        return;
-      }
+  const handleJumpToMessage = useCallback(async (index: number, folderName?: string) => {
+    const entry = folderName ? archiveList.find(entry => entry.folderName === folderName) : chat.activeEntry;
+    if (!entry) return;
+    const previousRevision = navigation.getState().revision;
+    navigation.navigate({ ...navigation.getState().location, screen: 'chat', chatId: getBookmarkChatId(entry),
+      preview: undefined, messageTarget: index, attachmentTarget: undefined });
+    const revision = navigation.getState().revision;
+    if (revision === previousRevision) {
+      await chatViewRef.current?.jumpToMessage(index);
+      return;
     }
-    chatViewRef.current?.jumpToMessage(index);
-  }, [chat, archiveList, handleSelectChat, selection]);
+    pendingJumpCompletion.current?.resolve();
+    const completion = new Promise<void>(resolve => { pendingJumpCompletion.current = { revision, resolve }; });
+    setGalleryOpen(false);
+    if (getBookmarkChatId(entry) !== (chat.activeEntry ? getBookmarkChatId(chat.activeEntry) : undefined)) {
+      await loadChatEntry(entry);
+    }
+    await completion;
+  }, [archiveList, chat.activeEntry, loadChatEntry, navigation]);
 
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {
-    if (chat.chatData !== prevChatDataRef.current) setSelectedViewer(null);
-    if (chat.chatData && chat.chatData !== prevChatDataRef.current) {
-      setGalleryOpen(false);
-      setSelectedViewer(null);
-      selection.deselectAll();
-      if (pendingJumpIndexRef.current !== null) {
-        const idx = pendingJumpIndexRef.current;
-        pendingJumpIndexRef.current = null;
-        setTimeout(() => chatViewRef.current?.jumpToMessage(idx), 50);
-        setTimeout(() => chatViewRef.current?.jumpToMessage(idx), 200);
-      }
-    }
+    if (chat.chatData && chat.chatData !== prevChatDataRef.current) selection.deselectAll();
     prevChatDataRef.current = chat.chatData;
   }, [chat.chatData, selection]);
 
   const handleOpenGallery = useCallback((tab?: string) => {
-    if (tab) setGalleryDefaultTab(tab as GalleryCategory);
+    const nextTab = (tab as GalleryCategory | undefined) ?? galleryDefaultTab;
+    navigation.navigate({ ...navigation.getState().location, screen: 'gallery', galleryTab: nextTab,
+      preview: undefined, messageTarget: undefined, attachmentTarget: undefined });
+    setGalleryDefaultTab(nextTab);
     setGalleryOpen(true);
-  }, []);
+  }, [galleryDefaultTab, navigation]);
+
+  const handleJumpToAttachment = useCallback((item: SelectableItem) => {
+    const tab = getAttachmentJumpTab(galleryDefaultTab, item.category);
+    navigation.navigate({ ...navigation.getState().location, screen: 'gallery', galleryTab: tab,
+      preview: undefined, messageTarget: undefined, attachmentTarget: getNavigationItemKey(item) });
+    setGalleryDefaultTab(tab);
+    setGalleryOpen(true);
+  }, [galleryDefaultTab, navigation]);
+
+  const handleSidebarViewChange = useCallback((view: SidebarView) => {
+    const destination = { ...navigation.getState().location, screen: 'home' as const, sidebarView: view,
+      chatListView: view === 'settings' ? navigation.getState().location.chatListView : view,
+      preview: undefined, messageTarget: undefined, attachmentTarget: undefined };
+    if (isMobile) navigation.navigate(destination);
+    else navigation.update(destination);
+    setSidebarView(view);
+  }, [isMobile, navigation]);
+
+  const handleInfo = useCallback(() => {
+    if (isMobile) navigation.navigate({ ...navigation.getState().location, screen: 'info', preview: undefined,
+      messageTarget: undefined, attachmentTarget: undefined });
+    else {
+      setSetting('infoPanelOpen', !settings.infoPanelOpen);
+      navigation.update({ ...navigation.getState().location, screen: settings.infoPanelOpen ? (galleryOpen ? 'gallery' : 'chat') : 'info' });
+    }
+  }, [isMobile, navigation, setSetting, settings.infoPanelOpen, galleryOpen]);
+
+  const openViewer = useCallback((request: PreviewRequest) => {
+    if (!isMobile) navigation.update({ ...navigation.getState().location, screen: request.source === 'selected' ? 'gallery' : request.source });
+    navigation.openPreview(request);
+  }, [isMobile, navigation]);
+  const updateViewerItem = useCallback((item: SelectableItem) => navigation.updatePreview(item), [navigation]);
+  const closeViewer = useCallback(() => navigation.closePreview(), [navigation]);
+  const parent = useCallback(() => navigation.parent(), [navigation]);
+
+  const sidebarScrollElement = () => document.querySelector<HTMLElement>('#sidebar .sidebar-scroll-region')
+    ?? document.querySelector<HTMLElement>('#sidebar .settings');
+  navigation.capture = (): NavigationSnapshot => ({
+    ...chatViewRef.current?.captureSnapshot(),
+    sidebarScroll: sidebarScrollElement()?.scrollTop,
+    infoScroll: document.querySelector<HTMLElement>('#chatInfoPanel .info-panel-content')?.scrollTop,
+    selectedScroll: document.querySelector<HTMLElement>('.selection-panel-content')?.scrollTop,
+  });
+
+  const appliedRevisionRef = useRef(-1);
+  const startedRevisionRef = useRef(-1);
+  const loadedRestorationRef = useRef(-1);
+  const [attachmentJumpTarget, setAttachmentJumpTarget] = useState<import('./components/AttachmentGallery/AttachmentGallery').AttachmentJumpTarget | null>(null);
+  useLayoutEffect(() => {
+    const { location: destination, snapshot, revision, restoring } = navigationState;
+    if (appliedRevisionRef.current === revision) return;
+    if (startedRevisionRef.current !== revision) {
+      if (pendingJumpCompletion.current && pendingJumpCompletion.current.revision !== revision) {
+        pendingJumpCompletion.current.resolve();
+        pendingJumpCompletion.current = null;
+      }
+      startedRevisionRef.current = revision;
+      chatViewRef.current?.cancelJump();
+      setAttachmentJumpTarget(null);
+    }
+    if (sidebarView !== destination.sidebarView) {
+      setSidebarView(destination.sidebarView);
+      setActiveTab(destination.sidebarView === 'settings' ? 'settings' : 'chats');
+      return;
+    }
+    setSidebarView(destination.sidebarView);
+    setActiveTab(destination.sidebarView === 'settings' ? 'settings' : 'chats');
+    const wantsGallery = destination.screen === 'gallery' || destination.screen === 'selected';
+    if (galleryOpen !== wantsGallery) { setGalleryOpen(wantsGallery); return; }
+    if (galleryDefaultTab !== destination.galleryTab) { setGalleryDefaultTab(destination.galleryTab); return; }
+    if (destination.chatId) {
+      const entry = archiveList.find(entry => getBookmarkChatId(entry) === destination.chatId);
+      if (!entry) { navigation.reset(); return; }
+      if (!chat.activeEntry || getBookmarkChatId(chat.activeEntry) !== destination.chatId) {
+        if (restoring && loadedRestorationRef.current !== revision) {
+          loadedRestorationRef.current = revision;
+          void loadChatEntry(entry);
+        }
+        return;
+      }
+      if (chat.loading) return;
+      if (!chat.chatData && destination.screen !== 'home' && destination.screen !== 'chat') {
+        navigation.navigate({ ...destination, screen: 'chat', preview: undefined });
+        return;
+      }
+    }
+    appliedRevisionRef.current = revision;
+    if (restoring && snapshot) {
+      void chatViewRef.current?.restoreSnapshot(snapshot);
+      const sidebar = sidebarScrollElement();
+      if (sidebar && snapshot.sidebarScroll !== undefined) sidebar.scrollTop = snapshot.sidebarScroll;
+      const info = document.querySelector<HTMLElement>('#chatInfoPanel .info-panel-content');
+      if (info && snapshot.infoScroll !== undefined) info.scrollTop = snapshot.infoScroll;
+      const selected = document.querySelector<HTMLElement>('.selection-panel-content');
+      if (selected && snapshot.selectedScroll !== undefined) selected.scrollTop = snapshot.selectedScroll;
+    } else if (!destination.preview) {
+      if (destination.messageTarget !== undefined) {
+        const finish = () => {
+          if (pendingJumpCompletion.current?.revision === revision) {
+            pendingJumpCompletion.current.resolve();
+            pendingJumpCompletion.current = null;
+          }
+        };
+        void chatViewRef.current?.jumpToMessage(destination.messageTarget).then(finish, finish);
+      }
+      if (destination.attachmentTarget) {
+        const item = viewerLookup.get(destination.attachmentTarget);
+        if (item) setAttachmentJumpTarget({ ...item, tab: destination.galleryTab });
+      } else setAttachmentJumpTarget(null);
+    }
+    if (isMobile) {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused.closest('[inert]')) focused.blur();
+      const activePanel = destination.screen === 'home' ? '#sidebar' : destination.screen === 'info' ? '#chatInfoPanel'
+        : destination.screen === 'selected' ? '.selection-panel' : '.chat-container .chat-view-layer.active';
+      const heading = document.querySelector<HTMLElement>(`${activePanel} h3, ${activePanel} .title-text`);
+      if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+    }
+  }, [navigationState, archiveList, chat.activeEntry, chat.chatData, chat.loading, galleryOpen, galleryDefaultTab, sidebarView, isMobile, loadChatEntry, navigation, viewerLookup]);
 
   const selectableItemsNewestFirst = useMemo(
     () => sortSelectableItemsNewestFirst([...attachments.all, ...sharedLinks]),
@@ -447,10 +588,11 @@ export default function App() {
 
   return (
     <ReactionFeatureContext.Provider value={reactionFeature}>
-    <ThreadDataContext.Provider value={chat.chatData}>
+    <ThreadDataContext.Provider value={navigatingChat ? null : chat.chatData}>
     <AttachmentReferencesContext.Provider value={attachmentReferences}>
-    <div className={`container ${settings.infoPanelOpen ? 'info-open' : ''}`}>
+    <div className={`container ${settings.infoPanelOpen ? 'info-open' : ''}`} data-mobile-screen={location.screen} inert={!!preview || undefined}>
       <Sidebar
+        hidden={isMobile && location.screen !== 'home'}
         settings={settings}
         setSetting={setSetting}
         inboxList={archive.inboxList}
@@ -465,7 +607,7 @@ export default function App() {
         attachmentReferenceScan={archive.attachmentReferenceScan}
         error={archive.error}
         sidebarView={sidebarView}
-        setSidebarView={setSidebarView}
+        setSidebarView={handleSidebarViewChange}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onSelectChat={handleSelectChat}
@@ -497,23 +639,33 @@ export default function App() {
 
       <ChatView
         ref={chatViewRef}
-        activeEntry={chat.activeEntry}
+        mobile={isMobile}
+        hidden={isMobile && location.screen !== 'chat' && location.screen !== 'gallery'}
+        viewerOpen={!!preview}
+        onBack={parent}
+        onOpenSelection={() => navigation.navigate({ ...location, screen: 'selected', preview: undefined })}
+        onOpenViewer={openViewer}
+        onNavigateToMessage={handleJumpToMessage}
+        onNavigateToAttachment={handleJumpToAttachment}
+        attachmentJumpTarget={attachmentJumpTarget}
+        onAttachmentJumpHandled={() => setAttachmentJumpTarget(null)}
+        activeEntry={viewEntry}
         mediaState={chat.mediaState}
-        msgProgress={chat.msgProgress}
-        msgStatusText={chat.msgStatusText}
+        msgProgress={navigatingChat ? 0 : chat.msgProgress}
+        msgStatusText={navigatingChat ? 'Loading messages' : chat.msgStatusText}
         chatError={chat.error}
         selectedPerspective={chat.selectedPerspective}
         settings={settings}
-        loading={chat.loading}
+        loading={chat.loading || navigatingChat}
         infoPanelOpen={settings.infoPanelOpen}
-        onToggleInfoPanel={() => setSetting('infoPanelOpen', !settings.infoPanelOpen as typeof settings.infoPanelOpen)}
+        onToggleInfoPanel={handleInfo}
         search={search}
         onSelectPerspective={chat.setSelectedPerspective}
         galleryOpen={galleryOpen}
         galleryDefaultTab={galleryDefaultTab}
-        onGalleryTabChange={setGalleryDefaultTab}
+        onGalleryTabChange={tab => { setGalleryDefaultTab(tab); navigation.update({ ...navigation.getState().location, galleryTab: tab }); }}
         onOpenGallery={handleOpenGallery}
-        onCloseGallery={() => setGalleryOpen(false)}
+        onCloseGallery={() => { if (isMobile) parent(); else { setGalleryOpen(false); navigation.navigate({ ...location, screen: 'chat', preview: undefined, messageTarget: undefined, attachmentTarget: undefined }); } }}
         selection={selection}
         attachmentBookmarkingEnabled={bookmarkingEnabled}
         bookmarks={bookmarks}
@@ -529,15 +681,15 @@ export default function App() {
         tabIndex={0}
       />
 
-      {settings.infoPanelOpen && (
-        galleryOpen && selection.selectedCount > 0 && chat.chatData ? (
+      {(isMobile || settings.infoPanelOpen) && (
+        (!isMobile && galleryOpen && selection.selectedCount > 0 && chat.chatData && !navigatingChat) ? (
           <SelectionPanel
-            activeEntry={chat.activeEntry}
+            activeEntry={viewEntry}
             chatData={chat.chatData}
             mediaState={chat.mediaState}
             selectedItems={selectedItems}
             onDeselect={selection.toggle}
-            onOpenViewer={index => setSelectedViewer({ items: [...selectedItems], index })}
+            onOpenViewer={index => openViewer({ items: [...selectedItems], index, source: 'selected', selectionMode: true, selectedNavigation: true })}
             onClearSelection={selection.deselectAll}
             useDateFilenames={settings.dateAttachmentFilenames}
             filenameTemplate={settings.attachmentFilenameTemplate}
@@ -547,12 +699,15 @@ export default function App() {
           />
         ) : (
           <InfoPanel
-            activeEntry={chat.activeEntry}
+            dateNavigation={isMobile ? <DateNavigator settings={settings} onJumpToMessage={handleJumpToMessage} chatContainerRef={chatScrollContainerRef} mobile embedded /> : undefined}
+            onBack={isMobile ? parent : undefined}
+            hidden={isMobile && location.screen !== 'info'}
+            activeEntry={viewEntry}
             mediaState={chat.mediaState}
             selectedPerspective={chat.selectedPerspective}
             onSelectPerspective={chat.setSelectedPerspective}
             onOpenGallery={handleOpenGallery}
-            header={!galleryOpen && selection.selectedCount > 0 && chat.chatData ? (
+            header={!isMobile && !galleryOpen && selection.selectedCount > 0 && chat.chatData ? (
               <SelectionHeader
                 activeEntry={chat.activeEntry}
                 chatData={chat.chatData}
@@ -568,6 +723,35 @@ export default function App() {
             ) : undefined}
           />
         )
+      )}
+
+      {isMobile && chat.chatData && !navigatingChat && (
+        <SelectionPanel
+          onBack={parent}
+          hidden={location.screen !== 'selected'}
+          activeEntry={chat.activeEntry}
+          chatData={chat.chatData}
+          mediaState={chat.mediaState}
+          selectedItems={selectedItems}
+          onDeselect={selection.toggle}
+          onOpenViewer={index => openViewer({ items: [...selectedItems], index, source: 'selected', selectionMode: true, selectedNavigation: true })}
+          onClearSelection={selection.deselectAll}
+          useDateFilenames={settings.dateAttachmentFilenames}
+          filenameTemplate={settings.attachmentFilenameTemplate}
+          allowLongFilenames={settings.longAttachmentFilenames}
+          attachmentBookmarkingEnabled={bookmarkingEnabled}
+          bookmarks={bookmarks}
+        />
+      )}
+
+      {isMobile && location.screen === 'selected' && (!chat.chatData || navigatingChat) && (
+        <div className="chat-info-panel selection-panel">
+          <div className="mobile-page-header">
+            <button type="button" className="mobile-back-btn" onClick={parent} aria-label="Back to attachments"><ArrowLeft size={18} /></button>
+            <h3>Selected attachments</h3>
+          </div>
+          <p className="info-empty" role="status">Loading selected attachments...</p>
+        </div>
       )}
 
       {deleteTarget && (
@@ -608,33 +792,28 @@ export default function App() {
           verificationProgress={deleteVerificationProgress}
         />
       )}
-      {selectedViewer && (
+      {preview && viewerItems.length > 0 && !chat.loading && !navigatingChat && (
         <MediaViewer
-          items={selectedViewer.items}
-          initialIndex={selectedViewer.index}
+          key={navigationState.revision}
+          mobile={isMobile}
+          items={viewerItems}
+          initialIndex={Math.max(0, viewerItems.findIndex(item => getNavigationItemKey(item) === preview.currentKey))}
           mediaState={chat.mediaState}
-          onClose={() => setSelectedViewer(null)}
-          onJumpToMessage={messageIndex => {
-            setSelectedViewer(null);
-            setGalleryOpen(false);
-            setTimeout(() => chatViewRef.current?.jumpToMessage(messageIndex), 50);
-          }}
-          onJumpToAttachment={item => {
-            setSelectedViewer(null);
-            chatViewRef.current?.jumpToAttachment(item);
-          }}
+          onClose={closeViewer}
+          onCurrentItemChange={updateViewerItem}
+          onJumpToMessage={handleJumpToMessage}
+          onJumpToAttachment={handleJumpToAttachment}
           selection={selection}
-          selectionMode
-          selectedNavigation
+          selectionMode={preview.source === 'chat' ? selection.selectedCount > 0 : preview.selectionMode}
+          reverseNavigation={preview.reverseNavigation}
+          selectedNavigation={preview.selectedNavigation}
           useDateFilename={settings.dateAttachmentFilenames}
           chatTitle={chat.chatData?.title}
           filenameTemplate={settings.attachmentFilenameTemplate}
           allowLongFilenames={settings.longAttachmentFilenames}
           attachmentBookmarkingEnabled={bookmarkingEnabled}
           isBookmarked={item => !!chat.activeEntry && bookmarks.isItemBookmarked(chat.activeEntry, item)}
-          onToggleBookmark={item => chat.activeEntry
-            ? bookmarks.toggleItemBookmark(chat.activeEntry, item)
-            : Promise.resolve()}
+          onToggleBookmark={item => chat.activeEntry ? bookmarks.toggleItemBookmark(chat.activeEntry, item) : Promise.resolve()}
           bookmarkBusy={bookmarks.busy}
         />
       )}
