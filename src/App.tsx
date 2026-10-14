@@ -712,7 +712,7 @@ export default function App() {
           />
         ) : (
           <InfoPanel
-            dateNavigation={isMobile ? <DateNavigator settings={settings} onJumpToMessage={handleJumpToMessage} chatContainerRef={chatScrollContainerRef} mobile embedded /> : undefined}
+            dateNavigation={isMobile ? <DateNavigator settings={settings} onJumpToMessage={handleJumpToMessage} onBrowseToMessage={index => { chatViewRef.current?.jumpToMessage(index); }} chatContainerRef={chatScrollContainerRef} mobile embedded /> : undefined}
             onBack={isMobile ? parent : undefined}
             hidden={isMobile && location.screen !== 'info'}
             activeEntry={viewEntry}
