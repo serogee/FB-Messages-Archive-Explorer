@@ -82,8 +82,10 @@
     transition: background 0.15s;
     font: inherit;
 }
-.media-viewer-btn:hover {
+@media (min-width: 769px), (hover: hover) and (pointer: fine) {
+  .media-viewer-btn:hover {
     background: rgba(255,255,255,0.2);
+  }
 }
 
 .media-viewer-select-toggle {
@@ -91,16 +93,20 @@
     background: rgba(0,0,0,0.32);
     color: white;
 }
-.media-viewer-select-toggle:hover {
+@media (min-width: 769px), (hover: hover) and (pointer: fine) {
+  .media-viewer-select-toggle:hover {
     border-color: white;
     background: rgba(255,255,255,0.16);
+  }
 }
 .media-viewer-select-toggle.selected {
     background: var(--accent);
     border-color: var(--accent);
 }
-.media-viewer-select-toggle.selected:hover {
+@media (min-width: 769px), (hover: hover) and (pointer: fine) {
+  .media-viewer-select-toggle.selected:hover {
     filter: brightness(1.12);
+  }
 }
 
 .media-viewer-bookmark-toggle.bookmarked {
@@ -176,8 +182,10 @@
     font: inherit;
     font-size: 14px;
 }
-.media-viewer-menu-item:hover {
+@media (min-width: 769px), (hover: hover) and (pointer: fine) {
+  .media-viewer-menu-item:hover {
     background: rgba(255,255,255,0.08);
+  }
 }
 
 .media-viewer-menu-icon {
@@ -207,17 +215,23 @@
     font: inherit;
     font-size: 28px;
 }
-.media-viewer-nav:hover {
+@media (min-width: 769px), (hover: hover) and (pointer: fine) {
+  .media-viewer-nav:hover {
     background: rgba(255,255,255,0.18);
+  }
 }
 .media-viewer-nav-prev {
     left: 16px;
 }
-.media-viewer-nav-prev:hover { transform: translateY(-50%) scale(1.08); }
+@media (min-width: 769px), (hover: hover) and (pointer: fine) {
+  .media-viewer-nav-prev:hover { transform: translateY(-50%) scale(1.08); }
+}
 .media-viewer-nav-next {
     right: 16px;
 }
-.media-viewer-nav-next:hover { transform: translateY(-50%) scale(1.08); }
+@media (min-width: 769px), (hover: hover) and (pointer: fine) {
+  .media-viewer-nav-next:hover { transform: translateY(-50%) scale(1.08); }
+}
 
 .media-viewer-content {
     display: flex;
@@ -399,8 +413,10 @@
 .media-viewer-copy-link-label > .hidden {
     visibility: hidden;
 }
-.media-viewer-download-btn:hover {
+@media (min-width: 769px), (hover: hover) and (pointer: fine) {
+  .media-viewer-download-btn:hover {
     filter: brightness(1.1);
+  }
 }
 
 .media-viewer-empty {
