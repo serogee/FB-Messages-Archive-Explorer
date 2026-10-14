@@ -4,10 +4,11 @@ import { cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useMessageTimestamps } from '../src/hooks/useMessageTimestamps';
 
-function Harness() {
+function Harness({ separator }: { separator?: string } = {}) {
   const ref = useRef<HTMLDivElement>(null);
   useMessageTimestamps(ref, 'thread');
   return <div ref={ref} data-testid="chat">
+    {separator && <div className="time-separator" data-testid="separator">{separator}</div>}
     <div className="message-wrapper">
       <div className="time-separator mobile-msg-timestamp" data-testid="date-message" aria-hidden="true" />
       <div className="message" data-testid="message">Message<span className="msg-timestamp">January 14, 2026, 8:00 AM</span></div>
@@ -44,6 +45,43 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('mobile message timestamps', () => {
+  it('does not duplicate the matching separator immediately above a message', () => {
+    const view = render(<Harness separator="January 14, 2026, 8:00 AM" />);
+    const chat = view.getByTestId('chat');
+    const message = view.getByTestId('message');
+    chat.scrollTop = 100;
+    tap(message);
+    tap(message);
+    expect(message.hasAttribute('data-timestamp-visible')).toBe(false);
+    expect(view.getByTestId('date-message').getAttribute('aria-hidden')).toBe('true');
+    expect(view.getByTestId('date-message').textContent).toBe('');
+    expect(view.getByTestId('date-message').style.minHeight).toBe('');
+    expect(view.getByTestId('separator').textContent).toBe('January 14, 2026, 8:00 AM');
+    expect(chat.scrollTop).toBe(100);
+    expect(chat.style.getPropertyValue('--timestamp-bottom-space')).toBe('');
+  });
+
+  it('clears another revealed date when tapping a message with its own separator', () => {
+    const view = render(<Harness separator="January 14, 2026, 8:00 AM" />);
+    const other = view.getByTestId('other');
+    tap(other);
+    expect(other.hasAttribute('data-timestamp-visible')).toBe(true);
+    tap(view.getByTestId('message'));
+    expect(other.hasAttribute('data-timestamp-visible')).toBe(false);
+    expect(view.getByTestId('date-other').textContent).toBe('');
+    expect(view.getByTestId('date-message').textContent).toBe('');
+    expect(view.getByTestId('separator').textContent).toBe('January 14, 2026, 8:00 AM');
+  });
+
+  it('still reveals a different exact time or a date belonging to a later message', () => {
+    const view = render(<Harness separator="January 14, 2026, 7:00 AM" />);
+    tap(view.getByTestId('message'));
+    expect(view.getByTestId('date-message').textContent).toBe('January 14, 2026, 8:00 AM');
+    view.getByTestId('other').querySelector('.msg-timestamp')!.textContent = 'January 14, 2026, 7:00 AM';
+    tap(view.getByTestId('other'));
+    expect(view.getByTestId('date-other').textContent).toBe('January 14, 2026, 7:00 AM');
+  });
+
   it('reveals on a tap without toggling twice and hides only on a retap', () => {
     const view = render(<Harness />);
     const message = view.getByTestId('message');
