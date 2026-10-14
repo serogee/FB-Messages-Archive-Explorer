@@ -4,6 +4,7 @@ import type { Settings } from '../../hooks/useSettings';
 import { isReactionNoticeMessage } from '../../services/reactions';
 import { useReactionContext } from '../../hooks/useReactionFeature';
 import { useThreadData } from '../../hooks/useThreadData';
+import { useMessageTimestamps } from '../../hooks/useMessageTimestamps';
 import { getMessageTimestamp } from '../../services/parser';
 import { getMediaReferencePath, getMediaType, getMessageMediaItems, resolveMessageMediaItems } from '../../services/media';
 import { scanMediaDimensions } from '../../services/mediaDimensions';
@@ -11,6 +12,7 @@ import { chunkArray } from '../../services/storage';
 import { resolveMessageJumpTarget } from '../../services/messageJump';
 import { getVisibleMessageNeighbors } from '../../services/messageVisibility';
 import { MessageBubble } from './MessageBubble';
+import type { MessagePosition } from '../../services/mobileNavigation';
 import { ReactionVisibilityAnchor } from './ReactionVisibilityAnchor';
 import {
   captureChatScrollAnchor,
@@ -63,7 +65,10 @@ interface MessageListProps {
 }
 
 export interface MessageListHandle {
-  jumpToMessage: (index: number) => Promise<void>;
+  cancelJump: () => void;
+  jumpToMessage: (index: number, options?: { offset?: number; highlight?: boolean }) => Promise<void>;
+  capturePosition: () => MessagePosition | undefined;
+  restorePosition: (position: MessagePosition) => Promise<void>;
   getChatContainer: () => HTMLDivElement | null;
   scrollToBottom: () => void;
 }
@@ -426,6 +431,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     setRevealed(prev => prev.indices.size > 0 && (prev.data !== chatData || prev.hide !== reactionFeature.hide) ? { data: chatData, hide: reactionFeature.hide, indices: new Set() } : prev);
   }, [chatData, reactionFeature.hide]);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  useMessageTimestamps(chatContainerRef, chatData);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jumpSettlingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -515,8 +521,33 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
     if (SCROLL_KEYS.has(event.key)) clearJumpSettling();
   }, [clearJumpSettling]);
 
-  useImperativeHandle(ref, () => ({
-    jumpToMessage: async (index: number) => {
+  const messageListRefForRestore = useRef<MessageListHandle | null>(null);
+  useImperativeHandle(ref, () => (messageListRefForRestore.current = {
+    cancelJump: () => {
+      jumpRequestIdRef.current++;
+      cancelPendingChunkRender();
+      clearJumpSettling();
+    },
+    capturePosition: () => {
+      const container = chatContainerRef.current;
+      if (!container) return;
+      const viewport = container.getBoundingClientRect();
+      const message = [...container.querySelectorAll<HTMLElement>('.message[data-msg-index]')]
+        .find(element => element.getBoundingClientRect().bottom > viewport.top);
+      return {
+        index: message ? Number(message.dataset.msgIndex) : undefined,
+        offset: message ? message.getBoundingClientRect().top - viewport.top : 0,
+        scrollTop: container.scrollTop,
+        atBottom: Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 20,
+      };
+    },
+    restorePosition: async (position: MessagePosition) => {
+      if (position.atBottom) { messageListRefForRestore.current?.scrollToBottom(); return; }
+      if (position.index !== undefined) {
+        await messageListRefForRestore.current?.jumpToMessage(position.index, { offset: position.offset, highlight: false });
+      } else if (chatContainerRef.current) chatContainerRef.current.scrollTop = position.scrollTop;
+    },
+    jumpToMessage: async (index: number, options?: { offset?: number; highlight?: boolean }) => {
       const container = chatContainerRef.current;
       if (!container) return;
       if (chatData) setReadyChat(chatData);
@@ -568,7 +599,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
       if (msgEl) {
         const containerRect = container.getBoundingClientRect();
         const elRect = msgEl.getBoundingClientRect();
-        container.scrollTop += elRect.top - containerRect.top - 120;
+        container.scrollTop += elRect.top - containerRect.top - (options?.offset ?? 120);
         container.dataset.lastScrollTop = String(container.scrollTop);
         container.dataset.isAtBottom = String(
           Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 20,
@@ -578,6 +609,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(function
         const landedMessageRect = msgEl.getBoundingClientRect();
         beginJumpSettling(container, index, landedMessageRect.top - landedContainerRect.top);
 
+        if (options?.highlight === false) return;
         msgEl.classList.add('highlight-target', 'temporary-highlight');
         highlightedMessageRef.current = msgEl;
         highlightScrollTopRef.current = container.scrollTop;
