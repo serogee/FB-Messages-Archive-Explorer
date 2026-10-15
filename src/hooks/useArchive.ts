@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import type { ChatListEntry } from '../types/messenger';
-import type { ReadableDirectoryHandle } from '../types/fileSystem';
+import type { FolderAccessMode, ReadableDirectoryHandle } from '../types/fileSystem';
 import { isWritableDirectoryHandle } from '../types/fileSystem';
 import {
   pickMessagesFolder,
@@ -9,6 +9,7 @@ import {
   computeFolderSize,
   deleteChat as deleteChatFs,
   resolveFacebookMessagesRootInfo,
+  isFileSystemAccessSupported,
 } from '../services/fileSystem';
 import {
   buildMessengerExportMediaSizeIndex,
@@ -197,10 +198,12 @@ export function useArchive(deletionEnabled: boolean): {
   archivePerspectiveKey: string | null;
   archivePerspectiveName: string;
   loading: boolean;
+  folderSelectionPending: boolean;
+  folderPreparationProgress: { done: number; total: number } | null;
   loadProgress: { done: number; total: number } | null;
   sizeProgress: { done: number; total: number } | null;
   error: string | null;
-  openFolder: (requestWrite?: boolean, onFolderPicked?: () => void) => Promise<boolean>;
+  openFolder: (requestWrite?: boolean, onFolderPicked?: () => void, accessMode?: FolderAccessMode) => Promise<boolean>;
   openFolderWithWriteAccess: () => Promise<void>;
   getDeleteInfo: (
     entry: ChatListEntry | ChatListEntry[],
@@ -229,11 +232,14 @@ export function useArchive(deletionEnabled: boolean): {
   const [archivePerspectiveKey, setArchivePerspectiveKey] = useState<string | null>(null);
   const [archivePerspectiveName, setArchivePerspectiveName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [folderSelectionPending, setFolderSelectionPending] = useState(false);
+  const [folderPreparationProgress, setFolderPreparationProgress] = useState<{ done: number; total: number } | null>(null);
   const [loadProgress, setLoadProgress] = useState<{ done: number; total: number } | null>(null);
   const [sizeProgress, setSizeProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const archiveGenerationRef = useRef(0);
+  const folderPickerRequestRef = useRef(0);
   const ownershipRevisionRef = useRef(0);
   const ownershipAbortRef = useRef<AbortController | null>(null);
   const referenceProgressRef = useRef<CalculationProgressStore | null>(null);
@@ -259,7 +265,8 @@ export function useArchive(deletionEnabled: boolean): {
   const sizeWorkPlanRef = useRef<SizeWorkPlan | null>(null);
   const deletedSizeEntryKeysRef = useRef<Set<string>>(new Set());
   const deletionOperationGuardRef = useRef(new SingleFlightGuard());
-  const deletionEnabledRef = useRef(deletionEnabled);
+  const deletionAvailable = deletionEnabled && (!rootHandle || isWritableDirectoryHandle(rootHandle));
+  const deletionEnabledRef = useRef(deletionAvailable);
   const messengerSizeMetadataRef = useRef<{
     rootHandle: ReadableDirectoryHandle; generation: number; metadata: MessengerExportSizeMetadata;
   } | null>(null);
@@ -282,11 +289,12 @@ export function useArchive(deletionEnabled: boolean): {
     setAttachmentReferenceScan(null);
   }, []);
   useLayoutEffect(() => {
-    if (deletionEnabledRef.current === deletionEnabled) return;
-    deletionEnabledRef.current = deletionEnabled;
+    if (deletionEnabledRef.current === deletionAvailable) return;
+    deletionEnabledRef.current = deletionAvailable;
     clearOwnership();
-  }, [deletionEnabled, clearOwnership]);
+  }, [deletionAvailable, clearOwnership]);
   useEffect(() => () => {
+    folderPickerRequestRef.current++;
     ownershipRevisionRef.current++;
     ownershipAbortRef.current?.abort();
     referenceProgressRef.current?.dispose();
@@ -680,10 +688,24 @@ export function useArchive(deletionEnabled: boolean): {
     startBackgroundSizeWork();
   }, [startBackgroundSizeWork]);
 
-  const openFolder = useCallback(async (requestWrite?: boolean, onFolderPicked?: () => void): Promise<boolean> => {
+  const openFolder = useCallback(async (requestWrite?: boolean, onFolderPicked?: () => void, accessMode: FolderAccessMode = 'native'): Promise<boolean> => {
     let abortCtrl: AbortController | null = null;
+    const pickerRequest = ++folderPickerRequestRef.current;
+    setFolderSelectionPending(true);
+    setFolderPreparationProgress(null);
+    const onPreparationProgress = (done: number, total: number) => {
+      if (pickerRequest !== folderPickerRequestRef.current) throw new DOMException('Aborted', 'AbortError');
+      setFolderSelectionPending(false);
+      if (done === 0) setError(null);
+      setFolderPreparationProgress({ done, total });
+    };
+    const nativeSelected = accessMode === 'native' && isFileSystemAccessSupported();
     try {
-      const handle = requestWrite ? await pickFolderWithWriteAccess() : await pickMessagesFolder();
+      const handle = requestWrite ? await pickFolderWithWriteAccess(accessMode, onPreparationProgress)
+        : await pickMessagesFolder(accessMode, onPreparationProgress);
+      if (pickerRequest !== folderPickerRequestRef.current) return false;
+      setFolderSelectionPending(false);
+      setFolderPreparationProgress(null);
       onFolderPicked?.();
       setReactionSourceRevision(v => v + 1);
       const generation = ++archiveGenerationRef.current;
@@ -742,7 +764,7 @@ export function useArchive(deletionEnabled: boolean): {
         const isCurrent = () => deletionEnabledRef.current && archiveGenerationRef.current === generation
           && ownershipRevisionRef.current === revision;
         const ownershipController = new AbortController();
-        const collectOwnership = deletionEnabledRef.current;
+        const collectOwnership = deletionEnabledRef.current && isWritableDirectoryHandle(handle);
         if (collectOwnership) ownershipAbortRef.current = ownershipController;
         const progress = new CalculationProgressStore();
         referenceProgressRef.current = progress;
@@ -830,6 +852,11 @@ export function useArchive(deletionEnabled: boolean): {
         if (b.lastTimestamp == null) return -1;
         return b.lastTimestamp - a.lastTimestamp;
       });
+      if (mergedInbox.length + archived.length + requests.length === 0) {
+        setRootHandle(null);
+        setOriginalRootHandle(null);
+        throw new Error('No readable conversation files were found in this folder. Select an extracted export in JSON format.');
+      }
       const perspective = resolveArchivePerspective(
         [...mergedInbox, ...archived, ...requests],
         'facebook'
@@ -847,12 +874,18 @@ export function useArchive(deletionEnabled: boolean): {
       startBackgroundSizeWork();
       return true;
     } catch (e: unknown) {
-      if (e instanceof Error && e.name !== 'AbortError') {
-        setError(e.message || 'Failed to open folder');
-        return true;
-      }
-      return false;
+      if (pickerRequest !== folderPickerRequestRef.current) return false;
+      const detail = e as { name?: unknown; message?: unknown } | null;
+      if (detail?.name === 'AbortError') return false;
+      const message = typeof detail?.message === 'string' && detail.message
+        ? detail.message : typeof e === 'string' ? e : 'Failed to open folder';
+      setError(message + (nativeSelected ? ' If Native access fails, try Read-only access and select the folder again.' : ''));
+      return true;
     } finally {
+      if (pickerRequest === folderPickerRequestRef.current) {
+        setFolderSelectionPending(false);
+        setFolderPreparationProgress(null);
+      }
       if (abortControllerRef.current === abortCtrl) {
         setLoading(false);
         setLoadProgress(null);
@@ -943,14 +976,14 @@ export function useArchive(deletionEnabled: boolean): {
   }, [rootHandle, assertDeletionEnabled]);
 
   useEffect(() => {
-    if (!deletionEnabled || !rootHandle || loading || !sizeWorkPlanRef.current
+    if (!deletionAvailable || !rootHandle || loading || !sizeWorkPlanRef.current
       || sizeWorkPlanRef.current.generation !== archiveGenerationRef.current || deletionOperationGuardRef.current.busy) return;
     const work = isMessengerExportRef.current ? getMessengerReferenceIndex()
       : getFacebookReferenceIndexForRoot(rootHandle, archiveGenerationRef.current);
     void work.catch(error => {
       if (!(error instanceof DOMException && error.name === 'AbortError')) console.error('Shared attachment scan failed:', error);
     });
-  }, [deletionEnabled, rootHandle, loading, reactionMutationPending, getMessengerReferenceIndex, getFacebookReferenceIndexForRoot]);
+  }, [deletionAvailable, rootHandle, loading, reactionMutationPending, getMessengerReferenceIndex, getFacebookReferenceIndexForRoot]);
 
   const getDeleteInfo = useCallback(async (
     entry: ChatListEntry | ChatListEntry[],
@@ -1375,12 +1408,12 @@ export function useArchive(deletionEnabled: boolean): {
   ]);
 
   return {
-    rootHandle, attachmentReferenceIndex: deletionEnabled ? attachmentReferenceIndex : null,
-    attachmentReferenceIndexLoading: deletionEnabled && attachmentReferenceIndexLoading,
-    attachmentReferenceScan: deletionEnabled ? attachmentReferenceScan : null,
+    rootHandle, attachmentReferenceIndex: deletionAvailable ? attachmentReferenceIndex : null,
+    attachmentReferenceIndexLoading: deletionAvailable && attachmentReferenceIndexLoading,
+    attachmentReferenceScan: deletionAvailable ? attachmentReferenceScan : null,
     reactionSourceRevision, reactionMutationPending, standaloneMessenger: isMessengerExportRef.current, originalRootHandle, inboxList, archivedList, requestsList,
     archivePerspectiveKey, archivePerspectiveName,
-    loading, loadProgress, sizeProgress, error,
+    loading, folderSelectionPending, folderPreparationProgress, loadProgress, sizeProgress, error,
     openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, suspendSizeWork, resumeSizeWork, deleteChat, deleteChats, deleteMessengerChatsJsonOnly, updateFolderSize,
   };
 }
