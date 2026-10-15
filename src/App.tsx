@@ -48,7 +48,7 @@ import {
 import { createProgressThrottle } from './services/progressThrottle';
 import { CalculationProgressStore } from './services/calculationProgress';
 import { SingleFlightGuard } from './services/singleFlight';
-import { requestDirectoryWritePermission } from './types/fileSystem';
+import { isWritableDirectoryHandle, requestDirectoryWritePermission } from './types/fileSystem';
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'An unexpected error occurred.';
@@ -88,7 +88,8 @@ export default function App() {
   const selection = useSelection();
   const attachments = useAttachments(chat.chatData, chat.mediaState);
   const sharedLinks = useSharedLinks(chat.chatData);
-  const bookmarkingEnabled = settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported();
+  const bookmarkingEnabled = settings.attachmentBookmarkingEnabled && isFileSystemAccessSupported()
+    && (!archive.rootHandle || isWritableDirectoryHandle(archive.rootHandle));
   const bookmarks = useBookmarks(archive.rootHandle, bookmarkingEnabled);
 
   const [sidebarView, setSidebarView] = useState<'chats' | 'settings' | 'archived' | 'requests'>('chats');
@@ -377,6 +378,9 @@ export default function App() {
       preview: undefined, messageTarget: undefined, attachmentTarget: undefined });
     setGalleryOpen(false);
     if (chat.activeEntry && getBookmarkChatId(chat.activeEntry) === getBookmarkChatId(entry) && chat.chatData) return;
+    // Paint the loading view before pausing background work or reading chat files.
+    await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+    if (navigation.getState().location.chatId !== getBookmarkChatId(entry)) return;
     await loadChatEntry(entry);
   }, [navigation, loadChatEntry, chat.activeEntry, chat.chatData]);
 
@@ -401,7 +405,8 @@ export default function App() {
         selection.deselectAll();
         setGalleryOpen(false);
         navigation.reset();
-      }
+      },
+      settings.folderAccessMode,
     );
     if (picked) {
       deleteInfoRequestRef.current++;
@@ -412,7 +417,7 @@ export default function App() {
       setDeleteBusy(false);
       setDeleteProgress(null);
     }
-  }, [settings.deletionEnabled, settings.attachmentBookmarkingEnabled, archive, chat, search, selection, navigation]);
+  }, [settings.deletionEnabled, settings.attachmentBookmarkingEnabled, settings.folderAccessMode, archive, chat, search, selection, navigation]);
 
   const handleAttachmentBookmarkingChange = useCallback(async (enabled: boolean): Promise<boolean> => {
     if (!enabled) {
@@ -429,10 +434,16 @@ export default function App() {
   const chatViewRef = useRef<ChatViewHandle>(null);
   const chatScrollContainerRef = useMemo(() => ({ get current() { return chatViewRef.current?.getChatContainer() ?? null; } }), []);
   const pendingJumpCompletion = useRef<{ revision: number; resolve: () => void; options?: MessageJumpOptions } | null>(null);
+  const pendingDateBrowse = useRef<{ data: typeof chat.chatData; index: number } | null>(null);
+
+  const handleBrowseToMessage = useCallback((index: number) => {
+    pendingDateBrowse.current = { data: chat.chatData, index };
+  }, [chat.chatData]);
 
   const handleJumpToMessage = useCallback(async (index: number, folderName?: string, options?: MessageJumpOptions) => {
     const entry = folderName ? archiveList.find(entry => entry.folderName === folderName) : chat.activeEntry;
     if (!entry) return;
+    pendingDateBrowse.current = null;
     const previousRevision = navigation.getState().revision;
     const source = navigation.getState().location;
     const fromAttachment = source.screen === 'gallery' || source.screen === 'selected' || !!source.preview;
@@ -522,6 +533,7 @@ export default function App() {
   const [attachmentJumpTarget, setAttachmentJumpTarget] = useState<import('./components/AttachmentGallery/AttachmentGallery').AttachmentJumpTarget | null>(null);
   useLayoutEffect(() => {
     const { location: destination, snapshot, revision, restoring } = navigationState;
+    if (pendingDateBrowse.current?.data !== chat.chatData) pendingDateBrowse.current = null;
     if (appliedRevisionRef.current === revision) return;
     if (startedRevisionRef.current !== revision) {
       if (pendingJumpCompletion.current && pendingJumpCompletion.current.revision !== revision) {
@@ -559,8 +571,11 @@ export default function App() {
       }
     }
     appliedRevisionRef.current = revision;
+    const dateBrowse = destination.screen === 'chat' && !destination.preview ? pendingDateBrowse.current : null;
+    if (dateBrowse) pendingDateBrowse.current = null;
     if (restoring && snapshot) {
-      void chatViewRef.current?.restoreSnapshot(snapshot);
+      // A date selected in Info takes precedence over the chat position saved on entry.
+      void chatViewRef.current?.restoreSnapshot(dateBrowse ? { ...snapshot, message: undefined } : snapshot);
       const sidebar = sidebarScrollElement();
       if (sidebar && snapshot.sidebarScroll !== undefined) sidebar.scrollTop = snapshot.sidebarScroll;
       const info = document.querySelector<HTMLElement>('#chatInfoPanel .info-panel-content');
@@ -568,7 +583,7 @@ export default function App() {
       const selected = document.querySelector<HTMLElement>('.selection-panel-content');
       if (selected && snapshot.selectedScroll !== undefined) selected.scrollTop = snapshot.selectedScroll;
     } else if (!destination.preview) {
-      if (destination.messageTarget !== undefined) {
+      if (destination.messageTarget !== undefined && !dateBrowse) {
         const finish = () => {
           if (pendingJumpCompletion.current?.revision === revision) {
             pendingJumpCompletion.current.resolve();
@@ -583,6 +598,7 @@ export default function App() {
         if (item) setAttachmentJumpTarget({ ...item, tab: destination.galleryTab });
       } else setAttachmentJumpTarget(null);
     }
+    if (dateBrowse) void chatViewRef.current?.jumpToMessage(dateBrowse.index);
     if (isMobile) {
       const focused = document.activeElement;
       if (focused instanceof HTMLElement && focused.closest('[inert]')) focused.blur();
@@ -615,6 +631,8 @@ export default function App() {
         rootHandle={archive.rootHandle}
         originalRootHandle={archive.originalRootHandle}
         loading={archive.loading}
+        folderSelectionPending={archive.folderSelectionPending}
+        folderPreparationProgress={archive.folderPreparationProgress}
         loadProgress={archive.loadProgress}
         sizeProgress={archive.sizeProgress}
         attachmentReferenceScan={archive.attachmentReferenceScan}
@@ -712,7 +730,7 @@ export default function App() {
           />
         ) : (
           <InfoPanel
-            dateNavigation={isMobile ? <DateNavigator settings={settings} onJumpToMessage={handleJumpToMessage} onBrowseToMessage={index => { chatViewRef.current?.jumpToMessage(index); }} chatContainerRef={chatScrollContainerRef} mobile embedded /> : undefined}
+            dateNavigation={isMobile ? <DateNavigator settings={settings} onJumpToMessage={handleJumpToMessage} onBrowseToMessage={handleBrowseToMessage} chatContainerRef={chatScrollContainerRef} mobile embedded /> : undefined}
             onBack={isMobile ? parent : undefined}
             hidden={isMobile && location.screen !== 'info'}
             activeEntry={viewEntry}

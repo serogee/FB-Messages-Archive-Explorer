@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useId, type ReactNode } from 'react';
 import type { Settings } from '../../hooks/useSettings';
 import type { ChatListEntry, MessengerThread } from '../../types/messenger';
 import type { ReadableDirectoryHandle } from '../../types/fileSystem';
+import { isWritableDirectoryHandle } from '../../types/fileSystem';
 import { getParticipantNames } from '../../services/parser';
 import { isFileSystemAccessSupported } from '../../services/fileSystem';
 import { EnableDeletionModal } from '../Modals/EnableDeletionModal';
@@ -24,6 +25,49 @@ import { useThreadData } from '../../hooks/useThreadData';
 import { reactionConversationId } from '../../services/reactionAuditInventory';
 import { ConsistencyDetailsModal } from '../Modals/ConsistencyDetailsModal';
 import { ReactionNoticesInfoModal } from '../Modals/ReactionNoticesInfoModal';
+import { FolderAccessOptions } from './FolderAccessOptions';
+import { SettingsInfoModal, SettingsInfoRow } from '../Modals/SettingsInfoModal';
+
+const INFO_TITLES = {
+    appearance: 'Appearance',
+    folder: 'Messages folder',
+    management: 'Chat management',
+    downloads: 'Downloads',
+    offline: 'Offline use',
+};
+
+function SettingsSection({ title, children, onInfo, className = '' }: {
+    title: string;
+    children: ReactNode;
+    onInfo?: () => void;
+    className?: string;
+}) {
+    const [open, setOpen] = useState(true);
+    const id = useId();
+    return (
+        <section className={`settings-section ${className}`}>
+            <div className="settings-section-heading">
+                <button type="button" className="settings-section-toggle" id={`${id}-title`}
+                    aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
+                    {title}
+                </button>
+                {onInfo && (
+                    <button type="button" className="settings-info-button"
+                        aria-label={`Open ${title.toLowerCase()} information`} onClick={event => {
+                            event.currentTarget.focus({ preventScroll: true });
+                            onInfo();
+                        }}>
+                        <Info size={16} />
+                    </button>
+                )}
+                <ChevronDown className={`settings-section-chevron${open ? ' open' : ''}`} size={16} aria-hidden="true" />
+            </div>
+            <div id={id} className="settings-section-content" role="region" aria-labelledby={`${id}-title`} hidden={!open}>
+                {children}
+            </div>
+        </section>
+    );
+}
 
 interface SettingsPanelProps {
     settings: Settings;
@@ -32,6 +76,7 @@ interface SettingsPanelProps {
     selectedPerspective: string;
     setSelectedPerspective: (name: string) => void;
     onOpenFolder: () => Promise<void>;
+    folderLoadingStatus?: ReactNode;
     rootHandle: ReadableDirectoryHandle | null;
     onAttachmentBookmarkingChange: (enabled: boolean) => Promise<boolean>;
     chatEntries: ChatListEntry[];
@@ -175,6 +220,7 @@ export function SettingsPanel({
     selectedPerspective,
     setSelectedPerspective,
     onOpenFolder,
+    folderLoadingStatus,
     rootHandle,
     onAttachmentBookmarkingChange,
     chatEntries,
@@ -184,6 +230,9 @@ export function SettingsPanel({
     const participants = getParticipantNames(chatData);
     const reactionFeature = useReactionContext();
     const fsSupported = isFileSystemAccessSupported();
+    const readOnlyFolder = !!rootHandle && !isWritableDirectoryHandle(rootHandle);
+    const canManageChats = fsSupported && !readOnlyFolder;
+    const [infoSection, setInfoSection] = useState<keyof typeof INFO_TITLES | null>(null);
     const [showEnableModal, setShowEnableModal] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
     const [showFilenamePlaceholdersModal, setShowFilenamePlaceholdersModal] =
@@ -282,8 +331,10 @@ export function SettingsPanel({
 
     return (
         <div className="sidebar-scroll-region settings-scroll-region">
-            <div className="settings-section messages-folder-settings">
-                <strong>Messages Folder</strong>
+            <SettingsSection title="Messages folder" className="messages-folder-settings"
+                onInfo={() => setInfoSection('folder')}>
+                <FolderAccessOptions showDescription={false} mode={settings.folderAccessMode} onChange={mode => setSetting('folderAccessMode', mode)} />
+                {readOnlyFolder && <p className="browser-notice">Read-only folder. Use Native access to manage chats.</p>}
                 {rootHandle ? (
                     <div className="folder-display-container">
                         <div
@@ -321,35 +372,109 @@ export function SettingsPanel({
                         </span>
                     </button>
                 )}
-            </div>
+                {folderLoadingStatus}
+            </SettingsSection>
 
-            {chatData && participants.length > 0 && (
-                <div className="settings-section">
-                    <strong>View perspective</strong>
-                    <PerspectiveDropdown
-                        participants={participants}
-                        selectedPerspective={selectedPerspective}
-                        setSelectedPerspective={setSelectedPerspective}
-                    />
-                    <span id="tips" className="footer">
-                        Messages from the selected participant appear on the
-                        right side as "me".
-                    </span>
-                </div>
-            )}
+            <SettingsSection title="Appearance" onInfo={() => setInfoSection('appearance')}>
+                <ToggleRow
+                    id="darkModeToggle"
+                    label="Dark mode"
+                    checked={settings.darkMode}
+                    onChange={(v) =>
+                        setSetting('darkMode', v as Settings['darkMode'])
+                    }
+                />
+                <ToggleRow
+                    id="showMyNameToggle"
+                    label="Show my name"
+                    checked={settings.showMyName}
+                    onChange={(v) =>
+                        setSetting('showMyName', v as Settings['showMyName'])
+                    }
+                />
+                <ToggleRow
+                    id="showTheirNameToggle"
+                    label="Show their names"
+                    checked={settings.showTheirName}
+                    onChange={(v) =>
+                        setSetting(
+                            'showTheirName',
+                            v as Settings['showTheirName'],
+                        )
+                    }
+                />
+                <ToggleRow
+                    id="showReactionsToggle"
+                    label="Show reactions"
+                    checked={settings.showReactions}
+                    onChange={(v) =>
+                        setSetting(
+                            'showReactions',
+                            v as Settings['showReactions'],
+                        )
+                    }
+                />
+                <ToggleRow
+                    id="autoCollapseDateNavToggle"
+                    label="Open date navigator on hover"
+                    checked={settings.autoCollapseDateNav}
+                    onChange={(v) =>
+                        setSetting(
+                            'autoCollapseDateNav',
+                            v as Settings['autoCollapseDateNav'],
+                        )
+                    }
+                />
 
-            <div className="settings-section">
-                <div className="settings-section-heading">
-                    <strong>Reaction notices</strong>
-                    <button
-                        type="button"
-                        className="settings-info-button"
-                        aria-label="Open reaction notices information"
-                        onClick={() => setShowReactionNoticesInfo(true)}
-                    >
-                        <Info size={17} />
-                    </button>
-                </div>
+                {chatData && participants.length > 0 && (
+                    <div className="settings-subsection">
+                        <h3 className="settings-subsection-title">View perspective</h3>
+                        <PerspectiveDropdown
+                            participants={participants}
+                            selectedPerspective={selectedPerspective}
+                            setSelectedPerspective={setSelectedPerspective}
+                        />
+                    </div>
+                )}
+            </SettingsSection>
+
+            <SettingsSection title="Chat management" onInfo={() => setInfoSection('management')}>
+                <ToggleRow
+                    id="attachmentBookmarkingEnabledToggle"
+                    label="Enable bookmarking"
+                    checked={canManageChats && settings.attachmentBookmarkingEnabled}
+                    onChange={handleBookmarkingToggle}
+                    disabled={!canManageChats}
+                />
+                <ToggleRow
+                    id="deletionEnabledToggle"
+                    label="Enable chat deletion"
+                    checked={canManageChats && settings.deletionEnabled}
+                    onChange={handleDeletionToggle}
+                    disabled={!canManageChats}
+                />
+                {!canManageChats && (
+                    <p className="browser-notice">
+                        {readOnlyFolder
+                            ? 'Open the folder using Native access to save bookmarks and delete chats.'
+                            : 'Native folder access is required to save bookmarks and delete chats.'}
+                    </p>
+                )}
+                {canManageChats && bookmarkPermissionError && (
+                    <p className="browser-notice" role="alert">
+                        Write access is required to enable attachment bookmarking.
+                    </p>
+                )}
+                {canManageChats && settings.deletionEnabled && (
+                    <p className="browser-notice">Deleting a chat permanently removes its files from your device.</p>
+                )}
+                {!rootHandle && canManageChats &&
+                    (settings.attachmentBookmarkingEnabled || settings.deletionEnabled) && (
+                        <p className="browser-notice">Write access will be requested when you open a folder.</p>
+                    )}
+            </SettingsSection>
+
+            <SettingsSection title="Reaction notices" onInfo={() => setShowReactionNoticesInfo(true)}>
                 <ToggleRow
                     id="hideLikelyReactionNotices"
                     label="Hide reaction notices"
@@ -485,81 +610,9 @@ export function SettingsPanel({
                             )}
                     </>
                 )}
-            </div>
+            </SettingsSection>
 
-            <div className="settings-section">
-                <strong>Customization</strong>
-                <ToggleRow
-                    id="darkModeToggle"
-                    label="Dark mode"
-                    checked={settings.darkMode}
-                    onChange={(v) =>
-                        setSetting('darkMode', v as Settings['darkMode'])
-                    }
-                />
-                <ToggleRow
-                    id="showMyNameToggle"
-                    label="Show my name"
-                    checked={settings.showMyName}
-                    onChange={(v) =>
-                        setSetting('showMyName', v as Settings['showMyName'])
-                    }
-                />
-                <ToggleRow
-                    id="showTheirNameToggle"
-                    label="Show their names"
-                    checked={settings.showTheirName}
-                    onChange={(v) =>
-                        setSetting(
-                            'showTheirName',
-                            v as Settings['showTheirName'],
-                        )
-                    }
-                />
-                <ToggleRow
-                    id="showReactionsToggle"
-                    label="Show reactions"
-                    checked={settings.showReactions}
-                    onChange={(v) =>
-                        setSetting(
-                            'showReactions',
-                            v as Settings['showReactions'],
-                        )
-                    }
-                />
-                <ToggleRow
-                    id="autoCollapseDateNavToggle"
-                    label="Open date navigator on hover"
-                    checked={settings.autoCollapseDateNav}
-                    onChange={(v) =>
-                        setSetting(
-                            'autoCollapseDateNav',
-                            v as Settings['autoCollapseDateNav'],
-                        )
-                    }
-                />
-            </div>
-
-            <div className="settings-section">
-                <strong>Offline Use</strong>
-                <ToggleRow
-                    id="offlineSupportEnabledToggle"
-                    label="Keep app available offline"
-                    checked={settings.offlineSupportEnabled}
-                    onChange={handleOfflineSupportToggle}
-                    disabled={offlineSupportBusy}
-                />
-                <p className="deletion-info">
-                    Stores only the app files and chat parsers. Messages and
-                    attachments are not stored in the app cache.
-                </p>
-                {offlineSupportError && (
-                    <p className="browser-notice">{offlineSupportError}</p>
-                )}
-            </div>
-
-            <div className="settings-section">
-                <strong>Downloads</strong>
+            <SettingsSection title="Downloads" onInfo={() => setInfoSection('downloads')}>
                 <ToggleRow
                     id="dateAttachmentFilenamesToggle"
                     label="Name attachments by message date and time"
@@ -643,18 +696,24 @@ export function SettingsPanel({
                                 )
                             }
                         />
-                        <p className="browser-notice">
-                            Names are normalized and stripped of unsupported
-                            symbols. The maximum is{' '}
-                            {settings.longAttachmentFilenames ? '180' : '100'}{' '}
-                            characters including the extension.
-                        </p>
                     </>
                 )}
-            </div>
+            </SettingsSection>
 
-            <div className="settings-section">
-                <strong>Help</strong>
+            <SettingsSection title="Offline use" onInfo={() => setInfoSection('offline')}>
+                <ToggleRow
+                    id="offlineSupportEnabledToggle"
+                    label="Keep app available offline"
+                    checked={settings.offlineSupportEnabled}
+                    onChange={handleOfflineSupportToggle}
+                    disabled={offlineSupportBusy}
+                />
+                {offlineSupportError && (
+                    <p className="browser-notice">{offlineSupportError}</p>
+                )}
+            </SettingsSection>
+
+            <SettingsSection title="Help">
                 <button
                     className="settings-shortcuts-btn"
                     onClick={() => setShowShortcutsModal(true)}
@@ -663,92 +722,38 @@ export function SettingsPanel({
                     <span>Keyboard shortcuts</span>
                     <ChevronRight size={16} />
                 </button>
-            </div>
 
-            <div className="settings-section">
-                <strong>Bookmarking</strong>
-                {!fsSupported ? (
-                    <>
-                        <ToggleRow
-                            id="attachmentBookmarkingEnabledToggle"
-                            label="Enable bookmarking"
-                            checked={false}
-                            onChange={() => {}}
-                            disabled={true}
-                        />
-                        <p className="browser-notice">
-                            Only available in Chromium-based browsers (Chrome,
-                            Edge, Brave).
-                        </p>
-                    </>
-                ) : (
-                    <>
-                        <ToggleRow
-                            id="attachmentBookmarkingEnabledToggle"
-                            label="Enable bookmarking"
-                            checked={settings.attachmentBookmarkingEnabled}
-                            onChange={handleBookmarkingToggle}
-                        />
-                        <p className="deletion-info">
-                            Saves attachment and link bookmarks, plus pinned
-                            chats, to <code>fb-mae/bookmarks.json</code> inside
-                            the messages folder. Existing bookmarks are kept
-                            when this feature is disabled.
-                            {!rootHandle &&
-                                settings.attachmentBookmarkingEnabled &&
-                                ' Write access will be requested when you open a folder.'}
-                        </p>
-                        {bookmarkPermissionError && (
-                            <p className="browser-notice">
-                                Write access is required to enable attachment
-                                bookmarking.
-                            </p>
-                        )}
-                    </>
-                )}
-            </div>
-
-            <div className="settings-section">
-                <strong>Chat Deletion</strong>
-                {!fsSupported ? (
-                    <>
-                        <ToggleRow
-                            id="deletionEnabledToggle"
-                            label="Enable chat deletion"
-                            checked={false}
-                            onChange={() => {}}
-                            disabled={true}
-                        />
-                        <p className="browser-notice">
-                            Only available in Chromium-based browsers (Chrome,
-                            Edge, Brave).
-                        </p>
-                    </>
-                ) : (
-                    <>
-                        <ToggleRow
-                            id="deletionEnabledToggle"
-                            label="Enable chat deletion"
-                            checked={settings.deletionEnabled}
-                            onChange={handleDeletionToggle}
-                        />
-                        <p className="deletion-info">
-                            When enabled, a <em>Delete chat</em> option appears
-                            on each conversation. This option removes the chat
-                            folder, including all messages, photos, videos, and
-                            audio, permanently from your device storage.{' '}
-                            <strong>
-                                Once deleted, the files cannot be recovered.
-                            </strong>{' '}
-                            Shared attachments across chats are also checked
-                            while deletion is enabled.
-                            {!rootHandle &&
-                                settings.deletionEnabled &&
-                                ' Write access will be requested when you open a folder.'}
-                        </p>
-                    </>
-                )}
-            </div>
+                <div className="settings-subsection download-info">
+                    <h3 className="settings-subsection-title">How to export your messages</h3>
+                    <a
+                        href="https://www.facebook.com/dyi"
+                        target="_blank"
+                        rel="noreferrer"
+                    >
+                        Facebook Download Your Information
+                    </a>
+                    <a
+                        href="https://www.messenger.com/secure_storage/dyi"
+                        target="_blank"
+                        rel="noreferrer"
+                    >
+                        Messenger Download Your Information
+                    </a>
+                    <a
+                        href="https://accountscenter.instagram.com/info_and_permissions/dyi/"
+                        target="_blank"
+                        rel="noreferrer"
+                    >
+                        Instagram Download Your Information
+                    </a>
+                    <p className="footer">
+                        Select <strong style={{ fontSize: '0.85em' }}>JSON</strong>{' '}
+                        format and download the <em>Messages</em> category. Extract
+                        the zip and open the export folder or its{' '}
+                        <code>messages</code> folder here.
+                    </p>
+                </div>
+            </SettingsSection>
 
             {showEnableModal && (
                 <EnableDeletionModal
@@ -800,36 +805,47 @@ export function SettingsPanel({
                 />
             )}
 
-            <div className="settings-section download-info">
-                <strong>How to export your messages</strong>
-                <a
-                    href="https://www.facebook.com/dyi"
-                    target="_blank"
-                    rel="noreferrer"
-                >
-                    Facebook Download Your Information
-                </a>
-                <a
-                    href="https://www.messenger.com/secure_storage/dyi"
-                    target="_blank"
-                    rel="noreferrer"
-                >
-                    Messenger Download Your Information
-                </a>
-                <a
-                    href="https://accountscenter.instagram.com/info_and_permissions/dyi/"
-                    target="_blank"
-                    rel="noreferrer"
-                >
-                    Instagram Download Your Information
-                </a>
-                <p className="footer">
-                    Select <strong style={{ fontSize: '0.85em' }}>JSON</strong>{' '}
-                    format and download the <em>Messages</em> category. Extract
-                    the zip and open the export folder or its{' '}
-                    <code>messages</code> folder here.
-                </p>
-            </div>
+            {infoSection && (
+                <SettingsInfoModal title={INFO_TITLES[infoSection]} onClose={() => setInfoSection(null)}>
+                    {infoSection === 'appearance' && (
+                        <>
+                            <SettingsInfoRow label="Dark mode">Use a dark theme throughout the app.</SettingsInfoRow>
+                            <SettingsInfoRow label="Show names">Choose whether your name and other participants&apos; names appear in chats.</SettingsInfoRow>
+                            <SettingsInfoRow label="Show reactions">Show the reactions attached to messages.</SettingsInfoRow>
+                            <SettingsInfoRow label="View perspective">Place messages from the selected participant on the right as &quot;me&quot;.</SettingsInfoRow>
+                            <SettingsInfoRow label="Date navigator">On desktop, open the date navigator when you hover over the chat title. Turn this off to open it with a click.</SettingsInfoRow>
+                        </>
+                    )}
+                    {infoSection === 'folder' && (
+                        <>
+                            <SettingsInfoRow label="Native access">More reliable and supports managing chats. If opening fails, try Read-only access.</SettingsInfoRow>
+                            <SettingsInfoRow label="Read-only access">Browse your archive in read only mode. Loading is slower and may temporarily freeze your browser, especially with large archives.</SettingsInfoRow>
+                            <SettingsInfoRow label="Change folder">The access method changes when you select the folder again. Choose a method, then select Change to reopen your folder.</SettingsInfoRow>
+                        </>
+                    )}
+                    {infoSection === 'management' && (
+                        <>
+                            <SettingsInfoRow label="Bookmarking">Save attachment and link bookmarks, plus pinned chats, to <code>fb-mae/bookmarks.json</code> inside the messages folder. Existing bookmarks are kept when this feature is disabled.</SettingsInfoRow>
+                            <SettingsInfoRow label="Chat deletion">Add a <em>Delete chat</em> option to each conversation. This permanently removes the chat folder, including all messages, photos, videos, and audio, from your device storage. <strong>Once deleted, the files cannot be recovered.</strong></SettingsInfoRow>
+                            <SettingsInfoRow label="Shared attachments">Check attachments shared across chats while deletion is enabled.</SettingsInfoRow>
+                            <SettingsInfoRow label="Permission">Both features require Native access and write permission.</SettingsInfoRow>
+                        </>
+                    )}
+                    {infoSection === 'downloads' && (
+                        <>
+                            <SettingsInfoRow label="Date and time">Name saved attachments using their message date and time.</SettingsInfoRow>
+                            <SettingsInfoRow label="Filename template">Include names, dates, or the original filename. Open Filename placeholders to see the available fields. The file extension is always included.</SettingsInfoRow>
+                            <SettingsInfoRow label="Long filenames">Allow up to 180 characters instead of 100, including the extension. Names are normalized and stripped of unsupported symbols.</SettingsInfoRow>
+                        </>
+                    )}
+                    {infoSection === 'offline' && (
+                        <>
+                            <SettingsInfoRow label="Offline use">Store the app files and chat parsers so the app can open offline.</SettingsInfoRow>
+                            <SettingsInfoRow label="Archive files">Messages and attachments are not stored in the app cache.</SettingsInfoRow>
+                        </>
+                    )}
+                </SettingsInfoModal>
+            )}
         </div>
     );
 }

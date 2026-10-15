@@ -6,6 +6,7 @@ import type {
     MediaState,
 } from '../../types/messenger';
 import type { ReadableDirectoryHandle } from '../../types/fileSystem';
+import { isWritableDirectoryHandle } from '../../types/fileSystem';
 import type { useSearch } from '../../hooks/useSearch';
 import type { PinnedChatBookmark } from '../../services/bookmarks';
 import { getBookmarkChatId } from '../../services/bookmarks';
@@ -16,6 +17,7 @@ import { ChatList } from './ChatList';
 import { ArchivedList } from './ArchivedList';
 import { SettingsPanel } from './SettingsPanel';
 import { AttachmentScanStatus } from './AttachmentScanStatus';
+import { LoadingLabel } from '../LoadingLabel';
 import type { AttachmentReferenceScan } from '../../services/attachmentReferenceIndex';
 
 interface SidebarProps {
@@ -29,6 +31,8 @@ interface SidebarProps {
     rootHandle: ReadableDirectoryHandle | null;
     originalRootHandle: ReadableDirectoryHandle | null;
     loading: boolean;
+    folderSelectionPending?: boolean;
+    folderPreparationProgress?: { done: number; total: number } | null;
     loadProgress: { done: number; total: number } | null;
     sizeProgress: { done: number; total: number } | null;
     attachmentReferenceScan?: AttachmentReferenceScan | null;
@@ -68,6 +72,8 @@ export function Sidebar({
     rootHandle,
     originalRootHandle,
     loading,
+    folderSelectionPending,
+    folderPreparationProgress,
     loadProgress,
     sizeProgress,
     attachmentReferenceScan,
@@ -93,6 +99,7 @@ export function Sidebar({
     onToggleChatPin,
     onSetChatsPinned,
 }: SidebarProps) {
+    const deletionEnabled = settings.deletionEnabled && !!rootHandle && isWritableDirectoryHandle(rootHandle);
     const isSubView = sidebarView === 'archived' || sidebarView === 'requests';
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedChats, setSelectedChats] = useState<Set<string>>(new Set());
@@ -180,6 +187,7 @@ export function Sidebar({
     };
 
     const handleDeleteSelected = () => {
+        if (!deletionEnabled) return;
         const targets = allChats.filter((c) => selectedChats.has(getBookmarkChatId(c)));
         if (targets.length > 0) {
             onDeleteChat(targets);
@@ -202,6 +210,19 @@ export function Sidebar({
             // The shared bookmark toast reports the write error; retain selection for retry.
         }
     };
+
+    const folderLoadingStatus = (folderSelectionPending || folderPreparationProgress || (loading && !rootHandle)) ? (
+        <div className="folder-preparation-status" role="status">
+            <strong><LoadingLabel label="Loading Folder" /></strong>
+            {folderPreparationProgress && <>
+                <span>{folderPreparationProgress.done.toLocaleString()} of {folderPreparationProgress.total.toLocaleString()} files</span>
+                <div className="load-progress-track" role="progressbar" aria-label="Folder preparation" aria-valuemin={0}
+                    aria-valuemax={folderPreparationProgress.total} aria-valuenow={folderPreparationProgress.done}>
+                    <div className="load-progress-fill" style={{ width: `${folderPreparationProgress.total > 0 ? 100 * folderPreparationProgress.done / folderPreparationProgress.total : 0}%` }} />
+                </div>
+            </>}
+        </div>
+    ) : null;
 
     return (
         <div className="sub-container" id="sidebar" inert={hidden || undefined} aria-hidden={hidden || undefined}>
@@ -261,14 +282,11 @@ export function Sidebar({
             )}
 
             <div className="settings" role="tabpanel">
+                {error && <div className="sidebar-error-alert" role="alert"><strong>Error:</strong> {error}</div>}
                 {sidebarView === 'chats' && !rootHandle && (
                     <>
-                        <FolderPicker onOpenFolder={onOpenFolder} />
-                        {error && (
-                            <div className="sidebar-error-alert">
-                                <strong>Error:</strong> {error}
-                            </div>
-                        )}
+                        <FolderPicker onOpenFolder={onOpenFolder} accessMode={settings.folderAccessMode}
+                            onAccessModeChange={mode => setSetting('folderAccessMode', mode)} folderLoadingStatus={folderLoadingStatus} />
                     </>
                 )}
                 {sidebarView === 'chats' && rootHandle && loading && (
@@ -284,7 +302,7 @@ export function Sidebar({
                                 marginBottom: '12px',
                             }}
                         >
-                            <span>Loading chats...</span>
+                            <LoadingLabel label="Loading chats" showSpinner={false} />
                             {loadProgress && loadProgress.total > 0 && (
                                 <span
                                     style={{
@@ -327,7 +345,7 @@ export function Sidebar({
                         sizeProgress={sizeProgress}
                         onSelectChat={onSelectChat}
                         onDeleteChat={onDeleteChat}
-                        deletionEnabled={settings.deletionEnabled}
+                        deletionEnabled={deletionEnabled}
                         selectionMode={selectionMode}
                         selectedChats={selectedChats}
                         onToggleSelectChat={handleToggleSelectChat}
@@ -346,6 +364,7 @@ export function Sidebar({
                         selectedPerspective={selectedPerspective}
                         setSelectedPerspective={setSelectedPerspective}
                         onOpenFolder={onOpenFolder}
+                        folderLoadingStatus={folderLoadingStatus}
                         rootHandle={originalRootHandle || rootHandle}
                         onAttachmentBookmarkingChange={onAttachmentBookmarkingChange}
                         chatEntries={allChats}
@@ -360,7 +379,7 @@ export function Sidebar({
                         sizeProgress={sizeProgress}
                         onSelectChat={onSelectChat}
                         onDeleteChat={onDeleteChat}
-                        deletionEnabled={settings.deletionEnabled}
+                        deletionEnabled={deletionEnabled}
                         onBack={() => {
                             setSidebarView('chats');
                             setActiveTab('chats');
@@ -384,7 +403,7 @@ export function Sidebar({
                         sizeProgress={sizeProgress}
                         onSelectChat={onSelectChat}
                         onDeleteChat={onDeleteChat}
-                        deletionEnabled={settings.deletionEnabled}
+                        deletionEnabled={deletionEnabled}
                         onBack={() => {
                             setSidebarView('chats');
                             setActiveTab('chats');
@@ -431,7 +450,7 @@ export function Sidebar({
                         <button
                             className="sidebar-action-btn delete"
                             onClick={handleDeleteSelected}
-                            disabled={selectedChats.size === 0}
+                            disabled={!deletionEnabled || selectedChats.size === 0}
                         >
                             Delete
                         </button>
