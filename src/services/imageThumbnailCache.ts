@@ -2,6 +2,8 @@ import type { MediaEntry } from '../types/messenger';
 import { withAttachmentPreviewPriority } from './attachmentScanScheduling';
 import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
 import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
+import type { Concurrency } from './concurrency';
+import { performanceLimit } from './performanceSettings';
 
 export const IMAGE_THUMBNAIL_SIZE = MEDIA_THUMBNAIL_SIZE;
 const DEFAULT_MAX_THUMBNAILS = 300;
@@ -21,7 +23,7 @@ export class ImageThumbnailCache {
 
   constructor(
     maxSize = DEFAULT_MAX_THUMBNAILS,
-    maxConcurrentJobs = DEFAULT_MAX_CONCURRENT_JOBS,
+    maxConcurrentJobs: Concurrency = DEFAULT_MAX_CONCURRENT_JOBS,
     createThumbnail: ThumbnailCreator = createImageThumbnail,
   ) {
     this.maxSize = maxSize;
@@ -224,4 +226,4 @@ async function createImageThumbnail(entry: MediaEntry, signal: AbortSignal): Pro
   }
 }
 
-export const imageThumbnailCache = new ImageThumbnailCache();
+export const imageThumbnailCache = new ImageThumbnailCache(DEFAULT_MAX_THUMBNAILS, performanceLimit('galleryPreviews'));
