@@ -6,6 +6,8 @@ import type { FolderAccessMode, ReadableDirectoryHandle, WritableDirectoryHandle
 import { getMessageBump } from './messageBump';
 import type { MetaArchivePlatform } from './metaAttachmentPaths';
 import { runFolderOperation, type FolderOpenDiagnostics } from './folderOpenDiagnostics';
+import { createConcurrencyLimiter, mapWithConcurrency, type ConcurrencyLimiter } from './concurrency';
+import { performanceLimit } from './performanceSettings';
 
 const SELECTED_MESSAGES_DIRECTORY = [] as const;
 const FACEBOOK_EXPORT_MESSAGES_DIRECTORY = ['messages'] as const;
@@ -101,37 +103,42 @@ export async function listChatFolders(
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal,
   diagnostics?: FolderOpenDiagnostics,
+  limitRead: ConcurrencyLimiter = createConcurrencyLimiter(performanceLimit('archiveReads')),
 ): Promise<ChatListEntry[]> {
+  throwIfAborted(signal);
   let subfolderDir: ReadableDirectoryHandle;
   try {
     subfolderDir = await runFolderOperation(diagnostics, 'getDirectoryHandle()', () => parentHandle.getDirectoryHandle(subfolderName));
   } catch {
+    throwIfAborted(signal);
     if (onProgress) onProgress(0, 0);
     return [];
   }
 
-  const entries: ChatListEntry[] = [];
   const handles: { name: string; handle: ReadableDirectoryHandle }[] = [];
 
   for await (const [name, handle] of diagnostics ? diagnostics.entries(subfolderDir) : subfolderDir.entries()) {
-    if (signal?.aborted) return entries;
+    throwIfAborted(signal);
     if (handle.kind === 'directory') {
       handles.push({ name, handle });
     }
   }
 
+  throwIfAborted(signal);
   const total = handles.length;
   if (onProgress) onProgress(0, total);
 
-  for (let i = 0; i < handles.length; i++) {
-    if (signal?.aborted) return entries;
-    const { name, handle: chatDir } = handles[i];
-
+  let done = 0;
+  const results = await mapWithConcurrency(handles, performanceLimit('archiveReads'), ({ name, handle: chatDir }, i) => limitRead(async (): Promise<ChatListEntry | null> => {
     try {
       const fileHandle = await runFolderOperation(diagnostics, 'getFileHandle()', () => chatDir.getFileHandle('message_1.json'));
+      throwIfAborted(signal);
       const file = await runFolderOperation(diagnostics, 'getFile()', () => fileHandle.getFile());
+      throwIfAborted(signal);
       const content = await runFolderOperation(diagnostics, 'File.text()', () => file.text());
+      throwIfAborted(signal);
       const parsed = await runFolderOperation(diagnostics, 'JSON.parse()', () => parseMessengerJsonContent(content));
+      throwIfAborted(signal);
 
       const participants = (parsed.participants || []).map(p => p.name).filter(Boolean);
 
@@ -170,12 +177,13 @@ export async function listChatFolders(
 
       let jsonFileCount = 0;
       for await (const [entryName, entryHandle] of diagnostics ? diagnostics.entries(chatDir) : chatDir.entries()) {
+        throwIfAborted(signal);
         if (entryHandle.kind === 'file' && /message_\d+\.json$/i.test(entryName)) {
           jsonFileCount++;
         }
       }
 
-      entries.push({
+      return {
         folderName: name,
         title: parsed.title || name,
         participants,
@@ -186,17 +194,18 @@ export async function listChatFolders(
         dirHandle: chatDir,
         jsonFileCount,
         source,
-      });
+      };
     } catch {
+      throwIfAborted(signal);
       // One inaccessible conversation must not prevent listing the rest of the archive.
+      return null;
+    } finally {
+      if (!signal?.aborted) onProgress?.(++done, total);
+      // Bound uninterrupted listing work so large archives remain responsive.
+      if (i % 10 === 0) await new Promise(resolve => setTimeout(resolve, 0));
     }
-
-    if (onProgress) onProgress(i + 1, total);
-    // Bound uninterrupted listing work so large archives remain responsive.
-    if (i % 10 === 0) {
-      await new Promise(r => setTimeout(r, 0));
-    }
-  }
+  }, signal), signal);
+  const entries = results.filter((entry): entry is ChatListEntry => entry !== null);
 
   entries.sort((a, b) => {
     if (a.lastTimestamp == null && b.lastTimestamp == null) return 0;
@@ -219,29 +228,39 @@ export async function loadChatMessages(
 ): Promise<MessengerThread> {
   // Let the browser paint the loading state before file scanning begins.
   await new Promise(r => setTimeout(r, 10));
+  throwIfAborted(signal);
   onProgress?.(0, "Scanning files...");
 
   const fileNames: string[] = [];
   for await (const [name, handle] of chatDirHandle.entries()) {
+    throwIfAborted(signal);
     if (handle.kind === 'file') fileNames.push(name);
   }
 
+  throwIfAborted(signal);
   const orderedNames = getOrderedMessageFileNames(fileNames);
   if (!orderedNames.length) {
     throw new Error('No readable message files found in this chat folder.');
   }
 
-  const files: File[] = [];
   let complete = true;
-  for (let i = 0; i < orderedNames.length; i++) {
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    const name = orderedNames[i];
+  let prepared = 0;
+  const snapshots = await mapWithConcurrency(orderedNames, performanceLimit('archiveReads'), async name => {
     try {
       const fileHandle = await chatDirHandle.getFileHandle(name);
-      files.push(await fileHandle.getFile());
-    } catch { complete = false; /* Keep readable messages; estimates require the full inventory. */ }
-    onProgress?.(0.05 * (i + 1) / orderedNames.length, "Preparing files...");
-  }
+      throwIfAborted(signal);
+      const file = await fileHandle.getFile();
+      throwIfAborted(signal);
+      return file;
+    } catch {
+      throwIfAborted(signal);
+      complete = false;
+      return null; // Keep readable messages; estimates require the full inventory.
+    } finally {
+      if (!signal?.aborted) onProgress?.(0.05 * ++prepared / orderedNames.length, "Preparing files...");
+    }
+  }, signal);
+  const files = snapshots.filter((file): file is File => file !== null);
 
   if (!files.length) {
     throw new Error('No readable message files found in this chat folder.');
@@ -251,8 +270,11 @@ export async function loadChatMessages(
 
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./parserWorker.ts', import.meta.url), { type: 'module' });
+    const limit = performanceLimit('archiveReads');
+    const stopUpdates = limit.subscribe(() => worker.postMessage({ type: 'concurrency', concurrency: limit.get() }));
     
     const abortHandler = () => {
+      stopUpdates();
       worker.terminate();
       reject(new DOMException('Aborted', 'AbortError'));
     };
@@ -266,6 +288,7 @@ export async function loadChatMessages(
     }
     
     worker.onmessage = (e) => {
+      stopUpdates();
       if (signal) signal.removeEventListener('abort', abortHandler);
       if (e.data.type === 'success') {
         const data = e.data.data as MessengerThread;
@@ -281,19 +304,27 @@ export async function loadChatMessages(
     };
     
     worker.onerror = (e) => {
+      stopUpdates();
       if (signal) signal.removeEventListener('abort', abortHandler);
       reject(new Error(`Worker error: ${e.message}`));
       worker.terminate();
     };
     
-    worker.postMessage({ files });
+    try { worker.postMessage({ files, concurrency: limit.get() }); }
+    catch (error) {
+      stopUpdates();
+      signal?.removeEventListener('abort', abortHandler);
+      worker.terminate();
+      reject(error);
+    }
   });
 }
 
 
 export async function computeFolderSize(
   dirHandle: ReadableDirectoryHandle,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  limitRead?: ConcurrencyLimiter,
 ): Promise<number> {
   throwIfAborted(signal);
   let total = 0;
@@ -302,7 +333,7 @@ export async function computeFolderSize(
     if (entry.kind === 'file') {
       try {
         throwIfAborted(signal);
-        const file = await entry.getFile();
+        const file = limitRead ? await limitRead(() => entry.getFile(), signal) : await entry.getFile();
         throwIfAborted(signal);
         total += file.size;
       } catch (error) {
@@ -310,7 +341,7 @@ export async function computeFolderSize(
         /* Ignore unreadable files. */
       }
     } else if (entry.kind === 'directory') {
-      total += await computeFolderSize(entry, signal);
+      total += await computeFolderSize(entry, signal, limitRead);
     }
   }
   throwIfAborted(signal);
