@@ -109,6 +109,24 @@ export function addConversationToChatIndex(
   for (const identity of mediaIdentities) addAttachmentOwner(index.referenceIndex, identity, jsonFileName);
 }
 
+/** Merge compact per-file results in discovery order, independent of read timing. */
+export function mergeMessengerExportChatIndex(target: MessengerExportChatIndex, source: MessengerExportChatIndex): void {
+  for (const [name, size] of source.jsonSizes) target.jsonSizes.set(name, size);
+  for (const [name, paths] of source.chatMediaPaths) target.chatMediaPaths.set(name, paths);
+  for (const [name, identities] of source.referenceIndex.chatMedia) {
+    target.referenceIndex.chatMedia.set(name, identities);
+    for (const identity of identities) {
+      const path = source.referenceIndex.mediaFiles.get(identity)!;
+      const existingPath = target.referenceIndex.mediaFiles.get(identity);
+      if (existingPath && existingPath !== path) {
+        markMessengerExportIndexIncomplete(target, { jsonFileName: name, reason: 'ambiguous-media-path' });
+      } else if (!existingPath) target.referenceIndex.mediaFiles.set(identity, path);
+      addAttachmentOwner(target.referenceIndex, identity, name);
+    }
+  }
+  for (const warning of source.warnings) markMessengerExportIndexIncomplete(target, warning);
+}
+
 /** Size references are independent of cross-chat owners and safety warnings. */
 export function addConversationToSizeMetadata(
   metadata: MessengerExportSizeMetadata, jsonFileName: string, fileSize: number, thread: MessengerThread,

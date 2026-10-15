@@ -78,6 +78,77 @@ function entry(jsonFileName: string): ChatListEntry {
 }
 
 describe('Messenger export filesystem services', () => {
+  it('does not publish empty listing progress after cancellation during enumeration', async () => {
+    const root = createMockDirectoryHandle('messenger', {});
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(root, 'entries').mockImplementation(async function* () { await gate; yield* []; });
+    const controller = new AbortController();
+    const progress = vi.fn();
+    const pending = listMessengerExportChatsIndexed(root, progress, controller.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(root.entries).toHaveBeenCalledOnce());
+    controller.abort();
+    release();
+    await rejected;
+    expect(progress).not.toHaveBeenCalled();
+  });
+
+  it('reads four conversations concurrently without changing ties, ownership, sizes, or warnings', async () => {
+    const root = createMockDirectoryHandle('messenger', Object.fromEntries(Array.from({ length: 6 }, (_, index) => [
+      `chat_${index}.json`, JSON.stringify({ threadName: `Chat ${index}`, participants: ['Alice', 'Bob'],
+        messages: [{ senderName: 'Alice', text: `Message ${index}`, timestamp: 1,
+          media: [{ uri: index === 0 ? 'media/Photo.jpg' : 'media/photo.jpg' }, { uri: 'media/shared.jpg' }] }] }),
+    ])));
+    const expected = await listMessengerExportChatsIndexed(root);
+    const releases: Array<() => void> = [];
+    const started: number[] = [];
+    let active = 0, peak = 0;
+    for (let index = 0; index < 6; index++) {
+      const handle = await root.getFileHandle(`chat_${index}.json`);
+      const getFile = handle.getFile.bind(handle);
+      const gate = new Promise<void>(resolve => { releases.push(resolve); });
+      vi.spyOn(handle, 'getFile').mockImplementation(async () => {
+        started.push(index);
+        active++;
+        peak = Math.max(peak, active);
+        try { await gate; return await getFile(); } finally { active--; }
+      });
+    }
+    const progress = vi.fn();
+    const pending = listMessengerExportChatsIndexed(root, progress);
+    await vi.waitFor(() => expect(started).toEqual([0, 1, 2, 3]));
+    releases[3]();
+    await vi.waitFor(() => expect(started).toContain(4));
+    releases[4]();
+    await vi.waitFor(() => expect(started).toContain(5));
+    releases.forEach(release => release());
+    expect(await pending).toEqual(expected);
+    expect(peak).toBe(4);
+    expect(progress.mock.calls).toEqual(Array.from({ length: 7 }, (_, index) => [index, 6]));
+  });
+
+  it('stops queued Messenger reads and suppresses progress after cancellation', async () => {
+    const root = createMockDirectoryHandle('messenger', Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => [`chat_${index}.json`, '{}']),
+    ));
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const read = vi.fn(async () => { await gate; return new File(['{}'], 'chat.json'); });
+    for await (const [, handle] of root.entries()) if (handle.kind === 'file') vi.spyOn(handle, 'getFile').mockImplementation(read);
+    const controller = new AbortController();
+    const progress = vi.fn();
+    const pending = listMessengerExportChatsIndexed(root, progress, controller.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(4));
+    const progressCount = progress.mock.calls.length;
+    controller.abort();
+    release();
+    await rejected;
+    expect(read).toHaveBeenCalledTimes(4);
+    expect(progress).toHaveBeenCalledTimes(progressCount);
+  });
+
   it('detects Messenger exports and rejects Facebook roots', async () => {
     await expect(isMessengerExport(messengerRoot())).resolves.toBe(true);
     await expect(isMessengerExport(createMockDirectoryHandle('messages', { inbox: {} }))).resolves.toBe(false);
