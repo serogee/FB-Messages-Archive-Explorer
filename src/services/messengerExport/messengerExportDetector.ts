@@ -27,16 +27,19 @@ export async function isMessengerExport(handle: ReadableDirectoryHandle): Promis
     return false;
   } catch { /* No Facebook root markers found; inspect standalone Messenger JSON. */ }
 
+  let firstReadError: { error: unknown } | undefined;
   for await (const [name, entry] of handle.entries()) {
     if (entry.kind !== 'file' || !/\.json$/i.test(name)) continue;
 
     try {
       const file = await entry.getFile();
       if (isConversationJsonContent(await file.text())) return true;
-    } catch {
+    } catch (error) {
+      firstReadError ??= { error };
       continue;
     }
   }
 
+  if (firstReadError) throw firstReadError.error;
   return false;
 }

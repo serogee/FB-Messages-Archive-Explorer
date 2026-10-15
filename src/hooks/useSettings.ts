@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { storageGet, storageSet } from '../services/storage';
 import type { ReactionGuessingMode } from '../services/reactions';
+import type { FolderAccessMode } from '../types/fileSystem';
 
 export interface Settings {
+  folderAccessMode: FolderAccessMode;
   darkMode: boolean;
   showMyName: boolean;
   showTheirName: boolean;
@@ -24,6 +26,7 @@ export interface Settings {
 }
 
 const DEFAULTS: Settings = {
+  folderAccessMode: 'native',
   darkMode: true,
   showMyName: false,
   showTheirName: true,
@@ -58,6 +61,7 @@ function loadSettings(): Settings {
         (settings as Record<keyof Settings, unknown>)[key] = n;
       }
     } else if (typeof defaultVal === 'string') {
+      if (key === 'folderAccessMode' && !['native', 'upload'].includes(stored)) continue;
       if (key === 'reactionTimestampGuessingMode' && !['off', 'near', 'aggressive'].includes(stored)) continue;
       if (key === 'viewerNavigation' && !['auto', 'show', 'hide'].includes(stored)) continue;
       let storedValue = stored;

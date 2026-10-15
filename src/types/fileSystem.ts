@@ -1,3 +1,5 @@
+export type FolderAccessMode = 'native' | 'upload';
+
 export interface ReadableFileHandle {
   readonly kind: 'file';
   readonly name: string;

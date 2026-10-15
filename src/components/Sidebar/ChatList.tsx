@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Pin } from 'lucide-react';
+import { LoaderCircle, Pin } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import type { ChatListEntry } from '../../types/messenger';
 import { formatRelativeTime } from '../../services/storage';
@@ -10,6 +10,7 @@ import { filterAndOrderChats, type ChatSortOption } from '../../services/chatLis
 import { formatEntrySize, getAvatarChar, getAvatarColor } from '../../services/chatListPresentation';
 import { useMobileLayout } from '../../hooks/useMobileNavigation';
 import { useLongPress } from '../../hooks/useLongPress';
+import { OptionDropdown } from './OptionDropdown';
 
 interface ChatListProps {
   hidden?: boolean;
@@ -34,6 +35,7 @@ interface ChatItemProps {
   hidden: boolean;
   entry: ChatListEntry;
   isActive: boolean;
+  isLoading: boolean;
   onSelect: () => void;
   onDelete: () => void;
   deletionEnabled: boolean;
@@ -111,6 +113,7 @@ function ChatItem({
   hidden,
   entry,
   isActive,
+  isLoading,
   onSelect,
   onDelete,
   deletionEnabled,
@@ -335,6 +338,7 @@ function ChatItem({
       {...longPress}
       onClick={handleClick}
       role="button"
+      aria-busy={isLoading || undefined}
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
@@ -362,8 +366,9 @@ function ChatItem({
             )}
             <div className="chat-item-title" title={entry.title}>{entry.title}</div>
           </div>
-          <div className="chat-item-preview">
-            {entry.lastMessage || <em style={{ opacity: 0.5 }}>No messages</em>}
+          <div className={`chat-item-preview${isLoading ? ' chat-item-loading' : ''}`} role={isLoading ? 'status' : undefined}>
+            {isLoading ? <><LoaderCircle size={12} className="loading-spinner" aria-hidden="true" /><span>Loading chat…</span></>
+              : entry.lastMessage || <em style={{ opacity: 0.5 }}>No messages</em>}
           </div>
         </div>
         <div className="chat-item-meta">
@@ -413,6 +418,8 @@ export function ChatList({
   const mobile = useMobileLayout();
   const [filter, setFilter] = useState('');
   const [sortBy, setSortBy] = useState<ChatSortOption>('recent');
+  const [pendingChatId, setPendingChatId] = useState<string | null>(null);
+  const selectRequestRef = useRef(0);
   const lastSelectedRef = useRef<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const retainedScrollTopRef = useRef(0);
@@ -444,6 +451,16 @@ export function ChatList({
 
   const sizeDisabled = !!sizeProgress;
   const sizeTitle = sizeProgress ? `Calculating sizes (${Math.round((sizeProgress.done / sizeProgress.total) * 100)}%)...` : undefined;
+
+  const handleSelectChat = async (entry: ChatListEntry) => {
+    const request = ++selectRequestRef.current;
+    setPendingChatId(getBookmarkChatId(entry));
+    try {
+      await onSelectChat(entry);
+    } finally {
+      if (selectRequestRef.current === request) setPendingChatId(null);
+    }
+  };
 
   const handleToggleSelect = (e: React.MouseEvent | React.KeyboardEvent, entry: ChatListEntry, select: boolean) => {
     if (!onToggleSelectChat) return;
@@ -500,28 +517,15 @@ export function ChatList({
             </button>
           )}
         </div>
-        <select
-          value={sortBy}
-          onChange={e => setSortBy(e.target.value as ChatSortOption)}
-          className="chat-list-sort"
-          aria-label="Sort chats"
-          style={{
-            flex: '0 0 auto',
-            padding: '6px',
-            borderRadius: '6px',
-            border: '1px solid var(--border)',
-            background: 'var(--bg)',
-            color: 'var(--text)',
-            fontSize: '13px'
-          }}
-        >
-          <option value="recent">Recent</option>
-          <option value="oldest">Oldest</option>
-          <option value="most_msgs">Most Msgs</option>
-          <option value="least_msgs">Least Msgs</option>
-          <option value="biggest_size" disabled={sizeDisabled} title={sizeDisabled ? sizeTitle : ''}>Biggest Size</option>
-          <option value="smallest_size" disabled={sizeDisabled} title={sizeDisabled ? sizeTitle : ''}>Smallest Size</option>
-        </select>
+        <OptionDropdown<ChatSortOption> className="chat-list-sort" label="Sort chats" value={sortBy} onChange={setSortBy}
+          disabled={hidden} options={[
+            { value: 'recent', label: 'Recent' },
+            { value: 'oldest', label: 'Oldest' },
+            { value: 'most_msgs', label: 'Most Msgs' },
+            { value: 'least_msgs', label: 'Least Msgs' },
+            { value: 'biggest_size', label: 'Biggest Size', disabled: sizeDisabled, title: sizeTitle },
+            { value: 'smallest_size', label: 'Smallest Size', disabled: sizeDisabled, title: sizeTitle },
+          ]} />
       </div>
       <div
         ref={listRef}
@@ -545,8 +549,9 @@ export function ChatList({
               mobile={mobile}
               hidden={hidden}
               entry={entry}
-              isActive={!!activeEntry && getBookmarkChatId(activeEntry) === chatId}
-              onSelect={() => onSelectChat(entry)}
+              isActive={pendingChatId !== null ? pendingChatId === chatId : !!activeEntry && getBookmarkChatId(activeEntry) === chatId}
+              isLoading={pendingChatId === chatId}
+              onSelect={() => handleSelectChat(entry)}
               onDelete={() => onDeleteChat(entry)}
               deletionEnabled={deletionEnabled}
               selectionMode={selectionMode}
@@ -571,8 +576,9 @@ export function ChatList({
                   mobile={mobile}
                   hidden={hidden}
                   entry={entry}
-                  isActive={!!activeEntry && getBookmarkChatId(activeEntry) === chatId}
-                  onSelect={() => onSelectChat(entry)}
+                  isActive={pendingChatId !== null ? pendingChatId === chatId : !!activeEntry && getBookmarkChatId(activeEntry) === chatId}
+                  isLoading={pendingChatId === chatId}
+                  onSelect={() => handleSelectChat(entry)}
                   onDelete={() => onDeleteChat(entry)}
                   deletionEnabled={deletionEnabled}
                   selectionMode={selectionMode}

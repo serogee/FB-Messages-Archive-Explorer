@@ -1,6 +1,6 @@
 import { useRef, useImperativeHandle, forwardRef, useState, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import type { MessengerThread, MediaState, ChatListEntry, SelectableItem } from '../../types/messenger';
-import { CalendarDays, Info } from 'lucide-react';
+import { CalendarDays, Info, LoaderCircle } from 'lucide-react';
 import { ParentBackButton } from '../Navigation/ParentBackButton';
 import { useReactionContext } from '../../hooks/useReactionFeature';
 import { useThreadData } from '../../hooks/useThreadData';
@@ -66,10 +66,13 @@ function ProgressBar({ value, label }: { value: number; label: string }) {
   return (
     <div className="load-progress-block">
       <div className="load-progress-header">
-        <span className="load-progress-label">{label}…</span>
+        <span className="load-progress-label" role="status">
+          <LoaderCircle size={16} className="loading-spinner" aria-hidden="true" />
+          <span>{label}…</span>
+        </span>
         <span className="load-progress-pct">{pct}%</span>
       </div>
-      <div className="load-progress-track">
+      <div className="load-progress-track" role="progressbar" aria-label="Chat loading progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
         <div className="load-progress-fill" style={{ width: `${pct}%` }} />
       </div>
     </div>

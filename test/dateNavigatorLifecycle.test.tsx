@@ -13,22 +13,36 @@ beforeEach(() => { vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1)); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('date navigator loaded-thread lifecycle', () => {
-  it('browses embedded arrows and week/day sliders locally and jumps only on a month click', async () => {
+  it('passes embedded arrow and week/day selections to the deferred browse callback', async () => {
     const jump = vi.fn().mockResolvedValue(undefined);
+    const browse = vi.fn();
     const data = thread([message(new Date(2024, 3, 8, 12).getTime()), message(new Date(2024, 4, 9, 12).getTime())]);
-    const view = render(<ThreadDataContext value={data}><DateNavigator settings={settings} onJumpToMessage={jump} chatContainerRef={{ current: null }} mobile embedded /></ThreadDataContext>);
+    const view = render(<ThreadDataContext value={data}><DateNavigator settings={settings} onJumpToMessage={jump} onBrowseToMessage={browse} chatContainerRef={{ current: null }} mobile embedded /></ThreadDataContext>);
     await waitFor(() => expect(view.container.querySelectorAll('.date-nav-item')).toHaveLength(2));
     fireEvent.click(view.getByRole('button', { name: 'Next period' }));
+    expect(browse).toHaveBeenCalledExactlyOnceWith(1);
     expect(jump).not.toHaveBeenCalled();
     vi.useFakeTimers();
     for (const scale of ['Week', 'Day']) {
+      browse.mockClear();
       fireEvent.click(view.getByRole('button', { name: scale, exact: true }));
       fireEvent.change(view.container.querySelector('input[type="range"]')!, { target: { value: '1' } });
       await act(async () => { await vi.runAllTimersAsync(); });
       expect(jump).not.toHaveBeenCalled();
+      expect(browse).toHaveBeenCalledExactlyOnceWith(1);
     }
     fireEvent.click(view.getByRole('button', { name: 'Month', exact: true }));
     fireEvent.click(view.container.querySelectorAll('.date-nav-item')[1]);
+    expect(jump).toHaveBeenCalledExactlyOnceWith(1);
+  });
+  it('jumps from desktop keyboard arrows when the date controls are hovered', async () => {
+    const jump = vi.fn().mockResolvedValue(undefined);
+    const data = thread([message(new Date(2024, 3, 8, 12).getTime()), message(new Date(2024, 4, 9, 12).getTime())]);
+    const view = render(<DateNavigator chatData={data} settings={settings} onJumpToMessage={jump} chatContainerRef={{ current: null }} />);
+    await waitFor(() => expect(view.container.querySelectorAll('.date-nav-item')).toHaveLength(2));
+    await act(async () => {});
+    vi.spyOn(view.container.querySelector('.date-nav-controls')!, 'matches').mockReturnValue(true);
+    fireEvent.keyDown(document, { key: 'ArrowRight' });
     expect(jump).toHaveBeenCalledExactlyOnceWith(1);
   });
   it('preserves original jump indices and excludes notices when reading the shared thread', async () => {

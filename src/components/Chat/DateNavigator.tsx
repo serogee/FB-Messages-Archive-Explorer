@@ -213,10 +213,11 @@ interface DateNavigatorProps {
   chatData?: MessengerThread | null;
   settings: Settings;
   onJumpToMessage: (index: number) => Promise<void>;
+  onBrowseToMessage?: (index: number) => void;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-export function DateNavigator({ chatData: providedThread, settings: _settings, onJumpToMessage, chatContainerRef, mobile = false, embedded = false, headerControlled = false }: DateNavigatorProps) {
+export function DateNavigator({ chatData: providedThread, settings: _settings, onJumpToMessage, onBrowseToMessage, chatContainerRef, mobile = false, embedded = false, headerControlled = false }: DateNavigatorProps) {
   const chatData = useThreadData(providedThread);
   const [scale, setScale] = useState<DateScale>('month');
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -313,7 +314,7 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
         if (!bucket) return;
         setActiveKey(bucket.key);
         keepBucketVisible(bucket.key);
-        if (embedded) return;
+        if (embedded) { onBrowseToMessage?.(bucket.index); return; }
         syncingRef.current = true;
         await onJumpToMessage(bucket.index);
         setTimeout(() => { syncingRef.current = false; }, DATE_NAV_SYNC_LOCK_MS);
@@ -324,7 +325,7 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [embedded, hasDates, currentBuckets, activeKey, keepBucketVisible, onJumpToMessage]);
+  }, [embedded, onBrowseToMessage, hasDates, currentBuckets, activeKey, keepBucketVisible, onJumpToMessage]);
 
   const step = async (direction: number) => {
     const cur = currentBuckets.findIndex(b => b.key === activeKey);
@@ -334,7 +335,7 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
     if (!bucket) return;
     setActiveKey(bucket.key);
     keepBucketVisible(bucket.key);
-    if (embedded) return;
+    if (embedded) { onBrowseToMessage?.(bucket.index); return; }
     syncingRef.current = true;
     await onJumpToMessage(bucket.index);
     setTimeout(() => { syncingRef.current = false; }, DATE_NAV_SYNC_LOCK_MS);
@@ -360,7 +361,7 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
     if (!bucket) return;
     setActiveKey(bucket.key);
     if (sliderTimerRef.current) clearTimeout(sliderTimerRef.current);
-    if (embedded) return;
+    if (embedded) { onBrowseToMessage?.(bucket.index); return; }
     sliderTimerRef.current = setTimeout(async () => {
       syncingRef.current = true;
       await onJumpToMessage(bucket.index);

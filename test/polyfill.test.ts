@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest';
-import { resolveFacebookMessagesRoot } from '../src/services/fileSystem';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { isFileSystemAccessSupported, pickMessagesFolder, pickFolderWithWriteAccess, resolveFacebookMessagesRoot } from '../src/services/fileSystem';
 import { isMessengerExport } from '../src/services/messengerExport/messengerExportDetector';
 import { createVirtualFileSystem, openFolderPolyfill } from '../src/services/polyfill';
 import { isWritableDirectoryHandle } from '../src/types/fileSystem';
@@ -24,7 +24,86 @@ function folderUploadFile(path: string, content = '{}'): File {
   return file;
 }
 
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
 describe('folder-upload filesystem fallback', () => {
+  it('reports preparation before reading paths and yields during a large upload', async () => {
+    let pathsRead = 0;
+    let pathsReadDuringYield: number | undefined;
+    let clock = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock += 16);
+    const files = Array.from({ length: 1024 }, (_, index) => {
+      const file = new File(['{}'], `${index}.json`);
+      Object.defineProperty(file, 'webkitRelativePath', { get: () => {
+        pathsRead++;
+        return `messages/inbox/alice/${index}.json`;
+      } });
+      return file;
+    });
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function () {
+      Object.defineProperty(this, 'files', { value: files });
+      this.dispatchEvent(new Event('change'));
+    });
+    const onProgress = vi.fn((done: number) => {
+      if (done === 0) expect(pathsRead).toBe(0);
+      if (done > 0 && done < files.length && pathsReadDuringYield === undefined) {
+        setTimeout(() => { pathsReadDuringYield = pathsRead; }, 0);
+      }
+    });
+
+    const root = await openFolderPolyfill(onProgress);
+    expect(onProgress.mock.calls[0]).toEqual([0, files.length]);
+    expect(onProgress.mock.calls.at(-1)).toEqual([files.length, files.length]);
+    expect(pathsReadDuringYield).toBeGreaterThan(0);
+    expect(pathsReadDuringYield).toBeLessThan(files.length);
+    expect(pathsRead).toBe(files.length);
+    const alice = await (await root.getDirectoryHandle('inbox')).getDirectoryHandle('alice');
+    await expect((await alice.getFileHandle('1023.json')).getFile()).resolves.toBe(files[1023]);
+    expect(isWritableDirectoryHandle(root)).toBe(false);
+  });
+
+  it.each([pickMessagesFolder, pickFolderWithWriteAccess])('loads an explicitly selected mobile upload even when a native picker is available (%s)', async pick => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14) Chrome/132.0.0.0 Mobile Safari/537.36');
+    const nativePicker = vi.fn();
+    vi.stubGlobal('showDirectoryPicker', nativePicker);
+    expect(isFileSystemAccessSupported()).toBe(true);
+    const input = document.createElement('input');
+    const files = [folderUploadFile('messages/inbox/alice/message_1.json')];
+    Object.defineProperty(input, 'files', { value: files });
+    vi.spyOn(input, 'click').mockImplementation(() => { input.dispatchEvent(new Event('change')); });
+    vi.spyOn(document, 'createElement').mockReturnValue(input);
+
+    const root = await pick('upload');
+    expect(input.webkitdirectory).toBe(true);
+    expect(nativePicker).not.toHaveBeenCalled();
+    await expect(resolveFacebookMessagesRoot(root)).resolves.toBe(root);
+    const alice = await (await root.getDirectoryHandle('inbox')).getDirectoryHandle('alice');
+    await expect((await alice.getFileHandle('message_1.json')).getFile()).resolves.toBe(files[0]);
+  });
+  it.each([
+    { pick: pickMessagesFolder, mode: 'read' },
+    { pick: pickFolderWithWriteAccess, mode: 'readwrite' },
+  ] as const)('keeps native mobile access with $mode permission', async ({ pick, mode }) => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14) Chrome/132.0.0.0 Mobile Safari/537.36');
+    const root = createMockDirectoryHandle('messages', { inbox: {} });
+    const nativePicker = vi.fn().mockResolvedValue(root);
+    vi.stubGlobal('showDirectoryPicker', nativePicker);
+
+    await expect(pick()).resolves.toBe(root);
+    expect(nativePicker).toHaveBeenCalledExactlyOnceWith({ id: 'messages-folder', mode });
+    expect(isWritableDirectoryHandle(root)).toBe(true);
+  });
+  it.each([pickMessagesFolder, pickFolderWithWriteAccess])('falls back to read-only access when the native API is unavailable (%s)', async pick => {
+    vi.stubGlobal('showDirectoryPicker', undefined);
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function () {
+      Object.defineProperty(this, 'files', { value: [folderUploadFile('messages/inbox/alice/message_1.json')] });
+      this.dispatchEvent(new Event('change'));
+    });
+
+    const root = await pick();
+    expect(isWritableDirectoryHandle(root)).toBe(false);
+    await expect(resolveFacebookMessagesRoot(root)).resolves.toBe(root);
+  });
   it('models the selected export directory as the virtual root', async () => {
     const root = createVirtualFileSystem([
       folderUploadFile('facebook-export/messages/inbox/alice/message_1.json'),
@@ -91,6 +170,15 @@ describe('folder-upload filesystem fallback', () => {
     ])).toThrow(/invalid uploaded file path/i);
   });
 
+  it('reports cancellation without preparing uploaded files', async () => {
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function () {
+      this.dispatchEvent(new Event('cancel'));
+    });
+    const onProgress = vi.fn();
+    await expect(openFolderPolyfill(onProgress)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
   it('rejects a picker change that has no files', async () => {
     const input = {
       type: '',
@@ -98,6 +186,7 @@ describe('folder-upload filesystem fallback', () => {
       webkitdirectory: false,
       onchange: null as ((event: Event) => void) | null,
       setAttribute: vi.fn(),
+      addEventListener: vi.fn(),
       click() {
         this.onchange?.({ target: { files: null } } as unknown as Event);
       },
