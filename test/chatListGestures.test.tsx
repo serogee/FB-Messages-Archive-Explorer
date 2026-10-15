@@ -135,15 +135,19 @@ describe('mobile chat-list options', () => {
     expect(props.onSelectChat).not.toHaveBeenCalled();
   });
 
-  it.each(['tap', 'keyboard'])('shows immediate feedback for a pending chat opened by %s', async input => {
+  it.each(['tap', 'keyboard'])('keeps the preview unchanged for a pending chat opened by %s', async input => {
     const { row, props } = setup();
+    const preview = row.querySelector('.chat-item-preview')!.textContent;
     let finish!: () => void;
     props.onSelectChat.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
     if (input === 'tap') fireEvent.click(row);
     else fireEvent.keyDown(row, { key: 'Enter' });
     expect(row.getAttribute('aria-busy')).toBe('true');
     expect(row.classList.contains('active')).toBe(true);
-    expect(screen.getByRole('status').textContent).toBe('Loading chat…');
+    expect(row.querySelector('.chat-item-preview')!.textContent).toBe(preview);
+    expect(row.querySelector('.loading-spinner')).toBeNull();
+    expect(row.textContent).not.toContain('Loading chat');
+    expect(screen.queryByRole('status')).toBeNull();
     await act(async () => { finish(); });
     expect(row.hasAttribute('aria-busy')).toBe(false);
     expect(screen.queryByRole('status')).toBeNull();

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { LoaderCircle, Pin } from 'lucide-react';
+import { Pin } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import type { ChatListEntry } from '../../types/messenger';
 import { formatRelativeTime } from '../../services/storage';
@@ -366,9 +366,8 @@ function ChatItem({
             )}
             <div className="chat-item-title" title={entry.title}>{entry.title}</div>
           </div>
-          <div className={`chat-item-preview${isLoading ? ' chat-item-loading' : ''}`} role={isLoading ? 'status' : undefined}>
-            {isLoading ? <><LoaderCircle size={12} className="loading-spinner" aria-hidden="true" /><span>Loading chat…</span></>
-              : entry.lastMessage || <em style={{ opacity: 0.5 }}>No messages</em>}
+          <div className="chat-item-preview">
+            {entry.lastMessage || <em style={{ opacity: 0.5 }}>No messages</em>}
           </div>
         </div>
         <div className="chat-item-meta">
