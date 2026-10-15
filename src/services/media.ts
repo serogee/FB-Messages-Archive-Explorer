@@ -8,6 +8,7 @@ import { normalizeAttachmentPath } from './attachmentIdentity';
 import { readMp4MediaType } from './mp4MediaType';
 import { getMetaAttachmentPath, getSharedStickerFileName, isRemoteAttachmentPath } from './metaAttachmentPaths';
 import { mapWithConcurrency } from './concurrency';
+import { performanceLimit } from './performanceSettings';
 
 
 function normalizeMediaPath(path: string): string {
@@ -364,7 +365,7 @@ export async function processMetaAttachmentReferences(
     }
     return work;
   };
-  await mapWithConcurrency([...references.values()], 4, async ({ relative, paths, category }) => {
+  await mapWithConcurrency([...references.values()], performanceLimit('attachmentReads'), async ({ relative, paths, category }) => {
     if (signal?.aborted) return;
     try {
       const normalized = relative.toLowerCase();
