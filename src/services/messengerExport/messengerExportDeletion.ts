@@ -2,7 +2,8 @@ import type { ChatListEntry } from '../../types/messenger';
 import type { ChatDeletionBlockDetails } from '../../types/deletion';
 import type { CalculationProgress } from '../calculationProgress';
 import type { ReadableDirectoryHandle, ReadableFileHandle, WritableDirectoryHandle } from '../../types/fileSystem';
-import { mapWithConcurrency } from '../concurrency';
+import { mapWithConcurrency, type Concurrency } from '../concurrency';
+import { performanceLimit } from '../performanceSettings';
 import { getDeletableAttachmentIdentities } from '../attachmentReferenceIndex';
 import { classifyMessengerExportJson } from './messengerExportParser';
 import { waitForAttachmentPreview } from '../attachmentScanScheduling';
@@ -14,6 +15,7 @@ import {
   getMessengerMediaBasename,
   isMessengerExportChatIndex,
   markMessengerExportIndexIncomplete,
+  mergeMessengerExportChatIndex,
   removeConversationFromChatIndex,
   removeConversationFromReferenceIndex,
   type MessengerExportChatIndex,
@@ -257,24 +259,25 @@ export async function buildMessengerExportReferenceIndex(
   let done = 0;
   const report = () => onProgress?.({ stage: 'ownership', label: 'Scanning for shared attachments', done, total: files.length, unit: 'files' });
   report();
-  for (const { name, entry } of files) {
+  const results = await mapWithConcurrency(files, performanceLimit('messengerScans'), async ({ name, entry }) => {
     await waitForAttachmentPreview(signal);
+    const summary = createMessengerExportChatIndex();
     try {
       const file = await readListedFile(rootHandle, name, entry, signal);
       throwIfAborted(signal);
       const classification = classifyMessengerExportJson(await file.text());
       throwIfAborted(signal);
       if (classification.kind === 'conversation') {
-        addConversationToChatIndex(chatIndex, name, file.size, classification.thread);
+        addConversationToChatIndex(summary, name, file.size, classification.thread);
       } else if (classification.kind === 'malformed-conversation') {
-        markMessengerExportIndexIncomplete(chatIndex, {
+        markMessengerExportIndexIncomplete(summary, {
           jsonFileName: name,
           reason: 'malformed-conversation',
         });
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      markMessengerExportIndexIncomplete(chatIndex, { jsonFileName: name, reason: 'unreadable' });
+      markMessengerExportIndexIncomplete(summary, { jsonFileName: name, reason: 'unreadable' });
     }
     done++;
     report();
@@ -283,7 +286,9 @@ export async function buildMessengerExportReferenceIndex(
       throwIfAborted(signal);
       lastYield = performance.now();
     }
-  }
+    return summary;
+  }, signal);
+  for (const summary of results) mergeMessengerExportChatIndex(chatIndex, summary);
 
   return chatIndex.referenceIndex;
 }
@@ -315,7 +320,7 @@ async function removeMediaFile(
 export async function removeMediaFiles(
   mediaHandle: WritableDirectoryHandle | null,
   files: readonly MessengerExportMediaDeletionTarget[],
-  concurrency = 4,
+  concurrency: Concurrency = performanceLimit('deletions'),
   onProgress?: (
     completed: number,
     total: number,
@@ -428,12 +433,17 @@ export async function getMessengerExportBatchDeletionInfo(
   const report = () => onProgress?.({ stage: 'chat-data', label: 'Calculating chat sizes', done: chatFileCount, total: entries.length, unit: 'chats' });
   report();
 
-  for (const entry of entries) {
+  const jsonSizes = await mapWithConcurrency(entries, performanceLimit('sizes'), async entry => {
     throwIfAborted(signal);
     const jsonFileName = entry._jsonFileName!;
-    jsonSize += await getJsonSize(rootHandle, jsonFileName, chatIndex);
+    const size = await getJsonSize(rootHandle, jsonFileName, chatIndex);
     chatFileCount++;
     report();
+    return size;
+  }, signal);
+  jsonSize = jsonSizes.reduce((total, size) => total + size, 0);
+  for (const entry of entries) {
+    const jsonFileName = entry._jsonFileName!;
     const chatMedia = referenceIndex.chatMedia.get(jsonFileName);
     if (!chatMedia) continue;
     for (const identity of chatMedia) referencedMedia.add(identity);
@@ -529,7 +539,7 @@ export async function executeMessengerExportDeletionPlan(
       };
       reportProgress('media', chat.entry, mediaToDelete.length);
     } else {
-      mediaResult = await removeMediaFiles(mediaHandle, mediaToDelete, 4, () => {
+      mediaResult = await removeMediaFiles(mediaHandle, mediaToDelete, performanceLimit('deletions'), () => {
         reportProgress('media', chat.entry);
       }, beforeRemove);
     }
