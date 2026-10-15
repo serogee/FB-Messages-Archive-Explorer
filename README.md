@@ -1,15 +1,25 @@
-# FB Messages Archive Explorer
+<p align="center">
+  <img src=".github/assets/readme-letter-art-alternating.svg" alt="FB-MAE" width="100%" />
+</p>
+<h1 align="center">FB Messages Archive Explorer</h1>
 
-Browse, search, and manage your exported Facebook, Instagram, or Messenger message archive privately, in your browser, with nothing uploaded.
+<p align="center">
+  <a href="#7-tech-stack">
+    <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&amp;logo=react&amp;logoColor=61DAFB" alt="React" />
+    <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&amp;logo=typescript&amp;logoColor=white" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&amp;logo=vite&amp;logoColor=white" alt="Vite" />
+    <img src="https://img.shields.io/badge/CSS-663399?style=for-the-badge&amp;logo=css&amp;logoColor=white" alt="Vanilla CSS" />
+  </a>
+</p>
 
-[Read the getting-started guide](https://serogee.github.io/FB-Messages-Archive-Explorer/guide/) for supported exports, privacy details, and troubleshooting.
+Browse, search, and manage your exported Facebook, Instagram, or Messenger message archive privately, in your browser, with nothing uploaded. [Read the getting-started guide](https://serogee.github.io/FB-Messages-Archive-Explorer/guide/) for supported exports, privacy details, and troubleshooting.
 
 **[🔗 Open the App](https://serogee.github.io/FB-Messages-Archive-Explorer/)**
 
 > [!NOTE]
 > **Your data stays on your computer.** All processing happens in your browser. Your messages and files are never uploaded anywhere.
 
-> [!NOTE]
+> [!TIP]
 > If you don't want to grant read access to an entire folder, use my **[Simple Messenger JSON Explorer](https://github.com/serogee/Simple-Messenger-JSON-Explorer)** instead. If you'd prefer an alternative I didn't create, try **[DuckCIT's Facebook Messenger JSON Viewer](https://github.com/DuckCIT/Facebook-Messenger-JSON-Viewer)**.
 
 ---
@@ -196,13 +206,13 @@ Instagram inbox and message request conversations use the same reader as Faceboo
 
 The app automatically finds your messages if you select any of these:
 
-| What you select                                          | What the app looks for                                           |
-| -------------------------------------------------------- | ---------------------------------------------------------------- |
+| What you select                                          | What the app looks for                                                                |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | The extracted folder root                                | A `messages/` subfolder containing `inbox`, `archived_threads`, or `message_requests` |
-| The `messages/` folder directly                          | Uses it as the starting point                                    |
-| A folder with `your_facebook_activity/messages/` inside  | Recognized automatically                                         |
-| A folder with `your_instagram_activity/messages/` inside | Recognized automatically                                         |
-| A Messenger export folder with `.json` files at the root | Recognized as a Messenger export                                 |
+| The `messages/` folder directly                          | Uses it as the starting point                                                         |
+| A folder with `your_facebook_activity/messages/` inside  | Recognized automatically                                                              |
+| A folder with `your_instagram_activity/messages/` inside | Recognized automatically                                                              |
+| A Messenger export folder with `.json` files at the root | Recognized as a Messenger export                                                      |
 
 The chat list loads conversations from `inbox`, `archived_threads`, `message_requests`, and `e2ee_cutover`. The ownership scan also checks other directories so that unlisted conversations can protect shared files. Ordinary JSON documents inside a conversation's attachment subfolders are excluded. Files named `message_<number>.json` remain checked even in media folders, so unusual conversation locations still protect their attachments.
 
@@ -226,14 +236,14 @@ Protected Meta chats appear in a scrollable dependency list grouped by chat, wit
 
 ## ❔ 5. Browser Support and Limitations
 
-| Feature                      | Chrome, Edge, Brave        | Firefox, Safari                 |
-| ---------------------------- | -------------------------- | ------------------------------- |
-| Browse and view messages     | ✅                         | ✅ (via folder-upload fallback) |
-| Search messages              | ✅                         | ✅                              |
-| Delete conversations         | ✅ (requires write access) | ❌ Not available                |
-| Bookmark attachments/links and pin chats | ✅ (requires write access) | ❌ Not available       |
-| Save attachments to a folder | ✅                         | ❌ Not available                |
-| Download attachments as ZIP  | ✅                         | ✅                              |
+| Feature                                  | Chrome, Edge, Brave        | Firefox, Safari                 |
+| ---------------------------------------- | -------------------------- | ------------------------------- |
+| Browse and view messages                 | ✅                         | ✅ (via folder-upload fallback) |
+| Search messages                          | ✅                         | ✅                              |
+| Delete conversations                     | ✅ (requires write access) | ❌ Not available                |
+| Bookmark attachments/links and pin chats | ✅ (requires write access) | ❌ Not available                |
+| Save attachments to a folder             | ✅                         | ❌ Not available                |
+| Download attachments as ZIP              | ✅                         | ✅                              |
 
 > [!NOTE]
 > In Firefox and Safari, the app uses a folder-upload fallback instead of the native folder picker. All files are loaded into memory at once, which may be slow for very large archives. Chromium-based browsers (Chrome, Edge, Brave) give the best experience.
@@ -332,10 +342,6 @@ npm run preview
 <a name="7-tech-stack"></a>
 
 ## 🤖 7. Tech Stack
-
-![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
-![React](https://img.shields.io/badge/React-61DAFB?style=flat&logo=react&logoColor=black)
-![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white)
 
 | Technology                                             | Purpose                   |
 | ------------------------------------------------------ | ------------------------- |
