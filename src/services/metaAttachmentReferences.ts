@@ -2,7 +2,8 @@ import type { ReadableDirectoryHandle } from '../types/fileSystem';
 import type { MetaAttachmentReferenceIndex } from './metaAttachmentAccumulator';
 import { MetaAttachmentWorkerSession } from './metaAttachmentWorkerSession';
 import { waitForAttachmentPreview } from './attachmentScanScheduling';
-import { mapWithConcurrency } from './concurrency';
+import { createConcurrencyLimiter, mapWithConcurrency } from './concurrency';
+import { performanceLimit } from './performanceSettings';
 import type { CalculationProgress } from './calculationProgress';
 import type { MetaArchivePlatform } from './metaAttachmentPaths';
 
@@ -12,7 +13,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 }
 
-const SCAN_CONCURRENCY = 4;
 const ATTACHMENT_DIRECTORIES = new Set(['photos', 'videos', 'audio', 'audio_files', 'gifs', 'files', 'media', 'stickers', 'stickers_used']);
 
 /** Scan every conversation, including unreadable/unlisted chats and split files. */
@@ -23,6 +23,7 @@ export async function buildMetaAttachmentReferenceIndex(
   onProgress?: (progress: CalculationProgress) => void,
 ): Promise<MetaAttachmentReferenceIndex> {
   const session = new MetaAttachmentWorkerSession(deletionSupported, signal);
+  const limitRead = createConcurrencyLimiter(performanceLimit('scans'));
   const hostWarnings: Array<{ path: string; reason: string }> = [];
   let jsonFound = 0;
   let checkedFolders = 0;
@@ -73,9 +74,11 @@ export async function buildMetaAttachmentReferenceIndex(
         jsonFound++;
         reportDiscovery();
         try {
-          const file = await handle.getFile();
-          throwIfAborted(signal);
-          if (await session.process(file, directoryPath, name, yieldIfNeeded)) isConversationDirectory = true;
+          if (await limitRead(async () => {
+            const file = await handle.getFile();
+            throwIfAborted(signal);
+            return session.process(file, directoryPath, name, yieldIfNeeded);
+          }, signal)) isConversationDirectory = true;
         } catch (error) {
           throwIfAborted(signal);
           if (error instanceof DOMException && error.name === 'AbortError') throw error;
@@ -106,12 +109,8 @@ export async function buildMetaAttachmentReferenceIndex(
   // unexpected conversation sections, but do not parse ordinary attached JSON.
   try {
     await scan(root, '');
-    let nextDirectory = 0;
-    while (nextDirectory < directories.length) {
-      const batch = directories.slice(nextDirectory, nextDirectory + SCAN_CONCURRENCY);
-      nextDirectory += batch.length;
-      await mapWithConcurrency(batch, SCAN_CONCURRENCY, directory => scan(directory.handle, directory.path, directory.attachments), signal);
-    }
+    // Children append to this work list before their parent's job completes.
+    await mapWithConcurrency(directories, performanceLimit('scans'), directory => scan(directory.handle, directory.path, directory.attachments), signal);
     throwIfAborted(signal);
     reportDiscovery(true);
     await waitForAttachmentPreview(signal);
@@ -126,7 +125,7 @@ export async function buildMetaAttachmentReferenceIndex(
     let verifiedFiles = 0;
     const reportVerification = () => onProgress?.({ stage: 'verification', label: 'Scanning for shared attachments', done: verifiedFiles, total: crossFolderFiles.size, unit: 'files', foldersChecked: checkedFolders, jsonFound });
     if (crossFolderFiles.size > 0) reportVerification();
-    const missing = await mapWithConcurrency([...crossFolderFiles], 4, async identity => {
+    const missing = await mapWithConcurrency([...crossFolderFiles], performanceLimit('scans'), async identity => {
       await waitForAttachmentPreview(signal);
       const parts = index.mediaFiles.get(identity)!.split('/');
       try {
