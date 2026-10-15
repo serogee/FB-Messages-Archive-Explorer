@@ -682,6 +682,38 @@ test('keeps folder and chat-sort dropdowns usable at narrow mobile widths', asyn
   await expect(sort).not.toBeFocused();
 });
 
+test('shows animated feedback while checking archive and clears it on cancel', async ({ page }) => {
+  await installArchive(page, 'facebook', false, false, false, 0, true);
+  await page.addInitScript(() => {
+    localStorage.setItem(`majv_${location.hostname}_setting_reactionTimestampGuessingMode`, 'off');
+    const Original = window.Worker;
+    window.Worker = class extends Original {
+      private audit: boolean;
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        this.audit = String(url).includes('reactionAuditWorker');
+      }
+      postMessage(input: { type?: string }) {
+        if (this.audit && input.type === 'thread') return;
+        super.postMessage(input);
+      }
+    };
+  });
+  await page.goto('');
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  await expect(page.locator('.chat-list-item')).toHaveCount(2);
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Check archive', exact: true }).click();
+  const indicator = page.locator('.archive-check-label .loading-spinner');
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveCSS('animation-name', 'loading-spin');
+  await expect(page.getByRole('status').filter({ hasText: 'Full archive consistency check running.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(indicator).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: 'Check canceled.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled();
+});
+
 for (const accessMode of ['native', 'upload'] as const) {
   test(`shows immediate chat-loading feedback with ${accessMode} access`, async ({ page }) => {
     await installArchive(page, 'facebook', false, false, false, 0, true);
@@ -846,6 +878,284 @@ test('paints preparation feedback before processing a large read-only folder', a
   expect(observed.pathsAtTimer).toBeLessThan(20_000);
   await expect(page.locator('.folder-preparation-status')).toHaveCount(0);
 });
+
+for (const accessMode of ['native', 'upload'] as const) {
+  test(`caps parallel archive reads and waits for the full list with ${accessMode} access`, async ({ page }) => {
+    await installArchive(page, 'facebook', false, false, false, 0, true);
+    await page.goto('');
+    await page.evaluate(async () => {
+      const root = (window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } }).__testArchives.facebook;
+      for (const section of ['archived_threads', 'message_requests', 'e2ee_cutover']) {
+        const directory = await root.getDirectoryHandle(section, { create: true });
+        for (let index = 0; index < 2; index++) {
+          const chat = await directory.getDirectoryHandle(`parallel_${index}`, { create: true });
+          const writer = await (await chat.getFileHandle('message_1.json', { create: true })).createWritable();
+          await writer.write(JSON.stringify({ title: `Parallel ${section} ${index}`, participants: [{ name: 'Tester' }],
+            messages: [{ sender_name: 'Tester', timestamp_ms: index + 1, content: 'parallel preview' }] }));
+          await writer.close();
+        }
+      }
+      const alice = await (await root.getDirectoryHandle('inbox')).getDirectoryHandle('alice_chat');
+      for (let part = 2; part <= 3; part++) {
+        const writer = await (await alice.getFileHandle(`message_${part}.json`, { create: true })).createWritable();
+        await writer.write(JSON.stringify({ title: 'Alice Chat', participants: [{ name: 'Tester' }, { name: 'Alice' }],
+          messages: [{ sender_name: 'Alice', timestamp_ms: part, content: `parallel part ${part}` }] }));
+        await writer.close();
+      }
+      // Count only reads held by the gate; later reads run normally after releaseAll.
+      const reads = { active: 0, peak: 0, started: 0, released: false, pending: [] as Array<() => void>,
+        releaseOne() { this.pending.shift()?.(); },
+        releaseAll() { this.released = true; this.pending.splice(0).forEach(release => release()); },
+      };
+      Object.defineProperty(window, '__parallelReads', { value: reads });
+      const text = File.prototype.text;
+      File.prototype.text = async function () {
+        if (this.name !== 'message_1.json' || reads.released) return text.call(this);
+        reads.started++;
+        reads.active++;
+        reads.peak = Math.max(reads.peak, reads.active);
+        try {
+          await new Promise<void>(resolve => { reads.pending.push(resolve); });
+          return await text.call(this);
+        } finally { reads.active--; }
+      };
+    });
+    if (accessMode === 'upload') await selectFolderAccess(page, accessMode);
+    await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __parallelReads: { started: number } }).__parallelReads.started)).toBe(4);
+    await expect(page.locator('.chat-list-loading')).toContainText('Loading chats');
+    await expect(page.locator('.chat-list-item')).toHaveCount(0);
+    await page.evaluate(() => (window as unknown as { __parallelReads: { releaseOne(): void } }).__parallelReads.releaseOne());
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __parallelReads: { started: number } }).__parallelReads.started)).toBe(5);
+    await expect(page.locator('.chat-list-item')).toHaveCount(0);
+    await page.evaluate(() => (window as unknown as { __parallelReads: { releaseAll(): void } }).__parallelReads.releaseAll());
+    const alice = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
+    await expect(alice).toBeVisible();
+    expect(await page.evaluate(() => {
+      const { peak, started } = (window as unknown as { __parallelReads: { peak: number; started: number } }).__parallelReads;
+      return { peak, started };
+    })).toEqual({ peak: 4, started: 5 });
+    const filter = page.getByRole('searchbox', { name: 'Filter chats', exact: true });
+    await filter.fill('Parallel');
+    await expect(page.locator('.chat-list-item')).toHaveCount(6);
+    await filter.fill('');
+    await alice.click();
+    await expect(page.locator('#chat')).toContainText('needle from Facebook');
+    await expect(page.locator('#chat')).toContainText('parallel part 2');
+    await expect(page.locator('#chat')).toContainText('parallel part 3');
+  });
+}
+
+test('saves performance modes and resets both configurations without overflowing mobile settings', async ({ page }) => {
+  await installArchive(page, 'facebook', false, false, false, 0, true);
+  await page.goto('');
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  const advanced = page.getByRole('checkbox', { name: 'Advanced performance', exact: true });
+  const advancedToggle = page.getByText('Advanced performance', { exact: true });
+  const archive = page.getByRole('spinbutton', { name: 'Archive and chat reads', exact: true });
+  await expect(advanced).not.toBeChecked();
+  const increase = page.getByRole('button', { name: 'Increase archive and chat reads', exact: true });
+  const decrease = page.getByRole('button', { name: 'Decrease archive and chat reads', exact: true });
+  await increase.click();
+  await expect(archive).toHaveValue('5');
+  await decrease.click();
+  await expect(archive).toHaveValue('4');
+  await archive.press('ArrowUp');
+  await expect(archive).toHaveValue('5');
+  await archive.press('ArrowDown');
+  await expect(archive).toHaveValue('4');
+  await archive.fill('16');
+  await expect(increase).toBeDisabled();
+  await decrease.click();
+  await expect(archive).toHaveValue('15');
+  await archive.fill('1');
+  await expect(decrease).toBeDisabled();
+  await increase.click();
+  await expect(archive).toHaveValue('2');
+  await archive.fill('6');
+  await page.getByRole('button', { name: 'Background activity', exact: true }).click();
+  await page.getByRole('option', { name: 'Ultra', exact: true }).click();
+  const openInformation = page.getByRole('button', { name: 'Open performance information', exact: true });
+  const information = page.getByRole('dialog', { name: 'Performance', exact: true });
+  const stats = information.getByRole('region', { name: 'Current concurrency settings', exact: true });
+  await openInformation.click();
+  await expect(stats.getByRole('heading', { name: 'Current concurrency settings', exact: true })).toBeVisible();
+  await expect(stats).toContainText('Maximum jobs allowed to run at the same time for each operation.');
+  await expect(stats).toContainText('Basic · Ultra');
+  await expect(stats).toContainText('chat folders or JSON files at a time');
+  await expect(stats).toContainText('JSON files at a time');
+  await expect(stats).toContainText('video thumbnails at a time');
+  await expect(stats.locator('dd')).toHaveText(['6', '4', '8', '8', '16', '16', '16', '4', '4', '16', '4', '1']);
+  expect(await information.locator('.settings-info-body').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await information.screenshot({ path: test.info().outputPath('performance-information.png') });
+  await information.getByRole('button', { name: 'Close performance information', exact: true }).click();
+  await advancedToggle.click();
+  await expect(archive).toHaveValue('4');
+  const previews = page.getByRole('spinbutton', { name: 'Chat image previews', exact: true });
+  await previews.fill('5');
+  await expect(page.getByRole('button', { name: 'Background activity', exact: true })).toHaveText('Ultra - Custom');
+  await openInformation.click();
+  await expect(stats).toContainText('Advanced · Ultra - Custom');
+  await expect(stats.locator('dd')).toHaveText(['4', '4', '5', '8', '16', '16', '16', '4', '4', '16', '4', '1']);
+  await information.getByRole('button', { name: 'Close performance information', exact: true }).click();
+  await advancedToggle.click();
+  await expect(archive).toHaveValue('6');
+  await expect(page.getByRole('button', { name: 'Background activity', exact: true })).toContainText('Ultra');
+  await page.reload();
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Background activity', exact: true })).toContainText('Ultra');
+  await advancedToggle.click();
+  await expect(previews).toHaveValue('5');
+  const resetPreview = page.getByRole('button', { name: 'Reset chat image previews', exact: true });
+  const resetWidth = await resetPreview.evaluate(element => element.getBoundingClientRect().width);
+  await resetPreview.click();
+  await expect(previews).toHaveValue('8');
+  await expect(resetPreview).toHaveAttribute('data-confirmed', 'true');
+  await expect(resetPreview.locator('.reset-button-confirmation')).toBeVisible();
+  expect(await resetPreview.evaluate(element => element.getBoundingClientRect().width)).toBe(resetWidth);
+  const controls = page.getByRole('region', { name: 'Performance', exact: true });
+  await controls.scrollIntoViewIfNeeded();
+  expect(await page.locator('.settings-scroll-region').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await controls.screenshot({ path: test.info().outputPath('performance-controls.png') });
+  await page.getByRole('button', { name: 'Reset all values', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Reset all values', exact: true })).toHaveAttribute('data-confirmed', 'true');
+  await expect(advanced).toBeChecked();
+  await expect(archive).toHaveValue('4');
+  await advancedToggle.click();
+  await expect(archive).toHaveValue('4');
+  await expect(page.getByRole('button', { name: 'Background activity', exact: true })).toContainText('Normal');
+  await openInformation.click();
+  await expect(information).toContainText('Changes apply to queued work immediately');
+  await expect(stats).toContainText('Basic · Normal');
+  await expect(stats.locator('dd')).toHaveText(['4', '4', '2', '2', '4', '4', '4', '1', '1', '4', '4', '1']);
+});
+
+test('uses preset defaults for custom concurrency colors, resets, and reselection', async ({ page }) => {
+  await installArchive(page, 'facebook', false, false, false, 0, true);
+  await page.goto('');
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await page.getByText('Advanced performance', { exact: true }).click();
+  const preset = page.getByRole('button', { name: 'Background activity', exact: true });
+  await preset.click();
+  await page.getByRole('option', { name: 'High', exact: true }).click();
+  const scans = page.getByRole('spinbutton', { name: 'Shared-attachment scans', exact: true });
+  const previews = page.getByRole('spinbutton', { name: 'Chat image previews', exact: true });
+  const gallery = page.getByRole('spinbutton', { name: 'Gallery image previews', exact: true });
+  const video = page.getByRole('spinbutton', { name: 'Chat video previews', exact: true });
+  const galleryVideo = page.getByRole('spinbutton', { name: 'Gallery video previews', exact: true });
+  const sizes = page.getByRole('spinbutton', { name: 'Size calculations', exact: true });
+  await expect(scans).toHaveValue('8');
+  await expect(previews).toHaveValue('4');
+  await expect(gallery).toHaveValue('8');
+  await expect(video).toHaveValue('4');
+  await expect(galleryVideo).toHaveValue('8');
+  await previews.fill('5');
+  await sizes.fill('1');
+  await expect(preset).toHaveText('High - Custom');
+  const openInfo = page.getByRole('button', { name: 'Open performance information', exact: true });
+  const info = page.getByRole('dialog', { name: 'Performance', exact: true });
+  const stats = info.getByRole('region', { name: 'Current concurrency settings', exact: true });
+  for (const theme of ['dark', 'light'] as const) {
+    if (theme === 'light') await page.getByText('Dark mode', { exact: true }).click();
+    const colors = theme === 'dark'
+      ? { normal: 'rgb(154, 164, 178)', above: 'rgb(130, 167, 200)', below: 'rgb(206, 140, 148)' }
+      : { normal: 'rgb(107, 111, 118)', above: 'rgb(76, 115, 153)', below: 'rgb(165, 95, 102)' };
+    await expect(scans).toHaveCSS('color', colors.normal);
+    await expect(previews).toHaveCSS('color', colors.above);
+    await expect(sizes).toHaveCSS('color', colors.below);
+    await openInfo.click();
+    await expect(stats).toContainText('Advanced · High - Custom');
+    await expect(stats.getByText('Shared-attachment scans', { exact: true }).locator('..').locator('..').locator('dd')).toHaveCSS('color', colors.normal);
+    await expect(stats.getByText('Chat image previews', { exact: true }).locator('..').locator('..').locator('dd')).toHaveCSS('color', colors.above);
+    await expect(stats.getByText('Size calculations', { exact: true }).locator('..').locator('..').locator('dd')).toHaveCSS('color', colors.below);
+    expect(await info.locator('.settings-info-body').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await info.screenshot({ path: test.info().outputPath(`performance-custom-${theme}.png`) });
+    await info.getByRole('button', { name: 'Close performance information', exact: true }).click();
+  }
+  await video.fill('3');
+  await galleryVideo.fill('5');
+  await expect(video).toHaveValue('3');
+  await expect(galleryVideo).toHaveValue('5');
+  await page.getByRole('button', { name: 'Reset chat video previews', exact: true }).click();
+  await expect(video).toHaveValue('4');
+  await expect(galleryVideo).toHaveValue('5');
+  await page.getByRole('button', { name: 'Reset gallery video previews', exact: true }).click();
+  await expect(galleryVideo).toHaveValue('8');
+  await preset.click();
+  await expect(page.getByRole('option')).toHaveText(['Low', 'Normal', 'High', 'Ultra']);
+  await page.getByRole('option', { name: 'High', exact: true }).click();
+  await expect(preset).toHaveText('High');
+  await expect(previews).toHaveValue('4');
+  await expect(gallery).toHaveValue('8');
+  await expect(video).toHaveValue('4');
+  await expect(galleryVideo).toHaveValue('8');
+  await expect(sizes).toHaveValue('2');
+  await expect(scans).toHaveValue('8');
+  await preset.click();
+  await page.getByRole('option', { name: 'Ultra', exact: true }).click();
+  await expect(previews).toHaveValue('8');
+  await expect(gallery).toHaveValue('16');
+  await expect(video).toHaveValue('8');
+  await expect(galleryVideo).toHaveValue('16');
+  await gallery.fill('12');
+  await expect(preset).toHaveText('Ultra - Custom');
+  await page.getByRole('button', { name: 'Reset gallery image previews', exact: true }).click();
+  await expect(gallery).toHaveValue('16');
+  await expect(gallery).toHaveAttribute('data-comparison', 'default');
+  await expect(preset).toHaveText('Ultra');
+});
+
+for (const accessMode of ['native', 'upload'] as const) {
+  test(`changes pending archive reads immediately through performance controls with ${accessMode} access`, async ({ page }) => {
+    await installArchive(page, 'facebook', false, false, false, 0, true);
+    await page.goto('');
+    await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+    const archive = page.getByRole('spinbutton', { name: 'Archive and chat reads', exact: true });
+    await archive.fill('2');
+    if (accessMode === 'upload') await selectFolderAccess(page, accessMode);
+    await page.evaluate(async () => {
+      const root = (window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } }).__testArchives.facebook;
+      const inbox = await root.getDirectoryHandle('inbox');
+      for (let index = 0; index < 6; index++) {
+        const chat = await inbox.getDirectoryHandle(`live_${index}`, { create: true });
+        const writer = await (await chat.getFileHandle('message_1.json', { create: true })).createWritable();
+        await writer.write(JSON.stringify({ title: `Live ${index}`, participants: [{ name: 'Owner' }], messages: [{ timestamp_ms: index + 1, content: 'Live preview' }] }));
+        await writer.close();
+      }
+      const reads = { started: 0, active: 0, released: false, pending: [] as Array<() => void>,
+        release(count: number) { this.pending.splice(0, count).forEach(release => release()); },
+        releaseAll() { this.released = true; this.pending.splice(0).forEach(release => release()); },
+      };
+      Object.defineProperty(window, '__liveReads', { value: reads });
+      const text = File.prototype.text;
+      File.prototype.text = async function() {
+        if (this.name !== 'message_1.json' || reads.released) return text.call(this);
+        reads.started++; reads.active++;
+        try { await new Promise<void>(resolve => reads.pending.push(resolve)); return await text.call(this); }
+        finally { reads.active--; }
+      };
+    });
+    await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+    const stats = () => page.evaluate(() => {
+      const reads = (window as unknown as { __liveReads: { started: number; active: number } }).__liveReads;
+      return { started: reads.started, active: reads.active };
+    });
+    await expect.poll(stats).toEqual({ started: 2, active: 2 });
+    await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+    await archive.fill('4');
+    await expect.poll(stats).toEqual({ started: 4, active: 4 });
+    await archive.fill('1');
+    await page.evaluate(() => (window as unknown as { __liveReads: { release(count: number): void } }).__liveReads.release(2));
+    await expect.poll(stats).toEqual({ started: 4, active: 2 });
+    await page.evaluate(() => (window as unknown as { __liveReads: { release(count: number): void } }).__liveReads.release(2));
+    await expect.poll(stats).toEqual({ started: 5, active: 1 });
+    await page.evaluate(() => (window as unknown as { __liveReads: { releaseAll(): void } }).__liveReads.releaseAll());
+    await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+    await expect(page.locator('.chat-list-item')).toHaveCount(8);
+    await page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' }).click();
+    await expect(page.locator('#chat')).toContainText('needle from Facebook');
+  });
+}
 
 test('opens a valid folder through the mobile upload picker', async ({ page }) => {
   await installArchive(page, 'facebook', false, false, false, 0, true);

@@ -1,4 +1,6 @@
 import type { MediaEntry } from '../types/messenger';
+import { concurrencyValue, type Concurrency } from './concurrency';
+import { performanceLimit } from './performanceSettings';
 
 export interface MediaDimensions {
   width: number;
@@ -206,13 +208,14 @@ export class MediaDimensionsCache {
   private readonly failed = new WeakSet<MediaEntry>();
   private readonly listeners = new WeakMap<MediaEntry, Set<DimensionListener>>();
   private readonly queue: QueuedRead[] = [];
-  private readonly maxConcurrentReads: number;
+  private readonly maxConcurrentReads: Concurrency;
+  private unsubscribeLimit?: () => void;
   private readonly reader: DimensionReader;
   private readonly readTimeoutMs: number;
   private activeReads = 0;
 
   constructor(
-    maxConcurrentReads = DEFAULT_MAX_CONCURRENT_READS,
+    maxConcurrentReads: Concurrency = DEFAULT_MAX_CONCURRENT_READS,
     reader: DimensionReader = readMediaDimensionsFromEntry,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
   ) {
@@ -276,7 +279,10 @@ export class MediaDimensionsCache {
   }
 
   private drain(): void {
-    while (this.activeReads < Math.max(1, this.maxConcurrentReads) && this.queue.length > 0) {
+    if (this.queue.length && !this.unsubscribeLimit && typeof this.maxConcurrentReads !== 'number') {
+      this.unsubscribeLimit = this.maxConcurrentReads.subscribe(() => this.drain());
+    }
+    while (this.activeReads < Math.max(1, concurrencyValue(this.maxConcurrentReads)) && this.queue.length > 0) {
       let nextIndex = 0;
       for (let index = 1; index < this.queue.length; index++) {
         if (this.queue[index].priority < this.queue[nextIndex].priority) nextIndex = index;
@@ -286,6 +292,7 @@ export class MediaDimensionsCache {
       this.activeReads++;
       void this.run(queued);
     }
+    if (!this.queue.length) { this.unsubscribeLimit?.(); this.unsubscribeLimit = undefined; }
   }
 
   private async run(queued: QueuedRead): Promise<void> {
@@ -328,7 +335,7 @@ export class MediaDimensionsCache {
   }
 }
 
-const mediaDimensionsCache = new MediaDimensionsCache();
+const mediaDimensionsCache = new MediaDimensionsCache(performanceLimit('attachmentReads'));
 
 export function getCachedMediaDimensions(entry: MediaEntry | null): MediaDimensions | null {
   return mediaDimensionsCache.get(entry);

@@ -1,5 +1,6 @@
 import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../types/fileSystem';
 import { mapWithConcurrency } from './concurrency';
+import { performanceLimit } from './performanceSettings';
 import { getDeletableAttachmentIdentities } from './attachmentReferenceIndex';
 import type { MetaAttachmentReferenceIndex } from './metaAttachmentReferences';
 import type { CalculationProgress } from './calculationProgress';
@@ -35,7 +36,7 @@ export async function getFacebookStickerDeletionTargets(
   let directory: ReadableDirectoryHandle;
   try { directory = await root.getDirectoryHandle('stickers_used'); }
   catch { throwIfAborted(signal); return []; }
-  const targets = await mapWithConcurrency(identities, 4, async identity => {
+  const targets = await mapWithConcurrency(identities, performanceLimit('sizeDetails'), async identity => {
     const fileName = index.mediaFiles.get(identity)!;
     try {
       const file = await (await directory.getFileHandle(fileName)).getFile();
@@ -59,13 +60,13 @@ export async function removeFacebookStickers(
     && safe.has(target.identity) && index.mediaFiles.get(target.identity) === target.fileName);
   if (files.length === 0) return [];
   const directory = await root.getDirectoryHandle('stickers_used');
-  const failures: Array<{ fileName: string; error: unknown }> = [];
-  for (const target of files) {
+  const failures = await mapWithConcurrency(files, performanceLimit('stickerDeletions'), async target => {
     throwIfAborted(signal);
     try { await directory.removeEntry(target.fileName); }
     catch (error) {
-      if (!(error instanceof DOMException && error.name === 'NotFoundError')) failures.push({ fileName: target.fileName, error });
+      if (!(error instanceof DOMException && error.name === 'NotFoundError')) return { fileName: target.fileName, error };
     }
-  }
-  return failures;
+    return null;
+  }, signal);
+  return failures.filter((failure): failure is { fileName: string; error: unknown } => failure !== null);
 }

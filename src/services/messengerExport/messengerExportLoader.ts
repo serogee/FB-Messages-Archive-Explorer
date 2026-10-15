@@ -2,6 +2,8 @@ import type { ChatListEntry, MessengerThread } from '../../types/messenger';
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../../types/fileSystem';
 import { runFolderOperation, type FolderOpenDiagnostics } from '../folderOpenDiagnostics';
 import { readListedFile } from '../listedFileAccess';
+import { mapWithConcurrency } from '../concurrency';
+import { performanceLimit } from '../performanceSettings';
 import { getMessageTimestamp } from '../parser';
 import { getMessageBump } from '../messageBump';
 import {
@@ -14,6 +16,7 @@ import {
   createMessengerExportChatIndex,
   createMessengerExportSizeMetadata,
   markMessengerExportIndexIncomplete,
+  mergeMessengerExportChatIndex,
   type MessengerExportChatIndex,
   type MessengerExportSizeMetadata,
 } from './messengerExportIndex';
@@ -82,6 +85,7 @@ export async function listMessengerExportChatsIndexed(
   signal?: AbortSignal,
   options: MessengerExportListingOptions = {},
 ): Promise<MessengerExportListingResult> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   const diagnostics = options.diagnostics;
   const sizeMetadata = createMessengerExportSizeMetadata();
   let chatIndex = options.collectOwnership !== false && !options.ownershipSignal?.aborted
@@ -92,36 +96,35 @@ export async function listMessengerExportChatsIndexed(
     const fileHandles: Array<{ name: string; handle: ReadableFileHandle }> = [];
 
     for await (const [name, entry] of diagnostics ? diagnostics.entries(handle) : handle.entries()) {
-      if (signal?.aborted) return { entries: [], sizeMetadata, chatIndex };
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       if (entry.kind === 'file' && /\.json$/i.test(name)) {
         fileHandles.push({ name, handle: entry });
       }
     }
 
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const entries: ChatListEntry[] = [];
     onProgress?.(0, fileHandles.length);
 
-    for (let i = 0; i < fileHandles.length; i++) {
-      if (signal?.aborted) return { entries, sizeMetadata, chatIndex };
-      const { name, handle: fileHandle } = fileHandles[i];
-
+    let done = 0;
+    const results = await mapWithConcurrency(fileHandles, performanceLimit('archiveReads'), async ({ name, handle: fileHandle }, i) => {
       try {
         const file = await readListedFile(handle, name, fileHandle, signal, diagnostics);
         const content = await runFolderOperation(diagnostics, 'File.text()', () => file.text());
-        if (signal?.aborted) return { entries, sizeMetadata, chatIndex };
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
         const classification = await runFolderOperation(diagnostics, 'JSON.parse()', () => classifyMessengerExportJson(content));
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
         if (classification.kind === 'malformed-conversation') {
-          if (chatIndex) markMessengerExportIndexIncomplete(chatIndex, {
-            jsonFileName: name,
-            reason: 'malformed-conversation',
-          });
+          return { kind: 'warning', reason: 'malformed-conversation' } as const;
         } else if (classification.kind === 'conversation') {
           const thread = classification.thread;
           const { lastMessage, lastTimestamp } = describeLastMessage(thread);
-          if (chatIndex) addConversationToChatIndex(chatIndex, name, file.size, thread);
-          else addConversationToSizeMetadata(sizeMetadata, name, file.size, thread);
+          const metadata = createMessengerExportSizeMetadata();
+          const index = chatIndex ? createMessengerExportChatIndex(metadata) : undefined;
+          if (index) addConversationToChatIndex(index, name, file.size, thread);
+          else addConversationToSizeMetadata(metadata, name, file.size, thread);
 
-          entries.push({
+          const entry: ChatListEntry = {
             folderName: jsonStem(name),
             title: thread.title || jsonStem(name),
             participants: (thread.participants || []).map(participant => participant.name).filter(Boolean),
@@ -135,16 +138,31 @@ export async function listMessengerExportChatsIndexed(
             _messengerExport: true,
             _jsonFileName: name,
             _sizeIncludesMedia: false,
-          });
+          };
+          // Retain only metadata and reference summaries, never the full thread.
+          return { kind: 'conversation', entry, metadata, index } as const;
         }
+        return null;
       } catch {
-        if (chatIndex) markMessengerExportIndexIncomplete(chatIndex, { jsonFileName: name, reason: 'unreadable' });
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
         // One malformed conversation must not hide other chats in the export.
+        return { kind: 'warning', reason: 'unreadable' } as const;
+      } finally {
+        if (!signal?.aborted) onProgress?.(++done, fileHandles.length);
+        if (i % 10 === 0) await new Promise(resolve => setTimeout(resolve, 0));
       }
-
-      onProgress?.(i + 1, fileHandles.length);
-      if (i % 10 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 0));
+    }, signal);
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (!result) continue;
+      const name = fileHandles[i].name;
+      if (result.kind === 'warning') {
+        if (chatIndex) markMessengerExportIndexIncomplete(chatIndex, { jsonFileName: name, reason: result.reason });
+      } else {
+        entries.push(result.entry);
+        for (const [fileName, size] of result.metadata.jsonSizes) sizeMetadata.jsonSizes.set(fileName, size);
+        for (const [fileName, paths] of result.metadata.chatMediaPaths) sizeMetadata.chatMediaPaths.set(fileName, paths);
+        if (chatIndex && result.index) mergeMessengerExportChatIndex(chatIndex, result.index);
       }
     }
 

@@ -3,6 +3,8 @@ import { withAttachmentPreviewPriority } from './attachmentScanScheduling';
 import { blobCache } from './blobCache';
 import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
 import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
+import type { Concurrency } from './concurrency';
+import { performanceLimit } from './performanceSettings';
 
 interface PosterCacheEntry {
   url: string;
@@ -39,7 +41,7 @@ export class VideoPosterCache {
 
   constructor(
     maxSize = DEFAULT_MAX_POSTERS,
-    maxConcurrentJobs = MAX_CONCURRENT_POSTER_JOBS,
+    maxConcurrentJobs: Concurrency = MAX_CONCURRENT_POSTER_JOBS,
     createPoster: PosterCreator = createVideoPosterForEntry,
   ) {
     this.maxSize = maxSize;
@@ -351,10 +353,10 @@ export async function createVideoPosterDetails(
   }
 }
 
-export const videoPosterCache = new VideoPosterCache(DEFAULT_MAX_POSTERS);
+export const videoPosterCache = new VideoPosterCache(DEFAULT_MAX_POSTERS, performanceLimit('galleryVideoPreviews'));
 export const chatVideoPosterCache = new VideoPosterCache(
   DEFAULT_MAX_POSTERS,
-  MAX_CONCURRENT_POSTER_JOBS,
+  performanceLimit('videoPreviews'),
   createChatVideoPosterForEntry,
 );
 

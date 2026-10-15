@@ -6,6 +6,70 @@ afterEach(() => {
 });
 
 describe('parser worker protocols', () => {
+  it('applies concurrency messages during parsing without restarting or posting extra results', async () => {
+    const postMessage = vi.fn();
+    const scope = { onmessage: null as ((event: MessageEvent) => Promise<void>) | null, postMessage };
+    vi.stubGlobal('self', scope);
+    await import('../src/services/parserWorker');
+    const releases: Array<() => void> = [];
+    const started: number[] = [];
+    const files = Array.from({ length: 5 }, (_, index) => {
+      const gate = new Promise<void>(resolve => releases.push(resolve));
+      return { text: async () => { started.push(index); await gate; return JSON.stringify({ participants: [], messages: [{ content: `${index}`, timestamp_ms: index + 1 }] }); } } as File;
+    });
+    const pending = scope.onmessage!({ data: { files, concurrency: 1 } } as MessageEvent);
+    expect(started).toEqual([0]);
+    await scope.onmessage!({ data: { type: 'concurrency', concurrency: 3 } } as MessageEvent);
+    expect(started).toEqual([0, 1, 2]);
+    await scope.onmessage!({ data: { type: 'concurrency', concurrency: 1 } } as MessageEvent);
+    releases[0](); releases[1]();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(started).toEqual([0, 1, 2]);
+    releases[2]();
+    await vi.waitFor(() => expect(started).toEqual([0, 1, 2, 3]));
+    releases.forEach(release => release());
+    await pending;
+    expect(postMessage).toHaveBeenCalledOnce();
+    expect(postMessage.mock.calls[0][0].data.messages.map((message: { content: string }) => message.content)).toEqual(['0', '1', '2', '3', '4']);
+  });
+  it('reads four texts concurrently and preserves equal-time messages and participant order', async () => {
+    const postMessage = vi.fn();
+    const workerScope: { onmessage?: (event: MessageEvent<{ files: File[] }>) => Promise<void>; postMessage: typeof postMessage } = { postMessage };
+    vi.stubGlobal('self', workerScope);
+    await import('../src/services/parserWorker');
+    const releases: Array<() => void> = [];
+    let active = 0, peak = 0;
+    const started: number[] = [];
+    const files = Array.from({ length: 6 }, (_, index) => {
+      const gate = new Promise<void>(resolve => { releases.push(resolve); });
+      return { text: async () => {
+        started.push(index);
+        active++;
+        peak = Math.max(peak, active);
+        try {
+          await gate;
+          return JSON.stringify({ title: `Part ${index}`, participants: [{ name: `Person ${index}` }],
+            messages: [{ content: `Message ${index}`, timestamp_ms: 1 }] });
+        } finally { active--; }
+      } } as File;
+    });
+    const pending = workerScope.onmessage!({ data: { files } } as MessageEvent<{ files: File[] }>);
+    await vi.waitFor(() => expect(started).toEqual([0, 1, 2, 3]));
+    releases[3]();
+    await vi.waitFor(() => expect(started).toContain(4));
+    releases[4]();
+    await vi.waitFor(() => expect(started).toContain(5));
+    expect(postMessage).not.toHaveBeenCalled();
+    releases.forEach(release => release());
+    await pending;
+    expect(peak).toBe(4);
+    const envelope = postMessage.mock.calls[0][0];
+    expect(envelope).toMatchObject({ type: 'success', complete: true, data: { title: 'Part 0' } });
+    expect(envelope.data.messages.map((message: { content: string }) => message.content))
+      .toEqual(files.map((_, index) => `Message ${index}`));
+    expect(envelope.data.participants).toEqual(files.map((_, index) => ({ name: `Person ${index}` })));
+  });
+
   it('shows readable parts while marking skipped unreadable or invalid parts incomplete', async () => {
     const postMessage = vi.fn();
     const workerScope: { onmessage?: (event: MessageEvent<{ files: File[] }>) => Promise<void>; postMessage: typeof postMessage } = { postMessage };

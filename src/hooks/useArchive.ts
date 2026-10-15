@@ -33,7 +33,8 @@ import {
   type MessengerExportReferenceIndex,
 } from '../services/messengerExport';
 import { SizeWorkLifecycle } from '../services/sizeWorkLifecycle';
-import { mapWithConcurrency } from '../services/concurrency';
+import { createConcurrencyLimiter, mapWithConcurrency, type Concurrency, type ConcurrencyLimiter } from '../services/concurrency';
+import { performanceLimit } from '../services/performanceSettings';
 import { GenerationScopedAsyncCache } from '../services/generationScopedAsyncCache';
 import { SingleFlightGuard } from '../services/singleFlight';
 import { resolveArchivePerspective } from '../services/perspective';
@@ -77,7 +78,7 @@ function waitForPromiseWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): 
   });
 }
 
-async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: AbortSignal, onFileChecked?: () => void): Promise<MessengerExportDeletionInfo> {
+async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: AbortSignal, onFileChecked?: () => void, limitRead?: ConcurrencyLimiter): Promise<MessengerExportDeletionInfo> {
   let jsonSize = 0;
   let chatFileCount = 0;
   let mediaSize = 0;
@@ -89,7 +90,7 @@ async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: Abo
       throwIfAborted(signal);
       if (child.kind === 'file') {
         try {
-          const file = await child.getFile();
+          const file = limitRead ? await limitRead(() => child.getFile(), signal) : await child.getFile();
           throwIfAborted(signal);
           if (/\.json$/i.test(name)) {
             jsonSize += file.size;
@@ -126,9 +127,10 @@ async function computeFacebookEntryDeleteInfo(entry: ChatListEntry, signal?: Abo
 export async function computeFacebookDeleteInfo(
   entries: ChatListEntry[],
   signal?: AbortSignal,
-  concurrency = 4,
+  concurrency: Concurrency = performanceLimit('sizeDetails'),
   onProgress?: (progress: CalculationProgress) => void
 ): Promise<MessengerExportDeletionInfo> {
+  const limitRead = createConcurrencyLimiter(concurrency);
   let doneChats = 0;
   let doneFiles = 0;
   const report = (finished = false) => onProgress?.({
@@ -143,7 +145,7 @@ export async function computeFacebookDeleteInfo(
     entries,
     concurrency,
     async entry => {
-      const info = await computeFacebookEntryDeleteInfo(entry, signal, () => { doneFiles++; report(); });
+      const info = await computeFacebookEntryDeleteInfo(entry, signal, () => { doneFiles++; report(); }, limitRead);
       doneChats++;
       report();
       return info;
@@ -485,9 +487,10 @@ export function useArchive(deletionEnabled: boolean, debuggingEnabled = false): 
     setList: React.Dispatch<React.SetStateAction<ChatListEntry[]>>,
     onProgress?: (done: number) => void,
     signal: AbortSignal = sizeWorkLifecycleRef.current.signal,
-    computeSize: (entry: ChatListEntry, signal: AbortSignal) => Promise<number> =
-      (entry, workSignal) => computeFolderSize(entry.dirHandle, workSignal)
+    computeSize?: (entry: ChatListEntry, signal: AbortSignal) => Promise<number>
   ) => {
+    const limitSizeRead = createConcurrencyLimiter(performanceLimit('sizes'));
+    const calculateSize = computeSize || ((entry: ChatListEntry, workSignal: AbortSignal) => computeFolderSize(entry.dirHandle, workSignal, limitSizeRead));
     let done = 0;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     const pendingSizes = new Map<string, number>();
@@ -538,14 +541,8 @@ export function useArchive(deletionEnabled: boolean, debuggingEnabled = false): 
       pendingSizes.clear();
     }, { once: true });
 
-    const processNext = (index: number) => {
-      if (signal?.aborted) return;
-      if (index >= entries.length) {
-        scheduleFlush(true);
-        return;
-      }
-      const entry = entries[index];
-      setTimeout(async () => {
+    void mapWithConcurrency(entries, performanceLimit('sizes'), async entry => {
+        await new Promise(resolve => setTimeout(resolve, 0));
         if (signal?.aborted) return;
         try {
           const currentEntry = getCurrentEntry(entry);
@@ -555,13 +552,12 @@ export function useArchive(deletionEnabled: boolean, debuggingEnabled = false): 
             || hasCompleteSize(currentEntry)) {
             done++;
             scheduleFlush(done >= entries.length);
-            processNext(index + 1);
             return;
           }
 
           let sizePromise = sizeComputationPromisesRef.current.get(key);
           if (!sizePromise) {
-            sizePromise = trackActiveSizeWork(computeSize(currentEntry, signal));
+            sizePromise = trackActiveSizeWork(calculateSize(currentEntry, signal));
             sizeComputationPromisesRef.current.set(key, sizePromise);
             const ownedPromise = sizePromise;
             void ownedPromise.finally(() => {
@@ -578,10 +574,9 @@ export function useArchive(deletionEnabled: boolean, debuggingEnabled = false): 
         if (signal.aborted) return;
         done++;
         scheduleFlush(done >= entries.length);
-        processNext(index + 1);
-      }, 0);
-    };
-    processNext(0);
+    }, signal).then(() => scheduleFlush(true)).catch(error => {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) console.error('Chat size calculation failed:', error);
+    });
   }, [getCurrentEntry, getSizeEntryKey, hasCompleteSize, trackActiveSizeWork]);
 
   const startBackgroundSizeWork = useCallback(() => {
@@ -857,11 +852,12 @@ export function useArchive(deletionEnabled: boolean, debuggingEnabled = false): 
       };
 
       if (diagnostics) diagnostics.stage = 'Facebook conversation listing';
+      const limitRead = createConcurrencyLimiter(performanceLimit('archiveReads'));
       const [inbox, archived, requests, e2ee] = await Promise.all([
-        listChatFolders(messagesRoot, 'inbox', 'inbox', (d, t) => updateProgress(0, d, t), abortCtrl.signal, diagnostics),
-        listChatFolders(messagesRoot, 'archived_threads', 'archived', (d, t) => updateProgress(1, d, t), abortCtrl.signal, diagnostics),
-        listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t), abortCtrl.signal, diagnostics),
-        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t), abortCtrl.signal, diagnostics),
+        listChatFolders(messagesRoot, 'inbox', 'inbox', (d, t) => updateProgress(0, d, t), abortCtrl.signal, diagnostics, limitRead),
+        listChatFolders(messagesRoot, 'archived_threads', 'archived', (d, t) => updateProgress(1, d, t), abortCtrl.signal, diagnostics, limitRead),
+        listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t), abortCtrl.signal, diagnostics, limitRead),
+        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t), abortCtrl.signal, diagnostics, limitRead),
       ]);
       if (abortCtrl.signal.aborted) return false;
       const mergedInbox = [...inbox, ...e2ee].sort((a, b) => {
@@ -1028,7 +1024,7 @@ export function useArchive(deletionEnabled: boolean, debuggingEnabled = false): 
           deletableChatCount: selectedEntries.length,
         };
         if (options.skipSizes) return info;
-        return { ...info, ...await computeFacebookDeleteInfo(selectedEntries, signal, 4, options.progress?.report) };
+        return { ...info, ...await computeFacebookDeleteInfo(selectedEntries, signal, performanceLimit('sizeDetails'), options.progress?.report) };
       }
       const work = options?.forceOwnershipCheck
         ? refreshFacebookReferenceIndex(rootHandle, generation, signal)
@@ -1057,7 +1053,7 @@ export function useArchive(deletionEnabled: boolean, debuggingEnabled = false): 
       };
       onOwnershipReady?.(ownershipInfo);
       if (options?.skipSizes) return ownershipInfo;
-      const folderInfo = await computeFacebookDeleteInfo(plan.chats, signal, 4, options?.progress?.report);
+      const folderInfo = await computeFacebookDeleteInfo(plan.chats, signal, performanceLimit('sizeDetails'), options?.progress?.report);
       const stickers = await getFacebookStickerDeletionTargets(rootHandle, index, chatIds, signal, options?.progress?.report);
       const stickerSize = stickers.reduce((sum, sticker) => sum + sticker.size, 0);
       return { ...ownershipInfo, ...folderInfo, sharedMediaCount: ownershipInfo.sharedMediaCount,

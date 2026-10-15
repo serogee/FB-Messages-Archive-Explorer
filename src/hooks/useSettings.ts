@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { storageGet, storageSet } from '../services/storage';
 import type { ReactionGuessingMode } from '../services/reactions';
 import type { FolderAccessMode } from '../types/fileSystem';
+import { configurePerformance, defaultPerformancePreferences, normalizePerformancePreferences, type PerformancePreferences } from '../services/performanceSettings';
 
 export interface Settings {
   folderAccessMode: FolderAccessMode;
@@ -24,6 +25,7 @@ export interface Settings {
   dontShowTrustModal: boolean;
   offlineSupportEnabled: boolean;
   debuggingEnabled: boolean;
+  performance: PerformancePreferences;
 }
 
 const DEFAULTS: Settings = {
@@ -47,6 +49,7 @@ const DEFAULTS: Settings = {
   dontShowTrustModal: false,
   offlineSupportEnabled: true,
   debuggingEnabled: false,
+  performance: defaultPerformancePreferences(),
 };
 
 function loadSettings(): Settings {
@@ -55,7 +58,9 @@ function loadSettings(): Settings {
     const stored = storageGet('setting_' + key);
     if (stored === null) continue;
     const defaultVal = DEFAULTS[key];
-    if (typeof defaultVal === 'boolean') {
+    if (key === 'performance') {
+      try { settings.performance = normalizePerformancePreferences(JSON.parse(stored)); } catch { /* Use defaults for invalid saved preferences. */ }
+    } else if (typeof defaultVal === 'boolean') {
       (settings as Record<keyof Settings, unknown>)[key] = stored === '1' || stored === 'true';
     } else if (typeof defaultVal === 'number') {
       const n = Number(stored);
@@ -76,6 +81,8 @@ function loadSettings(): Settings {
       (settings as Record<keyof Settings, unknown>)[key] = storedValue;
     }
   }
+  settings.performance = normalizePerformancePreferences(settings.performance);
+  configurePerformance(settings.performance);
   return settings;
 }
 
@@ -102,8 +109,12 @@ export function useSettings(): {
   }, [settings.infoPanelWidth]);
 
   const setSetting = useCallback(<K extends keyof Settings>(key: K, value: Settings[K]) => {
+    if (key === 'performance') {
+      value = normalizePerformancePreferences(value) as Settings[K];
+      configurePerformance(value);
+    }
     setSettings(prev => ({ ...prev, [key]: value }));
-    storageSet('setting_' + key, typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
+    storageSet('setting_' + key, typeof value === 'object' ? JSON.stringify(value) : typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
   }, []);
 
   return { settings, setSetting };

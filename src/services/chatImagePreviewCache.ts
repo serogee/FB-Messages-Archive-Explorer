@@ -1,6 +1,8 @@
 import type { MediaEntry } from '../types/messenger';
 import { withAttachmentPreviewPriority } from './attachmentScanScheduling';
 import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
+import type { Concurrency } from './concurrency';
+import { performanceLimit } from './performanceSettings';
 
 export type ChatImagePreviewFit = 'contain' | 'cover';
 
@@ -90,7 +92,7 @@ export class ChatImagePreviewCache {
 
   constructor(
     maxSize = DEFAULT_MAX_PREVIEWS,
-    maxConcurrentJobs = DEFAULT_MAX_CONCURRENT_JOBS,
+    maxConcurrentJobs: Concurrency = DEFAULT_MAX_CONCURRENT_JOBS,
     creator: PreviewCreator = createChatImagePreview,
   ) {
     this.maxSize = maxSize;
@@ -274,4 +276,4 @@ function loadImage(source: string, signal: AbortSignal): Promise<HTMLImageElemen
   });
 }
 
-export const chatImagePreviewCache = new ChatImagePreviewCache();
+export const chatImagePreviewCache = new ChatImagePreviewCache(DEFAULT_MAX_PREVIEWS, performanceLimit('imagePreviews'));

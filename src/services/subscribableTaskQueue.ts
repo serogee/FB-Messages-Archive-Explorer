@@ -1,3 +1,5 @@
+import { concurrencyValue, type Concurrency } from './concurrency';
+
 export type TaskCompletion<Value> =
   | { status: 'completed'; value: Value }
   | { status: 'failed' }
@@ -32,11 +34,12 @@ export class SubscribableTaskQueue<Key, Value> {
   private readonly tasks = new Map<Key, QueuedTask<Key, Value>>();
   private readonly queue: Array<QueuedTask<Key, Value>> = [];
   private activeTasks = 0;
-  private readonly maxConcurrentTasks: number;
+  private readonly maxConcurrentTasks: Concurrency;
+  private unsubscribeLimit?: () => void;
   private readonly worker: (key: Key, signal: AbortSignal) => Promise<Value>;
 
   constructor(
-    maxConcurrentTasks: number,
+    maxConcurrentTasks: Concurrency,
     worker: (key: Key, signal: AbortSignal) => Promise<Value>,
   ) {
     this.maxConcurrentTasks = maxConcurrentTasks;
@@ -82,6 +85,8 @@ export class SubscribableTaskQueue<Key, Value> {
   }
 
   clear(): void {
+    this.unsubscribeLimit?.();
+    this.unsubscribeLimit = undefined;
     const tasks = [...this.tasks.values()];
     this.tasks.clear();
     this.queue.length = 0;
@@ -102,18 +107,23 @@ export class SubscribableTaskQueue<Key, Value> {
   private removeQueued(task: QueuedTask<Key, Value>): void {
     const index = this.queue.indexOf(task);
     if (index >= 0) this.queue.splice(index, 1);
+    if (!this.queue.length) { this.unsubscribeLimit?.(); this.unsubscribeLimit = undefined; }
   }
 
   private drain(): void {
-    while (this.activeTasks < this.maxConcurrentTasks) {
+    if (this.queue.length && !this.unsubscribeLimit && typeof this.maxConcurrentTasks !== 'number') {
+      this.unsubscribeLimit = this.maxConcurrentTasks.subscribe(() => this.drain());
+    }
+    while (this.activeTasks < concurrencyValue(this.maxConcurrentTasks)) {
       const task = this.takeNextQueuedTask();
-      if (!task) return;
+      if (!task) break;
       if (task.subscribers.size === 0 || task.controller.signal.aborted) continue;
 
       task.state = 'running';
       this.activeTasks++;
       void this.run(task);
     }
+    if (!this.queue.length) { this.unsubscribeLimit?.(); this.unsubscribeLimit = undefined; }
   }
 
   private takeNextQueuedTask(): QueuedTask<Key, Value> | undefined {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { computeFacebookDeleteInfo } from '../src/hooks/useArchive';
 import type { ReadableDirectoryHandle } from '../src/types/fileSystem';
 import type { ChatListEntry } from '../src/types/messenger';
@@ -46,13 +46,10 @@ describe('deletion preparation concurrency', () => {
     }) satisfies ChatListEntry[];
 
     const work = computeFacebookDeleteInfo(entries);
-    for (let turn = 0; turn < 10 && started < 4; turn++) await Promise.resolve();
-
-    expect(started).toBe(4);
+    await vi.waitFor(() => expect(started).toBe(4));
     expect(active).toBe(4);
     releases[0].release();
-    for (let turn = 0; turn < 10 && started < 5; turn++) await Promise.resolve();
-    expect(started).toBe(5);
+    await vi.waitFor(() => expect(started).toBe(5));
 
     releases.forEach(gate => gate.release());
     const info = await work;

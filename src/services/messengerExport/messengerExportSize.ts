@@ -1,6 +1,8 @@
 import { getMessageAttachmentReferences } from '../media';
 import { parseMessengerExportJson } from './messengerExportParser';
-import type { ReadableDirectoryHandle } from '../../types/fileSystem';
+import type { ReadableDirectoryHandle, ReadableFileHandle } from '../../types/fileSystem';
+import { mapWithConcurrency } from '../concurrency';
+import { performanceLimit } from '../performanceSettings';
 import type { CalculationProgress } from '../calculationProgress';
 import { readListedFile } from '../listedFileAccess';
 import { getMessengerExportMediaSource } from './messengerExportMediaSource';
@@ -41,43 +43,58 @@ async function collectMediaSizes(
 ): Promise<void> {
   let lastYield = performance.now();
 
-  for await (const [name, entry] of dirHandle.entries()) {
-    throwIfAborted(signal);
-    if (flatUpload && (/\.json$/i.test(name) || ambiguousNames.has(name.toLowerCase()))) continue;
-
-    const path = prefix ? `${prefix}/${name}` : name;
-    if (entry.kind === 'file') {
-      try {
-        const file = await readListedFile(dirHandle, name, entry, signal);
-        throwIfAborted(signal);
-        const normalizedPath = normalizeMediaPath(path);
-        const sourcePath = path.replace(/\\/g, '/').replace(/^\.?\//, '');
-        const basename = getBasename(path);
-
-        index.set(normalizedPath, file.size);
-        if (basename && !ambiguousBasenames.has(basename)) {
-          const existingPath = basenamePaths.get(basename);
-          if (existingPath && existingPath !== sourcePath) {
-            basenamePaths.delete(basename);
-            ambiguousBasenames.add(basename);
-            index.delete(basename);
-          } else if (!existingPath) {
-            basenamePaths.set(basename, sourcePath);
-            index.set(basename, file.size);
-          }
-        }
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') throw error;
-        /* ignore unreadable files */
-      } finally { onFileChecked?.(); }
-    } else if (entry.kind === 'directory') {
-      await collectMediaSizes(entry, path, index, basenamePaths, ambiguousBasenames, signal, onFileChecked);
-    }
-
-    if (performance.now() - lastYield > 16) {
-      await new Promise(resolve => setTimeout(resolve, 0));
+  const files: Array<{ parent: ReadableDirectoryHandle; name: string; entry: ReadableFileHandle; path: string }> = [];
+  const collect = async (parent: ReadableDirectoryHandle, directoryPath: string, flat: boolean) => {
+    for await (const [name, entry] of parent.entries()) {
       throwIfAborted(signal);
-      lastYield = performance.now();
+      if (flat && (/\.json$/i.test(name) || ambiguousNames.has(name.toLowerCase()))) continue;
+      const path = directoryPath ? `${directoryPath}/${name}` : name;
+      if (entry.kind === 'file') files.push({ parent, name, entry, path });
+      else await collect(entry, path, false);
+      if (performance.now() - lastYield > 16) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        throwIfAborted(signal);
+        lastYield = performance.now();
+      }
+    }
+  };
+  await collect(dirHandle, prefix, flatUpload);
+  const sizes = await mapWithConcurrency(files, performanceLimit('sizes'), async ({ parent, name, entry }) => {
+    throwIfAborted(signal);
+    try {
+      const file = await readListedFile(parent, name, entry, signal);
+      throwIfAborted(signal);
+      return file.size;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      return null;
+    } finally {
+      onFileChecked?.();
+      if (performance.now() - lastYield > 16) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        throwIfAborted(signal);
+        lastYield = performance.now();
+      }
+    }
+  }, signal);
+  for (let i = 0; i < files.length; i++) {
+    const size = sizes[i];
+    if (size === null) continue;
+    const path = files[i].path;
+    const normalizedPath = normalizeMediaPath(path);
+    const sourcePath = path.replace(/\\/g, '/').replace(/^\.?\//, '');
+    const basename = getBasename(path);
+    index.set(normalizedPath, size);
+    if (basename && !ambiguousBasenames.has(basename)) {
+      const existingPath = basenamePaths.get(basename);
+      if (existingPath && existingPath !== sourcePath) {
+        basenamePaths.delete(basename);
+        ambiguousBasenames.add(basename);
+        index.delete(basename);
+      } else if (!existingPath) {
+        basenamePaths.set(basename, sourcePath);
+        index.set(basename, size);
+      }
     }
   }
 }

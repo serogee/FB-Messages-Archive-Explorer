@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SubscribableTaskQueue, type TaskCompletion } from '../src/services/subscribableTaskQueue';
+import { LiveConcurrencyLimit } from '../src/services/concurrency';
 
 async function flush(): Promise<void> {
   await Promise.resolve();
@@ -7,6 +8,31 @@ async function flush(): Promise<void> {
 }
 
 describe('subscribable task queue', () => {
+  it('resizes pending preview work live while retaining visible-first priority', async () => {
+    const source = new LiveConcurrencyLimit(1);
+    const releases = new Map<string, () => void>();
+    const started: string[] = [];
+    const queue = new SubscribableTaskQueue<string, string>(source, async key => {
+      started.push(key);
+      await new Promise<void>(resolve => releases.set(key, resolve));
+      return key;
+    });
+    queue.subscribe('first', () => {});
+    queue.subscribe('background', () => {}, 2);
+    queue.subscribe('visible', () => {}, 0);
+    queue.subscribe('nearby', () => {}, 1);
+    source.set(3);
+    expect(started).toEqual(['first', 'visible', 'nearby']);
+    source.set(1);
+    releases.get('first')!(); releases.get('visible')!();
+    await flush();
+    expect(started).toEqual(['first', 'visible', 'nearby']);
+    releases.get('nearby')!();
+    await vi.waitFor(() => expect(started).toEqual(['first', 'visible', 'nearby', 'background']));
+    releases.get('background')!();
+    await flush();
+    queue.clear();
+  });
   it('drops abandoned queued work before it starts', async () => {
     let releaseBlocker = () => {};
     const started: string[] = [];

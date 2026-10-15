@@ -39,6 +39,68 @@ afterEach(() => {
 });
 
 describe('archive lifecycle integration', () => {
+  it.each(['native', 'upload'] as const)('shares four metadata jobs across sections with %s access and publishes only the finished list', async accessMode => {
+    const sections = ['inbox', 'archived_threads', 'message_requests', 'e2ee_cutover'];
+    const tree: Parameters<typeof createMockDirectoryHandle>[1] = {};
+    const files: File[] = [];
+    const releases: Array<() => void> = [];
+    const started: number[] = [];
+    let active = 0, peak = 0;
+    for (const section of sections) {
+      tree[section] = Object.fromEntries(Array.from({ length: 3 }, (_, index) => {
+        const json = JSON.stringify({ title: `${section} ${index}`, participants: [{ name: 'Alice' }],
+          messages: [{ sender_name: 'Alice', timestamp_ms: 1, content: 'preview' }] });
+        const fileIndex = files.length;
+        const file = new File([json], 'message_1.json');
+        Object.defineProperty(file, 'webkitRelativePath', { value: `messages/${section}/chat_${index}/message_1.json` });
+        const gate = new Promise<void>(resolve => { releases.push(resolve); });
+        vi.spyOn(file, 'text').mockImplementation(async () => {
+          started.push(fileIndex);
+          active++;
+          peak = Math.max(peak, active);
+          try { await gate; return json; } finally { active--; }
+        });
+        files.push(file);
+        return [`chat_${index}`, { 'message_1.json': json }];
+      }));
+    }
+    const root = createMockDirectoryHandle('messages', tree);
+    let fileIndex = 0;
+    for (const section of sections) {
+      for await (const [, chat] of (await root.getDirectoryHandle(section)).entries()) {
+        if (chat.kind !== 'directory') continue;
+        vi.spyOn(await chat.getFileHandle('message_1.json'), 'getFile').mockResolvedValue(files[fileIndex++]);
+      }
+    }
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockResolvedValue(root));
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function () {
+      Object.defineProperty(this, 'files', { value: files });
+      this.dispatchEvent(new Event('change'));
+    });
+    const { result, unmount } = renderHook(() => useArchive(false));
+    let pending!: Promise<boolean>;
+    act(() => { pending = result.current.openFolder(false, undefined, accessMode); });
+    await waitFor(() => expect(started).toHaveLength(4));
+    expect(peak).toBe(4);
+    expect(result.current.inboxList).toEqual([]);
+    expect(result.current.loading).toBe(true);
+    act(() => releases[started[0]]());
+    await waitFor(() => expect(started).toHaveLength(5));
+    expect(result.current.inboxList).toEqual([]);
+    expect(result.current.archivedList).toEqual([]);
+    await act(async () => { releases.forEach(release => release()); await pending; });
+    expect(peak).toBe(4);
+    expect(started).toHaveLength(12);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBeNull();
+    expect(result.current.inboxList.map(entry => entry.title)).toEqual([
+      'inbox 0', 'inbox 1', 'inbox 2', 'e2ee_cutover 0', 'e2ee_cutover 1', 'e2ee_cutover 2',
+    ]);
+    expect(result.current.archivedList.map(entry => entry.title)).toEqual(['archived_threads 0', 'archived_threads 1', 'archived_threads 2']);
+    expect(result.current.requestsList.map(entry => entry.title)).toEqual(['message_requests 0', 'message_requests 1', 'message_requests 2']);
+    unmount();
+  });
+
   it.each([
     { path: 'export/private-chat.json', name: 'private-chat.json', content: '',
       folder: '1 top-level files, 0 subfolders, 1 JSON files (1 invalid, 0 unrecognized, 1 empty)',
