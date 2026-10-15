@@ -1,6 +1,7 @@
 import { useRef, useImperativeHandle, forwardRef, useState, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import type { MessengerThread, MediaState, ChatListEntry, SelectableItem } from '../../types/messenger';
-import { CalendarDays, Info, LoaderCircle } from 'lucide-react';
+import { CalendarDays, Info } from 'lucide-react';
+import { LoadingLabel } from '../LoadingLabel';
 import { ParentBackButton } from '../Navigation/ParentBackButton';
 import { useReactionContext } from '../../hooks/useReactionFeature';
 import { useThreadData } from '../../hooks/useThreadData';
@@ -67,8 +68,7 @@ function ProgressBar({ value, label }: { value: number; label: string }) {
     <div className="load-progress-block">
       <div className="load-progress-header">
         <span className="load-progress-label" role="status">
-          <LoaderCircle size={16} className="loading-spinner" aria-hidden="true" />
-          <span>{label}…</span>
+          <LoadingLabel label={label} />
         </span>
         <span className="load-progress-pct">{pct}%</span>
       </div>

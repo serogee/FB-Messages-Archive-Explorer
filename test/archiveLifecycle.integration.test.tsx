@@ -39,6 +39,64 @@ afterEach(() => {
 });
 
 describe('archive lifecycle integration', () => {
+  it.each([
+    { path: 'export/private-chat.json', name: 'private-chat.json', content: '',
+      folder: '1 top-level files, 0 subfolders, 1 JSON files (1 invalid, 0 unrecognized, 1 empty)',
+      upload: '1 JSON filenames, 1 JSON paths, 1 top-level JSON files' },
+    { path: 'export/private-chat.json', name: 'private-chat.json', content: '{"settings":true}',
+      folder: '1 top-level files, 0 subfolders, 1 JSON files (0 invalid, 1 unrecognized, 0 empty)',
+      upload: '1 JSON filenames, 1 JSON paths, 1 top-level JSON files' },
+    { path: 'export/wrapper/private-chat.json', name: 'private-chat.json', content: '{}',
+      folder: '0 top-level files, 1 subfolders, 0 JSON files (0 invalid, 0 unrecognized, 0 empty)',
+      upload: '1 JSON filenames, 1 JSON paths, 0 top-level JSON files' },
+    { path: 'export/document-123', name: 'private-chat.json', content: '{}',
+      folder: '1 top-level files, 0 subfolders, 0 JSON files (0 invalid, 0 unrecognized, 0 empty)',
+      upload: '1 JSON filenames, 0 JSON paths, 0 top-level JSON files' },
+  ])('reports what a rejected upload exposed for $path', async ({ path, name, content, folder, upload }) => {
+    const file = new File([content], name);
+    Object.defineProperty(file, 'webkitRelativePath', { value: path });
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function () {
+      Object.defineProperty(this, 'files', { value: [file] });
+      this.dispatchEvent(new Event('change'));
+    });
+    const { result, unmount } = renderHook(() => useArchive(false, true));
+    await act(async () => { await result.current.openFolder(false, undefined, 'upload'); });
+    expect(result.current.error).toContain('Could not find messages');
+    expect(result.current.error).toContain(folder);
+    expect(result.current.error).toContain(upload);
+    expect(result.current.error).not.toContain('Native folder details:');
+    expect(result.current.error).not.toContain('private-chat');
+    expect(result.current.error).not.toContain(content || '"settings"');
+    expect(result.current.loading).toBe(false);
+    expect(result.current.rootHandle).toBeNull();
+    unmount();
+  });
+
+  it.each(['native', 'upload'] as const)('shows %s error details only while debugging is enabled', async accessMode => {
+    const picker = vi.fn().mockRejectedValue(new DOMException('Requested document not found', 'NotFoundError'));
+    vi.stubGlobal('showDirectoryPicker', picker);
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function () {
+      const file = new File(['{}'], 'metadata.json');
+      Object.defineProperty(file, 'webkitRelativePath', { value: 'export/metadata.json' });
+      Object.defineProperty(this, 'files', { value: [file] });
+      this.dispatchEvent(new Event('change'));
+    });
+    const { result, rerender, unmount } = renderHook(({ enabled }) => useArchive(false, enabled), {
+      initialProps: { enabled: false },
+    });
+    await act(async () => { await result.current.openFolder(false, undefined, accessMode); });
+    const normalError = result.current.error;
+    expect(normalError).toBeTruthy();
+    expect(normalError).not.toMatch(/folder details:|Folder upload:/);
+    rerender({ enabled: true });
+    expect(result.current.error).toContain(normalError);
+    expect(result.current.error).toContain(accessMode === 'native' ? 'Native folder details:' : 'Browser folder details:');
+    rerender({ enabled: false });
+    expect(result.current.error).toBe(normalError);
+    expect(picker).toHaveBeenCalledTimes(accessMode === 'native' ? 1 : 0);
+    unmount();
+  });
+
   it('loads the explicitly chosen read-only picker without enabling stored deletion preferences', async () => {
     const json = JSON.stringify({ title: 'Uploaded archive', participants: [{ name: 'Alice' }],
       messages: [{ sender_name: 'Alice', timestamp_ms: 1, content: 'hello' }] });
@@ -61,6 +119,68 @@ describe('archive lifecycle integration', () => {
     expect(result.current.attachmentReferenceIndex).toBeNull();
     expect(result.current.attachmentReferenceScan).toBeNull();
     await expect(result.current.deleteChats(result.current.inboxList)).rejects.toMatchObject({ name: 'AbortError' });
+    unmount();
+  });
+
+  it.each(['Download', 'storage/Download'])('loads a read-only Messenger upload with %s parent paths', async prefix => {
+    const json = JSON.stringify({ threadName: 'Uploaded Messenger chat', participants: ['Alice'],
+      messages: [{ senderName: 'Alice', timestamp: 1, text: 'hello', media: [{ uri: 'media/photo.jpg' }] }] });
+    const files = [new File([json], 'alice.json'), new File(['photo bytes'], 'photo.jpg')];
+    Object.defineProperty(files[0], 'webkitRelativePath', { value: `${prefix}/messenger/alice.json` });
+    Object.defineProperty(files[1], 'webkitRelativePath', { value: `${prefix}/messenger/media/photo.jpg` });
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function () {
+      Object.defineProperty(this, 'files', { value: files });
+      this.dispatchEvent(new Event('change'));
+    });
+    const { result, unmount } = renderHook(() => useArchive(true));
+
+    await act(async () => { await result.current.openFolder(true, undefined, 'upload'); });
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.standaloneMessenger).toBe(true);
+    expect(result.current.inboxList.map(entry => entry.title)).toEqual(['Uploaded Messenger chat']);
+    const root = result.current.rootHandle!;
+    expect(root.name).toBe('messenger');
+    expect(result.current.inboxList[0].dirHandle).toBe(root);
+    expect(result.current.originalRootHandle).not.toBe(root);
+    expect(await (await root.getFileHandle('alice.json')).getFile()).toBe(files[0]);
+    expect(await (await (await root.getDirectoryHandle('media')).getFileHandle('photo.jpg')).getFile()).toBe(files[1]);
+    expect(isWritableDirectoryHandle(root)).toBe(false);
+    expect(result.current.attachmentReferenceIndex).toBeNull();
+    await expect(result.current.deleteChats(result.current.inboxList)).rejects.toMatchObject({ name: 'AbortError' });
+    unmount();
+  });
+
+  it('uses the inner native Messenger root for attachment checks and deletion', async () => {
+    const selected = createMockDirectoryHandle('Download', { messenger: {
+      'alice.json': JSON.stringify({ threadName: 'Native Messenger chat', participants: ['Alice'],
+        messages: [{ senderName: 'Alice', timestamp: 1, text: 'hello', media: [{ uri: 'media/photo.jpg' }] }] }),
+      media: { 'photo.jpg': 'photo bytes' },
+    } });
+    const root = await selected.getDirectoryHandle('messenger');
+    const removeParent = vi.spyOn(selected, 'removeEntry');
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockResolvedValue(selected));
+    const { result, unmount } = renderHook(() => useArchive(true));
+
+    await act(async () => { await result.current.openFolder(true, undefined, 'native'); });
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.originalRootHandle).toBe(selected);
+    expect(result.current.rootHandle).toBe(root);
+    expect(result.current.inboxList[0].dirHandle).toBe(root);
+    expect(result.current.attachmentReferenceIndex?.chatMedia.get('alice.json')).toEqual(new Set(['media/photo.jpg']));
+    await expect(result.current.getDeleteInfo(result.current.inboxList[0])).resolves.toMatchObject({
+      exclusiveMediaFiles: ['photo.jpg'], mediaSize: 11,
+    });
+    await act(async () => {
+      const deletion = await result.current.deleteChats(result.current.inboxList);
+      expect(deletion.deleted).toHaveLength(1);
+      expect(deletion.failed).toEqual([]);
+    });
+    await expect(root.getFileHandle('alice.json')).rejects.toMatchObject({ name: 'NotFoundError' });
+    await expect((await root.getDirectoryHandle('media')).getFileHandle('photo.jpg')).rejects.toMatchObject({ name: 'NotFoundError' });
+    expect(removeParent).not.toHaveBeenCalled();
+    expect(result.current.inboxList).toEqual([]);
     unmount();
   });
 
@@ -121,6 +241,133 @@ describe('archive lifecycle integration', () => {
     expect(result.current.error).toContain('Cannot read the selected document');
     expect(result.current.error).toContain('Read-only access');
     expect(result.current.loading).toBe(false);
+    unmount();
+  });
+
+  it.each([false, true])('identifies a native picker failure with write request=%s', async requestWrite => {
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockRejectedValue(new DOMException('Requested document not found', 'NotFoundError')));
+    const { result, unmount } = renderHook(() => useArchive(false, true));
+    const picked = vi.fn();
+
+    await act(async () => { await result.current.openFolder(requestWrite, picked, 'native'); });
+
+    expect(result.current.error).toContain('Requested document not found');
+    expect(result.current.error).toContain('stage=folder picker; operation=showDirectoryPicker()');
+    expect(result.current.error).toContain(`picker returned=no; requested permission=${requestWrite ? 'readwrite' : 'read'}; error=NotFoundError`);
+    expect(picked).not.toHaveBeenCalled();
+    expect(result.current.folderSelectionPending).toBe(false);
+    expect(result.current.loading).toBe(false);
+    unmount();
+  });
+
+  it('identifies a native folder lookup failure', async () => {
+    const root = createMockDirectoryHandle('private-export', {});
+    vi.spyOn(root, 'getDirectoryHandle').mockRejectedValue(new DOMException('Access denied', 'NotAllowedError'));
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockResolvedValue(root));
+    const { result, unmount } = renderHook(() => useArchive(false, true));
+
+    await act(async () => { await result.current.openFolder(); });
+
+    expect(result.current.error).toContain('stage=Facebook folder lookup; operation=getDirectoryHandle(); folder depth=0');
+    expect(result.current.error).toContain('picker returned=yes; requested permission=read; error=NotAllowedError');
+    expect(result.current.error).not.toContain('private-export');
+    unmount();
+  });
+
+  it.each([0, 2])('identifies native enumeration failures at folder depth %i', async depth => {
+    const root = createMockDirectoryHandle('private-export', depth ? { wrapper: { wrapper: { 'notes.txt': 'private content' } } } : {});
+    let current = root;
+    for (let index = 0; index < depth; index++) current = await current.getDirectoryHandle('wrapper');
+    vi.spyOn(current, 'entries').mockImplementation(async function* () {
+      yield ['private.json', { kind: 'file', name: 'private.json', getFile: async () => new File(['{}'], 'private.json') }];
+      throw new DOMException('Requested directory not found', 'NotFoundError');
+    });
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockResolvedValue(root));
+    const { result, unmount } = renderHook(() => useArchive(false, true));
+
+    await act(async () => { await result.current.openFolder(); });
+
+    expect(result.current.error).toContain(`stage=Messenger detection; operation=entries(); folder depth=${depth}; entries read=1`);
+    expect(result.current.error).toContain('picker returned=yes');
+    expect(result.current.error).not.toContain('private');
+    unmount();
+  });
+
+  it.each(['getFile()', 'File.text()', 'JSON.parse()'])('identifies a native %s failure after later reads succeed', async operation => {
+    const root = createMockDirectoryHandle('private-export', {
+      'private-conversation.json': '{}', 'metadata.json': '{"settings":true}',
+    });
+    const fileHandle = await root.getFileHandle('private-conversation.json');
+    const error = operation === 'JSON.parse()' ? new RangeError('Cannot parse the document')
+      : new DOMException('Requested document not found', 'NotFoundError');
+    if (operation === 'getFile()') vi.spyOn(fileHandle, 'getFile').mockRejectedValue(error);
+    if (operation === 'File.text()') {
+      const file = new File(['{}'], 'private-conversation.json');
+      vi.spyOn(file, 'text').mockRejectedValue(error);
+      vi.spyOn(fileHandle, 'getFile').mockResolvedValue(file);
+    }
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockResolvedValue(root));
+    const { result, unmount } = renderHook(() => useArchive(false, true));
+    if (operation === 'JSON.parse()') {
+      const parse = JSON.parse;
+      vi.spyOn(JSON, 'parse').mockImplementation((content, ...args) => {
+        if (content === '{}') throw error;
+        return parse(content, ...args);
+      });
+    }
+
+    await act(async () => { await result.current.openFolder(); });
+
+    expect(result.current.error).toContain(error.message);
+    expect(result.current.error).toContain(`stage=Messenger detection; operation=${operation}; folder depth=0`);
+    expect(result.current.error).toContain(`error=${error.name}`);
+    expect(result.current.error).not.toContain('private');
+    expect(result.current.loading).toBe(false);
+    unmount();
+  });
+
+  it('identifies native enumeration failures while listing Facebook conversations', async () => {
+    const root = facebookRoot('private-export');
+    const inbox = await (await root.getDirectoryHandle('messages')).getDirectoryHandle('inbox');
+    vi.spyOn(inbox, 'entries').mockImplementation(() => { throw new DOMException('Requested directory not found', 'NotFoundError'); });
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockResolvedValue(root));
+    const { result, unmount } = renderHook(() => useArchive(false, true));
+
+    await act(async () => { await result.current.openFolder(); });
+
+    expect(result.current.error).toContain('stage=Facebook conversation listing; operation=entries(); entries read=0');
+    expect(result.current.error).toContain('error=NotFoundError');
+    unmount();
+  });
+
+  it('identifies native enumeration failures after Messenger detection succeeded', async () => {
+    const root = createMockDirectoryHandle('private-export', {
+      'alice.json': JSON.stringify({ threadName: 'Alice', participants: ['Alice'], messages: [] }),
+    });
+    const entries = root.entries.bind(root);
+    let calls = 0;
+    vi.spyOn(root, 'entries').mockImplementation(() => {
+      if (++calls > 1) throw new DOMException('Requested directory not found', 'NotFoundError');
+      return entries();
+    });
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockResolvedValue(root));
+    const { result, unmount } = renderHook(() => useArchive(false, true));
+
+    await act(async () => { await result.current.openFolder(); });
+
+    expect(result.current.error).toContain('stage=Messenger conversation listing; operation=entries(); entries read=0');
+    expect(result.current.error).toContain('error=NotFoundError');
+    unmount();
+  });
+
+  it('does not blame expected missing layout markers when the selected folder is unsupported', async () => {
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockResolvedValue(createMockDirectoryHandle('empty', {})));
+    const { result, unmount } = renderHook(() => useArchive(false, true));
+    await act(async () => { await result.current.openFolder(); });
+
+    expect(result.current.error).toContain('Could not find messages');
+    expect(result.current.error).toContain('stage=Messenger detection; operation=archive validation');
+    expect(result.current.error).not.toContain('operation=getDirectoryHandle()');
     unmount();
   });
 

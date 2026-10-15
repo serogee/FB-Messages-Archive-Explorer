@@ -59,7 +59,7 @@ export default function App() {
   const isMobile = useMobileLayout();
   const { controller: navigation, state: navigationState } = useMobileNavigation(isMobile);
   const location = navigationState.location;
-  const archive = useArchive(settings.deletionEnabled);
+  const archive = useArchive(settings.deletionEnabled, settings.debuggingEnabled);
   const chat = useChat();
   const attachmentReferences = useMemo(() => ({
     index: archive.attachmentReferenceIndex,
@@ -730,6 +730,7 @@ export default function App() {
           />
         ) : (
           <InfoPanel
+            debuggingEnabled={settings.debuggingEnabled}
             dateNavigation={isMobile ? <DateNavigator settings={settings} onJumpToMessage={handleJumpToMessage} onBrowseToMessage={handleBrowseToMessage} chatContainerRef={chatScrollContainerRef} mobile embedded /> : undefined}
             onBack={isMobile ? parent : undefined}
             hidden={isMobile && location.screen !== 'info'}

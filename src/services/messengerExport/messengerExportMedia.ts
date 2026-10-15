@@ -1,6 +1,8 @@
 import type { MediaEntry, MediaState } from '../../types/messenger';
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../../types/fileSystem';
 import { addMediaToIndex, getMediaType } from '../media';
+import { needsNamedFileLookup } from '../listedFileAccess';
+import { getMessengerExportMediaSource } from './messengerExportMediaSource';
 
 function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\.?\//, '');
@@ -10,18 +12,25 @@ async function collectMediaFiles(
   dirHandle: ReadableDirectoryHandle,
   prefix: string,
   files: Array<{ handle: ReadableFileHandle; path: string }>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  useNamedLookup = false,
+  flatUpload = false,
 ): Promise<void> {
   let lastYield = performance.now();
 
   for await (const [name, entry] of dirHandle.entries()) {
     if (signal?.aborted) return;
+    // Root JSON files describe conversations, rather than uploaded media.
+    if (flatUpload && /\.json$/i.test(name)) continue;
 
     const path = prefix ? `${prefix}/${name}` : name;
     if (entry.kind === 'file') {
-      files.push({ handle: entry, path });
+      try {
+        const handle = useNamedLookup ? await dirHandle.getFileHandle(name, { create: false }) : entry;
+        files.push({ handle, path });
+      } catch { /* An inaccessible media file must not hide the remaining files. */ }
     } else if (entry.kind === 'directory') {
-      await collectMediaFiles(entry, path, files, signal);
+      await collectMediaFiles(entry, path, files, signal, useNamedLookup);
     }
 
     if (performance.now() - lastYield > 16) {
@@ -37,16 +46,20 @@ export async function processMessengerExportMedia(
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  let mediaHandle: ReadableDirectoryHandle;
+  let source: Awaited<ReturnType<typeof getMessengerExportMediaSource>>;
   try {
-    mediaHandle = await rootHandle.getDirectoryHandle('media');
+    source = await getMessengerExportMediaSource(rootHandle, signal);
   } catch {
+    onProgress?.(0, 0);
+    return;
+  }
+  if (!source) {
     onProgress?.(0, 0);
     return;
   }
 
   const files: Array<{ handle: ReadableFileHandle; path: string }> = [];
-  await collectMediaFiles(mediaHandle, 'media', files, signal);
+  await collectMediaFiles(source.directory, source.prefix, files, signal, needsNamedFileLookup(rootHandle), source.flatUpload);
   if (signal?.aborted) return;
 
   const total = files.length;
@@ -63,6 +76,10 @@ export async function processMessengerExportMedia(
     await Promise.all(batch.map(async ({ handle, path }) => {
       try {
         const normalizedPath = normalizeRelativePath(path);
+        if (source.ambiguousNames.has(normalizedPath.toLowerCase())) {
+          state.ambiguousBasenames.add(normalizedPath.toLowerCase());
+          return;
+        }
         const type = getMediaType(handle.name);
         const entry: MediaEntry = { handle, type };
 

@@ -23,6 +23,7 @@ export interface Settings {
   infoPanelOpen: boolean;
   dontShowTrustModal: boolean;
   offlineSupportEnabled: boolean;
+  debuggingEnabled: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -45,6 +46,7 @@ const DEFAULTS: Settings = {
   infoPanelOpen: false,
   dontShowTrustModal: false,
   offlineSupportEnabled: true,
+  debuggingEnabled: false,
 };
 
 function loadSettings(): Settings {

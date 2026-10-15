@@ -6,6 +6,7 @@ import { mapWithConcurrency } from '../concurrency';
 import { getDeletableAttachmentIdentities } from '../attachmentReferenceIndex';
 import { classifyMessengerExportJson } from './messengerExportParser';
 import { waitForAttachmentPreview } from '../attachmentScanScheduling';
+import { readListedFile } from '../listedFileAccess';
 import { buildMessengerExportMediaSizeIndex, type MediaSizeIndex } from './messengerExportSize';
 import {
   addConversationToChatIndex,
@@ -259,7 +260,7 @@ export async function buildMessengerExportReferenceIndex(
   for (const { name, entry } of files) {
     await waitForAttachmentPreview(signal);
     try {
-      const file = await entry.getFile();
+      const file = await readListedFile(rootHandle, name, entry, signal);
       throwIfAborted(signal);
       const classification = classifyMessengerExportJson(await file.text());
       throwIfAborted(signal);

@@ -13,11 +13,13 @@ import { getMessageAttachmentReferences, isMediaReferenceFound } from '../../ser
 import { getMessageLinks } from '../../services/messageLinks';
 import { normalizeAttachmentPath } from '../../services/attachmentIdentity';
 import { useThreadData } from '../../hooks/useThreadData';
+import { AttachmentFileDetails } from './AttachmentFileDetails';
 
 interface InfoPanelProps {
   dateNavigation?: ReactNode;
   onBack?: () => void;
   hidden?: boolean;
+  debuggingEnabled?: boolean;
   chatData?: MessengerThread | null;
   activeEntry: ChatListEntry | null;
   mediaState: MediaState;
@@ -126,7 +128,7 @@ function computeStats(messages: MessengerMessage[], mediaState: MediaState, coun
   };
 }
 
-export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery, header, onBack, hidden = false, dateNavigation }: InfoPanelProps) {
+export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, selectedPerspective, onSelectPerspective, onOpenGallery, header, onBack, hidden = false, debuggingEnabled = false, dateNavigation }: InfoPanelProps) {
   const chatData = useThreadData(providedThread);
   const stats = useMemo(() => {
     if (!chatData) return null;
@@ -233,6 +235,9 @@ export function InfoPanel({ chatData: providedThread, activeEntry, mediaState, s
                     <span>Failed downloads</span>
                     <span className="attachment-count"><ResponsiveNumber value={stats.attachments.failedDownloads} /></span>
                   </div>
+                )}
+                {debuggingEnabled && activeEntry?._messengerExport && chatData && stats.attachments.reported > 0 && (
+                  <AttachmentFileDetails root={activeEntry.dirHandle} thread={chatData} mediaState={mediaState} />
                 )}
               </div>
             </div>

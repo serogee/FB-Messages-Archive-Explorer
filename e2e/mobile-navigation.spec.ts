@@ -61,6 +61,21 @@ async function openChat(page: Page, longMessages = 0, withValidImage = false, un
   await expectScreen(page, 'chat');
 }
 
+async function setMessengerPhoto(page: Page) {
+  await page.evaluate(async () => {
+    const fixture = window as unknown as { __testArchives: { messenger: FileSystemDirectoryHandle } };
+    const photo = await (await fixture.__testArchives.messenger.getDirectoryHandle('media')).getFileHandle('photo.jpg');
+    const canvas = document.createElement('canvas');
+    canvas.width = 12;
+    canvas.height = 24;
+    canvas.getContext('2d')!.fillRect(0, 0, 12, 24);
+    const png = await new Promise<Blob>(resolve => canvas.toBlob(blob => resolve(blob!)));
+    const writer = await photo.createWritable();
+    await writer.write(new Uint8Array(await png.arrayBuffer()));
+    await writer.close();
+  });
+}
+
 async function expectScreen(page: Page, screen: string) {
   await expect(page.locator('.container')).toHaveAttribute('data-mobile-screen', screen);
 }
@@ -71,6 +86,12 @@ async function selectFolderAccess(page: Page, mode: 'native' | 'upload') {
   await trigger.click();
   await page.getByRole('option', { name: label, exact: true }).click();
   await expect(trigger).toContainText(label);
+}
+
+async function enableDebuggingOnLoad(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(`majv_${location.hostname}_setting_debuggingEnabled`, '1');
+  });
 }
 
 async function expectLoadingAnimation(status: Locator, showSpinner = true) {
@@ -669,6 +690,7 @@ for (const accessMode of ['native', 'upload'] as const) {
     await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
     const alice = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
     await expect(alice).toBeVisible();
+    const preview = await alice.locator('.chat-item-preview').textContent();
     await page.evaluate(() => {
       const fixture = window as unknown as { chatParsingStarted?: boolean; releaseChatParsing?: () => void };
       const BrowserWorker = window.Worker;
@@ -691,11 +713,7 @@ for (const accessMode of ['native', 'upload'] as const) {
     const progress = page.getByRole('progressbar', { name: 'Chat loading progress' });
     await expect(progress).toBeVisible();
     await expect(page.locator('.load-progress-label')).toContainText(/Loading messages|Scanning files|Preparing files|Processing data/);
-    const spinner = page.locator('.load-progress-label .loading-spinner');
-    await expect(spinner).toBeVisible();
-    await expect(spinner).toHaveCSS('animation-name', 'loading-spin');
-    const firstTransform = await spinner.evaluate(element => getComputedStyle(element).transform);
-    await expect.poll(() => spinner.evaluate(element => getComputedStyle(element).transform)).not.toBe(firstTransform);
+    await expectLoadingAnimation(page.locator('.load-progress-label'));
     await expect.poll(() => page.evaluate(() => (window as unknown as { chatParsingStarted?: boolean }).chatParsingStarted)).toBe(true);
     await expect(page.locator('.chat-header h3')).toHaveText('Alice Chat');
     await page.screenshot({ path: test.info().outputPath(`chat-loading-${accessMode}-mobile.png`) });
@@ -703,8 +721,9 @@ for (const accessMode of ['native', 'upload'] as const) {
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect(alice).toBeVisible();
     await expect(alice).toHaveAttribute('aria-busy', 'true');
-    await expect(alice).toContainText('Loading chat…');
-    await expect(alice.locator('.loading-spinner')).toBeVisible();
+    await expect(alice.locator('.chat-item-preview')).toHaveText(preview!);
+    await expect(alice).not.toContainText('Loading chat');
+    await expect(alice.locator('.loading-spinner')).toHaveCount(0);
     await page.evaluate(() => (window as unknown as { releaseChatParsing: () => void }).releaseChatParsing());
     await expect(page.locator('#chat')).toHaveAttribute('aria-busy', 'false');
     await expect(page.locator('#chat')).toContainText('needle from Facebook');
@@ -966,6 +985,69 @@ for (const width of [390, 1280]) {
   });
 }
 
+test('debugging starts disabled and saves the selected option', async ({ page }) => {
+  await installArchive(page, 'messenger');
+  await page.goto('');
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'showDirectoryPicker', { configurable: true,
+      value: async () => { throw new DOMException('Requested document not found', 'NotFoundError'); } });
+  });
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  const error = page.locator('.sidebar-error-alert');
+  await expect(error).toContainText('Requested document not found');
+  await expect(error).not.toContainText('Native folder details:');
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  const debugging = page.getByRole('checkbox', { name: 'Enable debugging', exact: true });
+  const toggle = page.locator('label[for="debuggingEnabledToggle"]');
+  await expect(debugging).not.toBeChecked();
+  await toggle.click();
+  await expect(error).toContainText('Native folder details:');
+  await expect(error).toContainText('operation=showDirectoryPicker()');
+  await toggle.click();
+  await expect(error).toContainText('Requested document not found');
+  await expect(error).not.toContainText('Native folder details:');
+  await toggle.click();
+  await page.getByRole('button', { name: 'Open debugging information', exact: true }).click();
+  const info = page.getByRole('dialog', { name: 'Debugging', exact: true });
+  await expect(info).toContainText('detailed folder errors and attachment file details');
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await expect(debugging).toBeChecked();
+  await toggle.click();
+  await page.reload();
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await expect(debugging).not.toBeChecked();
+});
+
+test('debugging controls whether attachment file details are available', async ({ page }) => {
+  await installArchive(page, 'messenger', false, false, false, 0, true, 'Download', true);
+  await page.goto('');
+  await selectFolderAccess(page, 'upload');
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  const alice = page.locator('.chat-list-item').filter({ hasText: 'Messenger Alice' });
+  await alice.click();
+  await expect(page.locator('#chat')).toContainText('needle from Messenger');
+  await page.getByRole('button', { name: 'Open chat info', exact: true }).click();
+  await expect(page.locator('.attachment-file-details')).toHaveCount(0);
+  for (const enabled of [true, false]) {
+    await page.getByRole('button', { name: 'Back to chat', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to chat list', exact: true }).click();
+    await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+    await page.locator('label[for="debuggingEnabledToggle"]').click();
+    await expect(page.getByRole('checkbox', { name: 'Enable debugging', exact: true })).toBeChecked({ checked: enabled });
+    await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+    await alice.click();
+    await page.getByRole('button', { name: 'Open chat info', exact: true }).click();
+    const details = page.locator('.attachment-file-details');
+    await expect(details).toHaveCount(enabled ? 1 : 0);
+    if (enabled) {
+      await details.locator('summary').click();
+      await expect(details.locator('pre')).toContainText('Matched references: 3');
+    }
+  }
+});
+
 test('read-only mobile access disables write actions and native reopening restores preferences', async ({ page }) => {
   await installArchive(page, 'facebook', false, false, false, 0, true);
   await page.goto('');
@@ -992,8 +1074,105 @@ test('read-only mobile access disables write actions and native reopening restor
   await expect(deleteToggle).toBeChecked();
 });
 
+for (const { prefix, flat } of [
+  { prefix: '', flat: false }, { prefix: 'Download', flat: false }, { prefix: 'storage/Download', flat: false },
+  { prefix: 'Download', flat: true },
+]) {
+  test(`opens a standalone Messenger export through read-only mobile access (${prefix || 'no wrapper'}${flat ? ', flat files' : ''})`, async ({ page }) => {
+    await installArchive(page, 'messenger', false, false, false, 0, true, prefix, flat);
+    await enableDebuggingOnLoad(page);
+    await page.goto('');
+    await setMessengerPhoto(page);
+    await selectFolderAccess(page, 'upload');
+    await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+    const alice = page.locator('.chat-list-item').filter({ hasText: 'Messenger Alice' });
+    await expect(alice).toBeVisible();
+    await expect(page.locator('.chat-list-item').filter({ hasText: 'Messenger Group' })).toBeVisible();
+    await alice.click();
+    await expect(page.locator('#chat')).toContainText('needle from Messenger');
+    await expect(page.locator('.sidebar-error-alert')).toHaveCount(0);
+    const photo = page.locator('#chat img.preview').first();
+    await expect(photo).toBeVisible();
+    await expect.poll(() => photo.evaluate(element => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await page.getByRole('button', { name: 'Open chat info', exact: true }).click();
+    await page.locator('.attachment-file-details summary').click();
+    const details = page.locator('.attachment-file-details pre');
+    await expect(details).toContainText('Matched references: 3');
+    await expect(details).toContainText('Sample file bytes: OK');
+    if (flat) {
+      await expect(details).toContainText('Root listing: OK (5 files, 0 folders)');
+      await expect(details).toContainText('Attachment lookup: uploaded root files');
+    } else await expect(details).toContainText('Attachment lookup: media folder');
+    await page.getByRole('button', { name: 'Attachments', exact: true }).click();
+    await page.locator('.gallery-thumb[title="photo.jpg"]').click();
+    await expect.poll(() => page.locator('.media-viewer-image').evaluate(element => (element as HTMLImageElement).naturalWidth)).toBe(12);
+  });
+}
+
+for (const failure of ['missing folder', 'unreadable bytes']) {
+  test(`read-only attachment details identify ${failure}`, async ({ page }) => {
+    await installArchive(page, 'messenger', false, false, false, 0, true, 'Download');
+    await enableDebuggingOnLoad(page);
+    await page.goto('');
+    await setMessengerPhoto(page);
+    await page.evaluate(async failure => {
+      if (failure === 'missing folder') {
+        const fixture = window as unknown as { __testArchives: { messenger: FileSystemDirectoryHandle } };
+        const media = await fixture.__testArchives.messenger.getDirectoryHandle('media');
+        media.entries = async function* () { yield* []; };
+      } else {
+        const arrayBuffer = Blob.prototype.arrayBuffer;
+        Blob.prototype.arrayBuffer = function () {
+          if (this.size === 1) return Promise.reject(new DOMException('File bytes unavailable', 'NotReadableError'));
+          return arrayBuffer.call(this);
+        };
+      }
+    }, failure);
+    await selectFolderAccess(page, 'upload');
+    await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+    await page.locator('.chat-list-item').filter({ hasText: 'Messenger Alice' }).click();
+    await expect(page.locator('#chat')).toContainText('needle from Messenger');
+    await page.getByRole('button', { name: 'Open chat info', exact: true }).click();
+    await page.locator('.attachment-file-details summary').click();
+    const details = page.locator('.attachment-file-details pre');
+    await expect(details).toContainText('Attachment references: 3');
+    if (failure === 'missing folder') {
+      await expect(details).toContainText('Matched references: 0');
+      await expect(details).toContainText('Media folder lookup: NotFoundError');
+    } else {
+      await expect(details).toContainText('Matched references: 3');
+      await expect(details).toContainText('Sample getFile(): OK');
+      await expect(details).toContainText('Sample file bytes: NotReadableError');
+    }
+    await expect(details).not.toContainText('photo.jpg');
+    expect(await details.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  });
+}
+
+test('reports browser folder details when a read-only Messenger upload is rejected', async ({ page }) => {
+  await installArchive(page, 'messenger');
+  await enableDebuggingOnLoad(page);
+  await page.goto('');
+  await selectFolderAccess(page, 'upload');
+  await page.evaluate(() => {
+    HTMLInputElement.prototype.click = function () {
+      const file = new File([''], 'private-conversation.json');
+      Object.defineProperty(file, 'webkitRelativePath', { value: 'messenger/private-conversation.json' });
+      Object.defineProperty(this, 'files', { value: [file] });
+      this.dispatchEvent(new Event('change'));
+    };
+  });
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  const error = page.locator('.sidebar-error-alert');
+  await expect(error).toContainText('1 JSON files (1 invalid, 0 unrecognized, 1 empty)');
+  await expect(error).toContainText('Folder upload: 1 files, 1 JSON filenames, 1 JSON paths, 1 top-level JSON files');
+  await expect(error).not.toContainText('private-conversation');
+  await expect(page.getByRole('button', { name: /Select messages folder|Select folder/ })).toBeEnabled();
+});
+
 test('native mobile picker failure allows retrying with read-only access', async ({ page }) => {
   await installArchive(page, 'facebook', false, false, false, 0, true);
+  await enableDebuggingOnLoad(page);
   await page.goto('');
   await page.evaluate(() => {
     Object.defineProperty(window, 'showDirectoryPicker', { configurable: true,
@@ -1002,12 +1181,85 @@ test('native mobile picker failure allows retrying with read-only access', async
   await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
   await expect(page.locator('.sidebar-error-alert')).toContainText('Native permission denied');
   await expect(page.locator('.sidebar-error-alert')).toContainText('Read-only access');
+  await expect(page.locator('.sidebar-error-alert')).toContainText('stage=folder picker; operation=showDirectoryPicker()');
+  await expect(page.locator('.sidebar-error-alert')).toContainText('picker returned=no; requested permission=readwrite; error=NotAllowedError');
   await selectFolderAccess(page, 'upload');
   await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
   await expect(page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' })).toBeVisible();
   await expect(page.locator('.sidebar-error-alert')).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Folder access', exact: true })).toContainText('Read-only access');
+});
+
+for (const operation of ['entries()', 'getFile()', 'File.text()']) {
+  test(`native mobile failure reports ${operation} in the visible error`, async ({ page }) => {
+    await installArchive(page, 'messenger');
+    await enableDebuggingOnLoad(page);
+    await page.goto('');
+    await page.evaluate(async operation => {
+      const fixture = window as unknown as { __testArchives: { messenger: FileSystemDirectoryHandle } };
+      const root = fixture.__testArchives.messenger;
+      if (operation === 'entries()') {
+        root.entries = () => { throw new DOMException('Requested directory not found', 'NotFoundError'); };
+      } else {
+        const alice = await root.getFileHandle('alice.json');
+        root.entries = async function* () { yield ['alice.json', alice]; };
+        if (operation === 'getFile()') {
+          alice.getFile = async () => { throw new DOMException('Requested document not found', 'NotFoundError'); };
+        } else {
+          const file = await alice.getFile();
+          file.text = async () => { throw new DOMException('Requested document not found', 'NotFoundError'); };
+          alice.getFile = async () => file;
+        }
+      }
+    }, operation);
+    await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+    const error = page.locator('.sidebar-error-alert');
+    await expect(error).toBeVisible();
+    await expect(error).toContainText(`stage=Messenger detection; operation=${operation}; folder depth=0`);
+    await expect(error).toContainText('picker returned=yes; requested permission=readwrite; error=NotFoundError');
+    if (operation === 'getFile()') await expect(error).toContainText('reopen operation=getFile(); reopen error=NotFoundError');
+    await expect(error).not.toContainText('alice.json');
+    await expect(page.getByRole('button', { name: /Select messages folder|Select folder/ })).toBeEnabled();
+    expect(await error.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  });
+}
+
+test('native mobile access reopens unreadable enumerated files by name', async ({ page }) => {
+  await installArchive(page, 'messenger');
+  await page.goto('');
+  await setMessengerPhoto(page);
+  await page.evaluate(async () => {
+    const fixture = window as unknown as { __testArchives: { messenger: FileSystemDirectoryHandle } };
+    const root = fixture.__testArchives.messenger;
+    const breakListedFiles = async (directory: FileSystemDirectoryHandle) => {
+      const entries = directory.entries.bind(directory);
+      const directories: FileSystemDirectoryHandle[] = [];
+      for await (const [, entry] of entries()) if (entry.kind === 'directory') directories.push(entry);
+      directory.entries = async function* () {
+        for await (const [name, entry] of entries()) yield [name, entry.kind === 'directory' ? entry : {
+          kind: 'file', name,
+          getFile: async () => { throw new DOMException('Listed document not found', 'NotFoundError'); },
+        } as FileSystemFileHandle];
+      };
+      for (const directory of directories) await breakListedFiles(directory);
+    };
+    await breakListedFiles(root);
+  });
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  const alice = page.locator('.chat-list-item').filter({ hasText: 'Messenger Alice' });
+  await expect(alice).toBeVisible();
+  await expect(page.locator('.chat-list-item').filter({ hasText: 'Messenger Group' })).toBeVisible();
+  await expect(page.locator('.sidebar-error-alert')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await expect(page.getByLabel('Enable bookmarking', { exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Enable chat deletion', { exact: true })).toBeEnabled();
+  await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+  await alice.click();
+  await expect(page.locator('#chat')).toContainText('needle from Messenger');
+  await openGallery(page);
+  await page.locator('.gallery-thumb[title="photo.jpg"]').click();
+  await expect.poll(() => page.locator('.media-viewer-image').evaluate(element => (element as HTMLImageElement).naturalWidth)).toBe(12);
 });
 
 test('mobile browsers without native access use the read-only picker', async ({ page }) => {

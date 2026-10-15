@@ -1,5 +1,7 @@
 import type { ChatListEntry, MessengerThread } from '../../types/messenger';
 import type { ReadableDirectoryHandle, ReadableFileHandle } from '../../types/fileSystem';
+import { runFolderOperation, type FolderOpenDiagnostics } from '../folderOpenDiagnostics';
+import { readListedFile } from '../listedFileAccess';
 import { getMessageTimestamp } from '../parser';
 import { getMessageBump } from '../messageBump';
 import {
@@ -62,6 +64,7 @@ export interface MessengerExportListingResult {
 }
 
 export interface MessengerExportListingOptions {
+  diagnostics?: FolderOpenDiagnostics;
   collectOwnership?: boolean;
   ownershipSignal?: AbortSignal;
 }
@@ -79,6 +82,7 @@ export async function listMessengerExportChatsIndexed(
   signal?: AbortSignal,
   options: MessengerExportListingOptions = {},
 ): Promise<MessengerExportListingResult> {
+  const diagnostics = options.diagnostics;
   const sizeMetadata = createMessengerExportSizeMetadata();
   let chatIndex = options.collectOwnership !== false && !options.ownershipSignal?.aborted
     ? createMessengerExportChatIndex(sizeMetadata) : undefined;
@@ -87,7 +91,7 @@ export async function listMessengerExportChatsIndexed(
   try {
     const fileHandles: Array<{ name: string; handle: ReadableFileHandle }> = [];
 
-    for await (const [name, entry] of handle.entries()) {
+    for await (const [name, entry] of diagnostics ? diagnostics.entries(handle) : handle.entries()) {
       if (signal?.aborted) return { entries: [], sizeMetadata, chatIndex };
       if (entry.kind === 'file' && /\.json$/i.test(name)) {
         fileHandles.push({ name, handle: entry });
@@ -102,10 +106,10 @@ export async function listMessengerExportChatsIndexed(
       const { name, handle: fileHandle } = fileHandles[i];
 
       try {
-        const file = await fileHandle.getFile();
-        const content = await file.text();
+        const file = await readListedFile(handle, name, fileHandle, signal, diagnostics);
+        const content = await runFolderOperation(diagnostics, 'File.text()', () => file.text());
         if (signal?.aborted) return { entries, sizeMetadata, chatIndex };
-        const classification = classifyMessengerExportJson(content);
+        const classification = await runFolderOperation(diagnostics, 'JSON.parse()', () => classifyMessengerExportJson(content));
         if (classification.kind === 'malformed-conversation') {
           if (chatIndex) markMessengerExportIndexIncomplete(chatIndex, {
             jsonFileName: name,

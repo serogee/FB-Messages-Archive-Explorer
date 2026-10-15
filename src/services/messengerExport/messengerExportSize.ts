@@ -2,6 +2,8 @@ import { getMessageAttachmentReferences } from '../media';
 import { parseMessengerExportJson } from './messengerExportParser';
 import type { ReadableDirectoryHandle } from '../../types/fileSystem';
 import type { CalculationProgress } from '../calculationProgress';
+import { readListedFile } from '../listedFileAccess';
+import { getMessengerExportMediaSource } from './messengerExportMediaSource';
 import {
   getMessengerMediaBasename,
   getMessengerMediaIdentity,
@@ -33,17 +35,20 @@ async function collectMediaSizes(
   basenamePaths: Map<string, string>,
   ambiguousBasenames: Set<string>,
   signal?: AbortSignal,
-  onFileChecked?: () => void
+  onFileChecked?: () => void,
+  flatUpload = false,
+  ambiguousNames: ReadonlySet<string> = new Set(),
 ): Promise<void> {
   let lastYield = performance.now();
 
   for await (const [name, entry] of dirHandle.entries()) {
     throwIfAborted(signal);
+    if (flatUpload && (/\.json$/i.test(name) || ambiguousNames.has(name.toLowerCase()))) continue;
 
     const path = prefix ? `${prefix}/${name}` : name;
     if (entry.kind === 'file') {
       try {
-        const file = await entry.getFile();
+        const file = await readListedFile(dirHandle, name, entry, signal);
         throwIfAborted(signal);
         const normalizedPath = normalizeMediaPath(path);
         const sourcePath = path.replace(/\\/g, '/').replace(/^\.?\//, '');
@@ -91,9 +96,10 @@ export async function buildMessengerExportMediaSizeIndex(
 
   try {
     throwIfAborted(signal);
-    const mediaHandle = await rootHandle.getDirectoryHandle('media');
+    const source = await getMessengerExportMediaSource(rootHandle, signal);
     throwIfAborted(signal);
-    await collectMediaSizes(mediaHandle, 'media', index, basenamePaths, ambiguousBasenames, signal, () => { done++; report(); });
+    if (source) await collectMediaSizes(source.directory, source.prefix, index, basenamePaths, ambiguousBasenames, signal,
+      () => { done++; report(); }, source.flatUpload, source.ambiguousNames);
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error;
