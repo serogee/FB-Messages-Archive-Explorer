@@ -315,6 +315,9 @@ export function DateNavigator({ chatData: providedThread, settings: _settings, o
         setActiveKey(bucket.key);
         keepBucketVisible(bucket.key);
         if (embedded) { onBrowseToMessage?.(bucket.index); return; }
+        syncingRef.current = true;
+        await onJumpToMessage(bucket.index);
+        setTimeout(() => { syncingRef.current = false; }, DATE_NAV_SYNC_LOCK_MS);
       };
 
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); cb(-1); }
