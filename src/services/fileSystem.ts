@@ -2,7 +2,7 @@ import type { ChatListEntry, MessengerThread } from '../types/messenger';
 import { parseMessengerJsonContent, getOrderedMessageFileNames, getMessageTimestamp } from './parser';
 import { processMediaFromDirectory, createMediaState } from './media';
 import type { MediaState } from '../types/messenger';
-import type { ReadableDirectoryHandle, WritableDirectoryHandle } from '../types/fileSystem';
+import type { FolderAccessMode, ReadableDirectoryHandle, WritableDirectoryHandle } from '../types/fileSystem';
 import { getMessageBump } from './messageBump';
 import type { MetaArchivePlatform } from './metaAttachmentPaths';
 
@@ -75,26 +75,17 @@ export function isWriteAccessSupported(): boolean {
 
 import { openFolderPolyfill } from './polyfill';
 
-// Chrome Android supports showDirectoryPicker but the returned handles may
-// not iterate directory entries reliably through the Storage Access Framework.
-// Fall back to the upload-based polyfill on mobile devices so folder selection
-// works consistently across Android browsers.
-function shouldUsePolyfill(): boolean {
-  if (!isFileSystemAccessSupported()) return true;
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-}
-
-export async function pickMessagesFolder(): Promise<ReadableDirectoryHandle> {
-  if (shouldUsePolyfill()) {
-    return openFolderPolyfill();
+export async function pickMessagesFolder(accessMode: FolderAccessMode = 'native', onPreparationProgress?: (done: number, total: number) => void): Promise<ReadableDirectoryHandle> {
+  if (accessMode === 'upload' || !isFileSystemAccessSupported()) {
+    return openFolderPolyfill(onPreparationProgress);
   }
   return window.showDirectoryPicker({ id: 'messages-folder', mode: 'read' });
 }
 
-export async function pickFolderWithWriteAccess(): Promise<ReadableDirectoryHandle> {
-  if (shouldUsePolyfill()) {
+export async function pickFolderWithWriteAccess(accessMode: FolderAccessMode = 'native', onPreparationProgress?: (done: number, total: number) => void): Promise<ReadableDirectoryHandle> {
+  if (accessMode === 'upload' || !isFileSystemAccessSupported()) {
     // Upload fallback handles are read-only but still support archive browsing.
-    return openFolderPolyfill();
+    return openFolderPolyfill(onPreparationProgress);
   }
   return window.showDirectoryPicker({ id: 'messages-folder', mode: 'readwrite' });
 }
