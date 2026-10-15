@@ -5,6 +5,7 @@ import type { MediaState } from '../types/messenger';
 import type { FolderAccessMode, ReadableDirectoryHandle, WritableDirectoryHandle } from '../types/fileSystem';
 import { getMessageBump } from './messageBump';
 import type { MetaArchivePlatform } from './metaAttachmentPaths';
+import { runFolderOperation, type FolderOpenDiagnostics } from './folderOpenDiagnostics';
 
 const SELECTED_MESSAGES_DIRECTORY = [] as const;
 const FACEBOOK_EXPORT_MESSAGES_DIRECTORY = ['messages'] as const;
@@ -22,10 +23,10 @@ function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
 }
 
-async function containsFacebookConversations(handle: ReadableDirectoryHandle): Promise<boolean> {
+async function containsFacebookConversations(handle: ReadableDirectoryHandle, diagnostics?: FolderOpenDiagnostics, depth = 0): Promise<boolean> {
   for (const section of FACEBOOK_CONVERSATION_SECTIONS) {
     try {
-      await handle.getDirectoryHandle(section);
+      await runFolderOperation(diagnostics, 'getDirectoryHandle()', () => handle.getDirectoryHandle(section), depth);
       return true;
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
@@ -41,15 +42,17 @@ export async function resolveFacebookMessagesRoot(
 }
 
 export async function resolveFacebookMessagesRootInfo(
-  handle: ReadableDirectoryHandle
+  handle: ReadableDirectoryHandle,
+  diagnostics?: FolderOpenDiagnostics,
 ): Promise<{ handle: ReadableDirectoryHandle; instagram: boolean; platform: MetaArchivePlatform } | null> {
   for (const path of FACEBOOK_MESSAGES_ROOT_PATHS) {
     try {
       let current = handle;
-      for (const segment of path) {
-        current = await current.getDirectoryHandle(segment);
+      for (let depth = 0; depth < path.length; depth++) {
+        const parent = current;
+        current = await runFolderOperation(diagnostics, 'getDirectoryHandle()', () => parent.getDirectoryHandle(path[depth]), depth);
       }
-      if (await containsFacebookConversations(current)) {
+      if (await containsFacebookConversations(current, diagnostics, path.length)) {
         const activity = path[0] === 'your_instagram_activity' || path[0] === 'your_facebook_activity'
           ? path[0] : handle.name;
         const platform = activity === 'your_instagram_activity' ? 'instagram'
@@ -96,11 +99,12 @@ export async function listChatFolders(
   subfolderName: 'inbox' | 'archived_threads' | 'message_requests' | 'e2ee_cutover',
   source: 'inbox' | 'archived' | 'requests' | 'e2ee',
   onProgress?: (done: number, total: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  diagnostics?: FolderOpenDiagnostics,
 ): Promise<ChatListEntry[]> {
   let subfolderDir: ReadableDirectoryHandle;
   try {
-    subfolderDir = await parentHandle.getDirectoryHandle(subfolderName);
+    subfolderDir = await runFolderOperation(diagnostics, 'getDirectoryHandle()', () => parentHandle.getDirectoryHandle(subfolderName));
   } catch {
     if (onProgress) onProgress(0, 0);
     return [];
@@ -109,7 +113,7 @@ export async function listChatFolders(
   const entries: ChatListEntry[] = [];
   const handles: { name: string; handle: ReadableDirectoryHandle }[] = [];
 
-  for await (const [name, handle] of subfolderDir.entries()) {
+  for await (const [name, handle] of diagnostics ? diagnostics.entries(subfolderDir) : subfolderDir.entries()) {
     if (signal?.aborted) return entries;
     if (handle.kind === 'directory') {
       handles.push({ name, handle });
@@ -124,10 +128,10 @@ export async function listChatFolders(
     const { name, handle: chatDir } = handles[i];
 
     try {
-      const fileHandle = await chatDir.getFileHandle('message_1.json');
-      const file = await fileHandle.getFile();
-      const content = await file.text();
-      const parsed = parseMessengerJsonContent(content);
+      const fileHandle = await runFolderOperation(diagnostics, 'getFileHandle()', () => chatDir.getFileHandle('message_1.json'));
+      const file = await runFolderOperation(diagnostics, 'getFile()', () => fileHandle.getFile());
+      const content = await runFolderOperation(diagnostics, 'File.text()', () => file.text());
+      const parsed = await runFolderOperation(diagnostics, 'JSON.parse()', () => parseMessengerJsonContent(content));
 
       const participants = (parsed.participants || []).map(p => p.name).filter(Boolean);
 
@@ -165,7 +169,7 @@ export async function listChatFolders(
       const lastTimestamp = lastMsg ? getMessageTimestamp(lastMsg) ?? undefined : undefined;
 
       let jsonFileCount = 0;
-      for await (const [entryName, entryHandle] of chatDir.entries()) {
+      for await (const [entryName, entryHandle] of diagnostics ? diagnostics.entries(chatDir) : chatDir.entries()) {
         if (entryHandle.kind === 'file' && /message_\d+\.json$/i.test(entryName)) {
           jsonFileCount++;
         }

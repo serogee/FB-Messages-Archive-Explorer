@@ -1,5 +1,25 @@
 import type { ReadableDirectoryHandle, ReadableEntryHandle, ReadableFileHandle } from '../types/fileSystem';
 
+interface FolderUploadInfo {
+  files: number;
+  jsonFileNames: number;
+  jsonPaths: number;
+  rootJsonFiles: number;
+  missingRelativePaths: number;
+}
+
+const folderUploads = new WeakMap<ReadableDirectoryHandle, FolderUploadInfo>();
+
+export function getFolderUploadInfo(handle: ReadableDirectoryHandle): Readonly<FolderUploadInfo> | undefined {
+  return folderUploads.get(handle);
+}
+
+function createUploadRoot(): VirtualDirectoryHandle {
+  const root = new VirtualDirectoryHandle('root');
+  folderUploads.set(root, { files: 0, jsonFileNames: 0, jsonPaths: 0, rootJsonFiles: 0, missingRelativePaths: 0 });
+  return root;
+}
+
 export class VirtualFileHandle implements ReadableFileHandle {
   kind = 'file' as const;
   name: string;
@@ -89,10 +109,18 @@ function addUploadedFile(root: VirtualDirectoryHandle, file: File): void {
   }
   const fileName = parts[parts.length - 1];
   currentDir.addChild(fileName, new VirtualFileHandle(fileName, file));
+  const info = folderUploads.get(root)!;
+  info.files++;
+  if (/\.json$/i.test(file.name)) info.jsonFileNames++;
+  if (/\.json$/i.test(fileName)) {
+    info.jsonPaths++;
+    if (parts.length === 1) info.rootJsonFiles++;
+  }
+  if (!relativePath) info.missingRelativePaths++;
 }
 
 export function createVirtualFileSystem(files: FileList | File[]): ReadableDirectoryHandle {
-  const root = new VirtualDirectoryHandle('root');
+  const root = createUploadRoot();
   for (let i = 0; i < files.length; i++) addUploadedFile(root, files[i]);
   return root;
 }
@@ -104,7 +132,7 @@ async function prepareUploadedFolder(files: FileList | File[], onProgress?: (don
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(resolve, 0));
     else setTimeout(resolve, 0);
   });
-  const root = new VirtualDirectoryHandle('root');
+  const root = createUploadRoot();
   let lastYield = performance.now();
   for (let i = 0; i < files.length; i++) {
     addUploadedFile(root, files[i]);

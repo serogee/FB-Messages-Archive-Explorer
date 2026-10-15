@@ -34,6 +34,7 @@ const INFO_TITLES = {
     management: 'Chat management',
     downloads: 'Downloads',
     offline: 'Offline use',
+    debugging: 'Debugging',
 };
 
 function SettingsSection({ title, children, onInfo, className = '' }: {
@@ -713,6 +714,15 @@ export function SettingsPanel({
                 )}
             </SettingsSection>
 
+            <SettingsSection title="Debugging" onInfo={() => setInfoSection('debugging')}>
+                <ToggleRow
+                    id="debuggingEnabledToggle"
+                    label="Enable debugging"
+                    checked={settings.debuggingEnabled}
+                    onChange={value => setSetting('debuggingEnabled', value)}
+                />
+            </SettingsSection>
+
             <SettingsSection title="Help">
                 <button
                     className="settings-shortcuts-btn"
@@ -843,6 +853,9 @@ export function SettingsPanel({
                             <SettingsInfoRow label="Offline use">Store the app files and chat parsers so the app can open offline.</SettingsInfoRow>
                             <SettingsInfoRow label="Archive files">Messages and attachments are not stored in the app cache.</SettingsInfoRow>
                         </>
+                    )}
+                    {infoSection === 'debugging' && (
+                        <SettingsInfoRow label="Enable debugging">Show detailed folder errors and attachment file details in Chat info. Disabled by default.</SettingsInfoRow>
                     )}
                 </SettingsInfoModal>
             )}

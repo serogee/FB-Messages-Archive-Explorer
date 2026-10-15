@@ -58,6 +58,8 @@ button.unavailable-attachment:focus-visible {
 .settings strong { font-size: 16px; color: var(--text); }
 .title-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .title-text { color:var(--text); min-width:0; }
+/* Mobile navigation focuses this container to announce the current screen. */
+.title-text:focus { outline:none; }
 .title-full { white-space:nowrap; }
 .title-short { display:none; white-space:nowrap; }
 
@@ -363,3 +365,7 @@ button.unavailable-attachment:focus-visible {
 .reaction-search-hint button, .reaction-empty-chat button { color: var(--accent); border: 0; background: transparent; cursor: pointer; }
 .reaction-empty-chat { text-align: center; padding: 24px; color: var(--muted); }
 .perspective-dropdown-btn:disabled { opacity: .5; cursor: default; }
+.attachment-file-details { margin-top:8px; min-width:0; font-size:12px; color:var(--muted); }
+.attachment-file-details summary { cursor:pointer; color:var(--accent); }
+.attachment-file-details p { line-height:1.4; }
+.attachment-file-details pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:1.5; user-select:text; -webkit-user-select:text; }

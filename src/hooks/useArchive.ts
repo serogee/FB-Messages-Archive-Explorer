@@ -23,7 +23,7 @@ import {
   getMessengerExportDeletionInfo,
   getMessengerExportDeletionOwnershipInfo,
   getMessengerMediaBasename,
-  isMessengerExport,
+  resolveMessengerExportRoot,
   listMessengerExportChatsIndexed,
   MessengerExportIndexIncompleteError,
   MessengerExportMediaSizeUnavailableError,
@@ -46,6 +46,8 @@ import { buildMetaAttachmentReferenceIndex, type MetaAttachmentReferenceIndex } 
 import { buildMetaChatDeletionPlan, getMetaFolderDeletionBlock, MetaChatDeletionBlockedError } from '../services/metaChatDeletion';
 import { CalculationProgressStore, followCalculationProgress, type CalculationProgress } from '../services/calculationProgress';
 import type { MetaArchivePlatform } from '../services/metaAttachmentPaths';
+import { getFolderUploadInfo } from '../services/polyfill';
+import { FolderOpenDiagnostics, runFolderOperation } from '../services/folderOpenDiagnostics';
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -182,7 +184,7 @@ type SizeWorkPlan =
       generation: number;
     };
 
-export function useArchive(deletionEnabled: boolean): {
+export function useArchive(deletionEnabled: boolean, debuggingEnabled = false): {
   rootHandle: ReadableDirectoryHandle | null;
   reactionSourceRevision: number;
   reactionMutationPending: boolean;
@@ -237,6 +239,7 @@ export function useArchive(deletionEnabled: boolean): {
   const [loadProgress, setLoadProgress] = useState<{ done: number; total: number } | null>(null);
   const [sizeProgress, setSizeProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
   const archiveGenerationRef = useRef(0);
   const folderPickerRequestRef = useRef(0);
@@ -690,6 +693,7 @@ export function useArchive(deletionEnabled: boolean): {
 
   const openFolder = useCallback(async (requestWrite?: boolean, onFolderPicked?: () => void, accessMode: FolderAccessMode = 'native'): Promise<boolean> => {
     let abortCtrl: AbortController | null = null;
+    let browserFolderDetails = '';
     const pickerRequest = ++folderPickerRequestRef.current;
     setFolderSelectionPending(true);
     setFolderPreparationProgress(null);
@@ -700,10 +704,13 @@ export function useArchive(deletionEnabled: boolean): {
       setFolderPreparationProgress({ done, total });
     };
     const nativeSelected = accessMode === 'native' && isFileSystemAccessSupported();
+    const diagnostics = nativeSelected ? new FolderOpenDiagnostics(requestWrite ? 'readwrite' : 'read') : undefined;
     try {
-      const handle = requestWrite ? await pickFolderWithWriteAccess(accessMode, onPreparationProgress)
-        : await pickMessagesFolder(accessMode, onPreparationProgress);
+      const handle = await runFolderOperation(diagnostics, 'showDirectoryPicker()', () => requestWrite
+        ? pickFolderWithWriteAccess(accessMode, onPreparationProgress)
+        : pickMessagesFolder(accessMode, onPreparationProgress));
       if (pickerRequest !== folderPickerRequestRef.current) return false;
+      if (diagnostics) diagnostics.pickerReturned = true;
       setFolderSelectionPending(false);
       setFolderPreparationProgress(null);
       onFolderPicked?.();
@@ -711,6 +718,7 @@ export function useArchive(deletionEnabled: boolean): {
       const generation = ++archiveGenerationRef.current;
       
       setError(null);
+      setErrorDetails('');
       setLoading(true);
       setLoadProgress({ done: 0, total: 0 });
 
@@ -748,23 +756,31 @@ export function useArchive(deletionEnabled: boolean): {
       deletedSizeEntryKeysRef.current.clear();
       sizeComputationPromisesRef.current.clear();
       
-      const messagesRootInfo = await resolveFacebookMessagesRootInfo(handle);
+      if (diagnostics) diagnostics.stage = 'Facebook folder lookup';
+      const messagesRootInfo = await resolveFacebookMessagesRootInfo(handle, diagnostics);
       const messagesRoot = messagesRootInfo?.handle;
       if (!messagesRoot) {
-        const messengerExport = await isMessengerExport(handle);
-        if (!messengerExport) {
-          throw new Error("Could not find messages in this folder. Make sure you selected an extracted Facebook, Instagram, or Messenger export in JSON format.");
+        const detection = { files: 0, directories: 0, jsonFiles: 0, invalidJsonFiles: 0, otherJsonFiles: 0, emptyJsonFiles: 0 };
+        if (diagnostics) diagnostics.stage = 'Messenger detection';
+        const messengerRoot = await resolveMessengerExportRoot(handle, detection, abortCtrl.signal, diagnostics);
+        if (!messengerRoot) {
+          const upload = getFolderUploadInfo(handle);
+          const uploadDetails = upload
+            ? ` Folder upload: ${upload.files} files, ${upload.jsonFileNames} JSON filenames, ${upload.jsonPaths} JSON paths, ${upload.rootJsonFiles} top-level JSON files, ${upload.missingRelativePaths} files without relative paths.`
+            : '';
+          browserFolderDetails = `Browser folder details: ${detection.files} top-level files, ${detection.directories} subfolders, ${detection.jsonFiles} JSON files (${detection.invalidJsonFiles} invalid, ${detection.otherJsonFiles} unrecognized, ${detection.emptyJsonFiles} empty).${uploadDetails}`;
+          throw new Error('Could not find messages in this folder. Select an extracted Facebook, Instagram, or Messenger export in JSON format.');
         }
 
         isMessengerExportRef.current = true;
         setOriginalRootHandle(handle);
-        setRootHandle(handle);
+        setRootHandle(messengerRoot);
 
         const revision = ownershipRevisionRef.current;
         const isCurrent = () => deletionEnabledRef.current && archiveGenerationRef.current === generation
           && ownershipRevisionRef.current === revision;
         const ownershipController = new AbortController();
-        const collectOwnership = deletionEnabledRef.current && isWritableDirectoryHandle(handle);
+        const collectOwnership = deletionEnabledRef.current && isWritableDirectoryHandle(messengerRoot);
         if (collectOwnership) ownershipAbortRef.current = ownershipController;
         const progress = new CalculationProgressStore();
         referenceProgressRef.current = progress;
@@ -772,14 +788,15 @@ export function useArchive(deletionEnabled: boolean): {
           setAttachmentReferenceIndexLoading(true);
           setAttachmentReferenceScan({ status: 'checking', progress });
         }
+        if (diagnostics) diagnostics.stage = 'Messenger conversation listing';
         const { entries: inbox, chatIndex, sizeMetadata } = await listMessengerExportChatsIndexed(
-          handle,
+          messengerRoot,
           (done, total) => {
             setLoadProgress({ done, total });
             if (collectOwnership && isCurrent()) progress.report({ stage: 'ownership', label: 'Scanning for shared attachments', done, total, unit: 'files' });
           },
           abortCtrl.signal,
-          { collectOwnership, ownershipSignal: ownershipController.signal },
+          { collectOwnership, ownershipSignal: ownershipController.signal, diagnostics },
         ).catch(error => {
           if (collectOwnership && isCurrent()) {
             setAttachmentReferenceIndexLoading(false);
@@ -797,10 +814,10 @@ export function useArchive(deletionEnabled: boolean): {
         setArchivePerspectiveKey(perspective.archiveKey);
         setArchivePerspectiveName(perspective.name);
 
-        messengerSizeMetadataRef.current = { rootHandle: handle, generation, metadata: sizeMetadata };
+        messengerSizeMetadataRef.current = { rootHandle: messengerRoot, generation, metadata: sizeMetadata };
         if (chatIndex && isCurrent()) {
-          messengerChatIndexRef.current = { rootHandle: handle, generation, chatIndex };
-          messengerReferenceIndexCacheRef.current.set(handle, generation, chatIndex.referenceIndex);
+          messengerChatIndexRef.current = { rootHandle: messengerRoot, generation, chatIndex };
+          messengerReferenceIndexCacheRef.current.set(messengerRoot, generation, chatIndex.referenceIndex);
           setAttachmentReferenceIndex(chatIndex.referenceIndex);
           setAttachmentReferenceIndexLoading(false);
           setAttachmentReferenceScan({ status: chatIndex.referenceIndex.complete ? 'complete' : 'incomplete', progress });
@@ -812,7 +829,7 @@ export function useArchive(deletionEnabled: boolean): {
         setInboxList(inbox);
         setArchivedList([]);
         setRequestsList([]);
-        sizeWorkPlanRef.current = { kind: 'messenger', rootHandle: handle, generation, sizeMetadata };
+        sizeWorkPlanRef.current = { kind: 'messenger', rootHandle: messengerRoot, generation, sizeMetadata };
         startBackgroundSizeWork();
         return true;
       }
@@ -839,11 +856,12 @@ export function useArchive(deletionEnabled: boolean): {
         setLoadProgress({ done: sumDone, total: sumTotal });
       };
 
+      if (diagnostics) diagnostics.stage = 'Facebook conversation listing';
       const [inbox, archived, requests, e2ee] = await Promise.all([
-        listChatFolders(messagesRoot, 'inbox', 'inbox', (d, t) => updateProgress(0, d, t), abortCtrl.signal),
-        listChatFolders(messagesRoot, 'archived_threads', 'archived', (d, t) => updateProgress(1, d, t), abortCtrl.signal),
-        listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t), abortCtrl.signal),
-        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t), abortCtrl.signal),
+        listChatFolders(messagesRoot, 'inbox', 'inbox', (d, t) => updateProgress(0, d, t), abortCtrl.signal, diagnostics),
+        listChatFolders(messagesRoot, 'archived_threads', 'archived', (d, t) => updateProgress(1, d, t), abortCtrl.signal, diagnostics),
+        listChatFolders(messagesRoot, 'message_requests', 'requests', (d, t) => updateProgress(2, d, t), abortCtrl.signal, diagnostics),
+        listChatFolders(messagesRoot, 'e2ee_cutover', 'e2ee', (d, t) => updateProgress(3, d, t), abortCtrl.signal, diagnostics),
       ]);
       if (abortCtrl.signal.aborted) return false;
       const mergedInbox = [...inbox, ...e2ee].sort((a, b) => {
@@ -879,7 +897,8 @@ export function useArchive(deletionEnabled: boolean): {
       if (detail?.name === 'AbortError') return false;
       const message = typeof detail?.message === 'string' && detail.message
         ? detail.message : typeof e === 'string' ? e : 'Failed to open folder';
-      setError(message + (nativeSelected ? ' If Native access fails, try Read-only access and select the folder again.' : ''));
+      setError(message + (diagnostics ? ' If Native access fails, try Read-only access and select the folder again.' : ''));
+      setErrorDetails([browserFolderDetails, diagnostics?.describe(e)].filter(Boolean).join(' '));
       return true;
     } finally {
       if (pickerRequest === folderPickerRequestRef.current) {
@@ -1413,7 +1432,8 @@ export function useArchive(deletionEnabled: boolean): {
     attachmentReferenceScan: deletionAvailable ? attachmentReferenceScan : null,
     reactionSourceRevision, reactionMutationPending, standaloneMessenger: isMessengerExportRef.current, originalRootHandle, inboxList, archivedList, requestsList,
     archivePerspectiveKey, archivePerspectiveName,
-    loading, folderSelectionPending, folderPreparationProgress, loadProgress, sizeProgress, error,
+    loading, folderSelectionPending, folderPreparationProgress, loadProgress, sizeProgress,
+    error: error && debuggingEnabled && errorDetails ? `${error} ${errorDetails}` : error,
     openFolder, openFolderWithWriteAccess, getDeleteInfo, computeAndUpdateFolderSize, suspendSizeWork, resumeSizeWork, deleteChat, deleteChats, deleteMessengerChatsJsonOnly, updateFolderSize,
   };
 }
