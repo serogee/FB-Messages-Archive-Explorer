@@ -51,7 +51,7 @@ describe('mobile chat-list options', () => {
     fireEvent.pointerDown(row, pointer);
     await act(async () => { await vi.advanceTimersByTimeAsync(150); });
     fireEvent.pointerUp(row, pointer);
-    fireEvent.click(row, { detail: 1 });
+    await act(async () => { fireEvent.click(row, { detail: 1 }); });
     expect(props.onSelectChat).toHaveBeenCalledExactlyOnceWith(entry);
     expect(screen.queryByRole('button', { name: 'Pin to top' })).toBeNull();
   });
@@ -133,5 +133,42 @@ describe('mobile chat-list options', () => {
     await act(async () => {});
     expect(screen.getByRole('button', { name: 'Pin to top' })).toBeTruthy();
     expect(props.onSelectChat).not.toHaveBeenCalled();
+  });
+
+  it.each(['tap', 'keyboard'])('shows immediate feedback for a pending chat opened by %s', async input => {
+    const { row, props } = setup();
+    let finish!: () => void;
+    props.onSelectChat.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+    if (input === 'tap') fireEvent.click(row);
+    else fireEvent.keyDown(row, { key: 'Enter' });
+    expect(row.getAttribute('aria-busy')).toBe('true');
+    expect(row.classList.contains('active')).toBe(true);
+    expect(screen.getByRole('status').textContent).toBe('Loading chat…');
+    await act(async () => { finish(); });
+    expect(row.hasAttribute('aria-busy')).toBe(false);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(row.textContent).toContain('No messages');
+  });
+
+  it('keeps feedback on the latest selection when an earlier request finishes', async () => {
+    const { props, view } = setup();
+    const bob = { ...entry, folderName: 'bob', title: 'Bob Chat' };
+    let finishAlice!: () => void;
+    let finishBob!: () => void;
+    props.onSelectChat
+      .mockReturnValueOnce(new Promise<void>(resolve => { finishAlice = resolve; }))
+      .mockReturnValueOnce(new Promise<void>(resolve => { finishBob = resolve; }));
+    view.rerender(<ChatList {...props} chatList={[entry, bob]} />);
+    const aliceRow = screen.getByRole('button', { name: /Alice Chat/ });
+    const bobRow = screen.getByRole('button', { name: /Bob Chat/ });
+    fireEvent.click(aliceRow);
+    fireEvent.click(bobRow);
+    expect(aliceRow.hasAttribute('aria-busy')).toBe(false);
+    expect(bobRow.getAttribute('aria-busy')).toBe('true');
+    await act(async () => { finishAlice(); });
+    expect(bobRow.getAttribute('aria-busy')).toBe('true');
+    await act(async () => { finishBob(); });
+    expect(bobRow.hasAttribute('aria-busy')).toBe(false);
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });
