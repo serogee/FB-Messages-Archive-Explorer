@@ -12,7 +12,7 @@ import {
   MessengerExportIndexIncompleteError,
   MessengerExportDeletionPartialError,
 } from '../src/services/messengerExport/messengerExportDeletion';
-import { isMessengerExport } from '../src/services/messengerExport/messengerExportDetector';
+import { isMessengerExport, resolveMessengerExportRoot } from '../src/services/messengerExport/messengerExportDetector';
 import {
   listMessengerExportChats,
   listMessengerExportChatsIndexed,
@@ -83,6 +83,70 @@ describe('Messenger export filesystem services', () => {
     await expect(isMessengerExport(createMockDirectoryHandle('messages', { inbox: {} }))).resolves.toBe(false);
   });
 
+  it.each([0, 1, 3])('resolves %i parent wrappers without separating conversations from media', async depth => {
+    const conversation = JSON.stringify({ threadName: 'Alice', participants: ['Alice'], messages: [] });
+    let tree: Parameters<typeof createMockDirectoryHandle>[1] = {
+      'alice.json': conversation,
+      media: { 'photo.jpg': new Uint8Array([1, 2, 3]) },
+    };
+    for (let index = 0; index < depth; index++) tree = { wrapper: tree };
+    const selected = createMockDirectoryHandle('selected', tree);
+    let expected = selected;
+    for (let index = 0; index < depth; index++) expected = await expected.getDirectoryHandle('wrapper');
+
+    const resolved = await resolveMessengerExportRoot(selected);
+
+    expect(resolved).toBe(expected);
+    expect(await (await resolved!.getFileHandle('alice.json')).getFile()).toHaveProperty('size', conversation.length);
+    expect(await (await (await resolved!.getDirectoryHandle('media')).getFileHandle('photo.jpg')).getFile()).toHaveProperty('size', 3);
+  });
+
+  it.each([
+    { wrapper: { 'alice.json': JSON.stringify({ threadName: 'Alice', participants: ['Alice'], messages: [] }) }, other: {} },
+    { wrapper: { 'alice.json': JSON.stringify({ threadName: 'Alice', participants: ['Alice'], messages: [] }) }, 'readme.txt': 'another file' },
+  ])('does not select a nested export from an ambiguous parent', async tree => {
+    const selected = createMockDirectoryHandle('selected', tree);
+    const child = await selected.getDirectoryHandle('wrapper');
+    const readChild = vi.spyOn(child, 'entries');
+
+    await expect(resolveMessengerExportRoot(selected)).resolves.toBeNull();
+    expect(readChild).not.toHaveBeenCalled();
+  });
+
+  it('preserves a native read error inside a wrapper', async () => {
+    const selected = createMockDirectoryHandle('selected', { wrapper: { 'alice.json': '{}' } });
+    const file = await (await selected.getDirectoryHandle('wrapper')).getFileHandle('alice.json');
+    vi.spyOn(file, 'getFile').mockRejectedValue(new DOMException('Requested document not found', 'NotFoundError'));
+
+    await expect(resolveMessengerExportRoot(selected)).rejects.toMatchObject({ name: 'NotFoundError' });
+  });
+
+  it('discards a detected nested export if the selection was cancelled during its read', async () => {
+    const selected = createMockDirectoryHandle('selected', { wrapper: {
+      'alice.json': JSON.stringify({ threadName: 'Alice', participants: ['Alice'], messages: [] }),
+    } });
+    const file = await (await selected.getDirectoryHandle('wrapper')).getFileHandle('alice.json');
+    const getFile = file.getFile.bind(file);
+    const controller = new AbortController();
+    vi.spyOn(file, 'getFile').mockImplementation(async () => {
+      controller.abort();
+      return getFile();
+    });
+
+    await expect(resolveMessengerExportRoot(selected, undefined, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('preserves JSON processing failures instead of reporting an unsupported export', async () => {
+    const root = createMockDirectoryHandle('messenger', {
+      'conversation.json': JSON.stringify({ threadName: 'Chat', participants: ['Alice'], messages: [] }),
+    });
+    const parse = vi.spyOn(JSON, 'parse').mockImplementationOnce(() => {
+      throw new RangeError('Cannot create a string longer than the browser limit');
+    });
+    await expect(isMessengerExport(root)).rejects.toThrow('Cannot create a string longer than the browser limit');
+    parse.mockRestore();
+  });
+
   it('detects a conversation after metadata and unreadable root JSON files', async () => {
     const root = createMockDirectoryHandle('messenger', {
       '01-settings.json': JSON.stringify({ settings: true }),
@@ -107,6 +171,44 @@ describe('Messenger export filesystem services', () => {
     expect(entries.map(item => item.title)).toEqual(['Group', 'Alice']);
     expect(entries.every(item => item._messengerExport)).toBe(true);
     expect(entries.map(item => item._jsonFileName)).toEqual(['chat_group.json', 'chat_alice.json']);
+  });
+
+  it('recovers enumerated JSON and media handles through native filename lookup', async () => {
+    const root = messengerRoot();
+    const breakListedFiles = async (directory: FileSystemDirectoryHandle) => {
+      const entries = directory.entries.bind(directory);
+      const children: FileSystemDirectoryHandle[] = [];
+      for await (const [, entry] of entries()) if (entry.kind === 'directory') children.push(entry);
+      vi.spyOn(directory, 'entries').mockImplementation(async function* () {
+        for await (const [name, entry] of entries()) {
+          yield [name, entry.kind === 'directory' ? entry : {
+            kind: 'file', name, getFile: async () => { throw new DOMException('Listed document not found', 'NotFoundError'); },
+          }];
+        }
+      });
+      for (const child of children) await breakListedFiles(child);
+    };
+    await breakListedFiles(root);
+
+    await expect(isMessengerExport(root)).resolves.toBe(true);
+    const { entries, chatIndex } = await listMessengerExportChatsIndexed(root);
+    expect(entries.map(item => item.title)).toEqual(['Group', 'Alice']);
+    expect(chatIndex.complete).toBe(true);
+    const mediaSizes = await buildMessengerExportMediaSizeIndex(root);
+    expect(mediaSizes.get('media/photo1.jpg')).toBe(3);
+    const referenceIndex = await buildMessengerExportReferenceIndex(root);
+    expect(referenceIndex.complete).toBe(true);
+    const state = createMediaState();
+    await processMessengerExportMedia(root, state);
+    const photo = findMediaFile(state, 'media/photo1.jpg');
+    await expect(photo!.handle!.getFile()).resolves.toHaveProperty('size', 3);
+    const info = await getMessengerExportDeletionInfo(root, entries.find(item => item._jsonFileName === 'chat_alice.json')!, chatIndex, undefined, mediaSizes);
+    expect(info).toMatchObject({ exclusiveMediaFiles: ['photo1.jpg'], sharedMediaCount: 1, mediaSize: 3 });
+    await deleteMessengerExportChat(root, entries.find(item => item._jsonFileName === 'chat_alice.json')!, chatIndex);
+    await expect(root.getFileHandle('chat_alice.json')).rejects.toMatchObject({ name: 'NotFoundError' });
+    const media = await root.getDirectoryHandle('media');
+    await expect(media.getFileHandle('photo1.jpg')).rejects.toMatchObject({ name: 'NotFoundError' });
+    await expect(media.getFileHandle('shared.jpg')).resolves.toMatchObject({ kind: 'file' });
   });
 
   it('builds ownership, paths, and JSON sizes during the listing pass', async () => {

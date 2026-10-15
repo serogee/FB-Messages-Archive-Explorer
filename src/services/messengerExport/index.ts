@@ -1,4 +1,4 @@
-export { isConversationJsonContent, isMessengerExport } from './messengerExportDetector';
+export { isConversationJsonContent, isMessengerExport, resolveMessengerExportRoot } from './messengerExportDetector';
 export {
   classifyMessengerExportJson,
   parseMessengerExportJson,
