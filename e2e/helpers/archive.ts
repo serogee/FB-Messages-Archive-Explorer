@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 
-export async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'messenger', failMessengerMediaOnce = false, unavailableMedia = false, bumpedMessages = false, longMessages = 0, folderUpload = false) {
-  await page.addInitScript(({ selectedFormat, shouldFailMessengerMediaOnce, includeUnavailableMedia, includeBumpedMessages, longMessageCount, useFolderUpload }) => {
+export async function installArchive(page: Page, format: 'facebook' | 'instagram' | 'messenger', failMessengerMediaOnce = false, unavailableMedia = false, bumpedMessages = false, longMessages = 0, folderUpload = false, folderUploadPrefix = '', flattenFolderUpload = false) {
+  await page.addInitScript(({ selectedFormat, shouldFailMessengerMediaOnce, includeUnavailableMedia, includeBumpedMessages, longMessageCount, useFolderUpload, uploadPrefix, flattenUpload }) => {
     let failBlockedMedia = shouldFailMessengerMediaOnce;
     const makeFile = (name: string, initialContents: string | number[], persistKey?: string) => {
       let contents = initialContents;
@@ -195,18 +195,18 @@ export async function installArchive(page: Page, format: 'facebook' | 'instagram
               if (entry.kind === 'directory') await collect(entry, path);
               else {
                 const file = await entry.getFile();
-                Object.defineProperty(file, 'webkitRelativePath', { value: path });
+                Object.defineProperty(file, 'webkitRelativePath', { value: flattenUpload ? `${uploadPrefix ? uploadPrefix + '/' : ''}${root.name}/${file.name}` : path });
                 files.push(file);
               }
             }
           }
-          await collect(root, root.name);
+          await collect(root, uploadPrefix ? `${uploadPrefix}/${root.name}` : root.name);
           Object.defineProperty(input, 'files', { configurable: true, value: files });
           input.dispatchEvent(new Event('change', { bubbles: true }));
         })(this);
       };
     }
     Object.defineProperty(window, '__testArchives', { configurable: true, value: { facebook, messenger } });
-  }, { selectedFormat: format, shouldFailMessengerMediaOnce: failMessengerMediaOnce, includeUnavailableMedia: unavailableMedia, includeBumpedMessages: bumpedMessages, longMessageCount: longMessages, useFolderUpload: folderUpload });
+  }, { selectedFormat: format, shouldFailMessengerMediaOnce: failMessengerMediaOnce, includeUnavailableMedia: unavailableMedia, includeBumpedMessages: bumpedMessages, longMessageCount: longMessages, useFolderUpload: folderUpload, uploadPrefix: folderUploadPrefix, flattenUpload: flattenFolderUpload });
 }
 
