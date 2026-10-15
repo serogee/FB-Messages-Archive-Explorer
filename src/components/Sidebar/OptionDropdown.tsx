@@ -8,11 +8,12 @@ interface DropdownOption<Value extends string> {
   title?: string;
 }
 
-export function OptionDropdown<Value extends string>({ id: providedId, label, descriptionId, value, onChange, options, disabled = false, className = '' }: {
+export function OptionDropdown<Value extends string>({ id: providedId, label, descriptionId, value, displayLabel, onChange, options, disabled = false, className = '' }: {
   id?: string;
   label: string;
   descriptionId?: string;
   value: Value;
+  displayLabel?: string;
   onChange: (value: Value) => void;
   options: readonly DropdownOption<Value>[];
   disabled?: boolean;
@@ -81,7 +82,7 @@ export function OptionDropdown<Value extends string>({ id: providedId, label, de
     <button id={id} ref={trigger} type="button" className="perspective-dropdown-btn" aria-label={label}
       aria-describedby={descriptionId} aria-haspopup="listbox" aria-expanded={expanded}
       aria-controls={expanded ? `${id}-listbox` : undefined} disabled={disabled} onClick={() => setOpen(current => !current)}>
-      <span className="perspective-dropdown-value">{options.find(option => option.value === value)?.label}</span>
+      <span className="perspective-dropdown-value">{displayLabel ?? options.find(option => option.value === value)?.label}</span>
       <span className="perspective-dropdown-arrow" aria-hidden="true">{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span>
     </button>
     {expanded && <div id={`${id}-listbox`} className="perspective-dropdown-list" role="listbox" aria-label={label}>
