@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-labelledby="title description">
+  <title id="title">FB-MAE</title>
+  <desc id="description">The original FB-MAE block lettering on transparency: F, B, the hyphen, and A in red; only M and E in yellow.</desc>
+  <metadata id="source-art"><![CDATA[
+  ▄▄▄▄▄▄▄   ▄▄▄         ▄▄▄     ▄▄▄      ▄▄     ▄▄▄▄▄▄▄
+ █▀██▀▀▀   ██▀▀█▄        ███▄ ▄███     ▄█▀▀█▄  █▀██▀▀▀
+   ██      ██ ▄█▀        ██ ▀█▀ ██     ██  ██    ██
+   ███▀    ██▀▀█▄        ██     ██     ██▀▀██    ████
+ ▄ ██    ▄ ██  ▄█ ▀▀▀▀   ██     ██   ▄ ██  ██    ██
+ ▀██▀    ▀██████▀      ▀██▀     ▀██▄ ▀██▀  ▀█▄█  ▀█████
+]]></metadata>
+  <g transform="translate(160 44) scale(16)">
+    <path fill="#C44545" d="M2 1h7v1H2z M12 1h3v1H12z M41 1h2v1H41z M1 2h7v1H1z M11 2h5v1H11z M40 2h4v1H40z M1 3h1v1H1z M3 3h2v1H3z M11 3h2v1H11z M15 3h2v1H15z M39 3h2v1H39z M43 3h2v1H43z M3 4h2v1H3z M11 4h2v1H11z M15 4h2v1H15z M39 4h2v1H39z M43 4h2v1H43z M3 5h2v1H3z M11 5h2v1H11z M14 5h2v1H14z M39 5h2v1H39z M43 5h2v1H43z M3 6h4v1H3z M11 6h5v1H11z M39 6h6v1H39z M3 7h3v1H3z M11 7h2v1H11z M15 7h2v1H15z M39 7h2v1H39z M43 7h2v1H43z M3 8h2v1H3z M11 8h2v1H11z M16 8h1v1H16z M18 8h4v1H18z M39 8h2v1H39z M43 8h2v1H43z M1 9h1v1H1z M3 9h2v1H3z M9 9h1v1H9z M11 9h2v1H11z M15 9h2v1H15z M37 9h1v1H37z M39 9h2v1H39z M43 9h2v1H43z M1 10h4v1H1z M9 10h8v1H9z M37 10h4v1H37z M43 10h2v1H43z M46 10h1v1H46z M2 11h2v1H2z M10 11h6v1H10z M38 11h2v1H38z M44 11h3v1H44z" />
+    <path fill="#B8952E" d="M24 1h3v1H24z M32 1h3v1H32z M48 1h7v1H48z M25 2h3v1H25z M31 2h3v1H31z M47 2h7v1H47z M25 3h4v1H25z M30 3h4v1H30z M47 3h1v1H47z M49 3h2v1H49z M25 4h2v1H25z M28 4h3v1H28z M32 4h2v1H32z M49 4h2v1H49z M25 5h2v1H25z M29 5h1v1H29z M32 5h2v1H32z M49 5h2v1H49z M25 6h2v1H25z M32 6h2v1H32z M49 6h4v1H49z M25 7h2v1H25z M32 7h2v1H32z M49 7h4v1H49z M25 8h2v1H25z M32 8h2v1H32z M49 8h2v1H49z M25 9h2v1H25z M32 9h2v1H32z M49 9h2v1H49z M23 10h4v1H23z M32 10h3v1H32z M49 10h6v1H49z M24 11h2v1H24z M33 11h3v1H33z M50 11h5v1H50z" />
+  </g>
+</svg>
