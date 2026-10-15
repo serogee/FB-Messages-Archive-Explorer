@@ -108,6 +108,8 @@
     --text: #111213;
     --muted: #6b6f76;
     --accent: #0084ff;
+    --performance-above-default: #4c7399;
+    --performance-below-default: #a55f66;
     --me-bg: #0084ff;
     --me-text: #ffffff;
     --them-bg: #e9eef8;
@@ -129,6 +131,8 @@
     --text: #e6eef8;
     --muted: #9aa4b2;
     --accent: #3ea6ff;
+    --performance-above-default: #82a7c8;
+    --performance-below-default: #ce8c94;
     --me-bg: #1667d6;
     --me-text: #f7fbff;
     --them-bg: #0f2a3a;

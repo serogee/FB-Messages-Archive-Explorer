@@ -16,6 +16,7 @@ import {
     ChevronRight,
     Info,
     Keyboard,
+    LoaderCircle,
 } from 'lucide-react';
 import { DEFAULT_ATTACHMENT_FILENAME_TEMPLATE } from '../../services/saveAttachments';
 import { disableOfflineSupport } from '../../services/pwa';
@@ -27,6 +28,8 @@ import { ConsistencyDetailsModal } from '../Modals/ConsistencyDetailsModal';
 import { ReactionNoticesInfoModal } from '../Modals/ReactionNoticesInfoModal';
 import { FolderAccessOptions } from './FolderAccessOptions';
 import { SettingsInfoModal, SettingsInfoRow } from '../Modals/SettingsInfoModal';
+import { PerformanceControls, PerformanceInformation } from './PerformanceControls';
+import { ResetButton } from './ResetButton';
 
 const INFO_TITLES = {
     appearance: 'Appearance',
@@ -35,6 +38,7 @@ const INFO_TITLES = {
     downloads: 'Downloads',
     offline: 'Offline use',
     debugging: 'Debugging',
+    performance: 'Performance',
 };
 
 function SettingsSection({ title, children, onInfo, className = '' }: {
@@ -541,7 +545,10 @@ export function SettingsPanel({
                             )}
                         </div>
                         <div className="reaction-guessing-status">
-                            <p className="browser-notice">
+                            <p className="browser-notice archive-check-label">
+                                {reactionFeature.consistency.status === 'checking' && (
+                                    <LoaderCircle size={14} className="loading-spinner" aria-hidden="true" />
+                                )}
                                 Full archive consistency check
                             </p>
                             {reactionFeature.consistency.status ===
@@ -659,9 +666,8 @@ export function SettingsPanel({
                             <span className="filename-template-extension">
                                 .{'{ext}'}
                             </span>
-                            <button
-                                type="button"
-                                className="btn btn-secondary filename-template-reset"
+                            <ResetButton
+                                className="filename-template-reset"
                                 onClick={() =>
                                     setSetting(
                                         'attachmentFilenameTemplate',
@@ -674,7 +680,7 @@ export function SettingsPanel({
                                 }
                             >
                                 Reset
-                            </button>
+                            </ResetButton>
                         </div>
                         <button
                             className="settings-shortcuts-btn filename-placeholders-btn"
@@ -712,6 +718,10 @@ export function SettingsPanel({
                 {offlineSupportError && (
                     <p className="browser-notice">{offlineSupportError}</p>
                 )}
+            </SettingsSection>
+
+            <SettingsSection title="Performance" onInfo={() => setInfoSection('performance')}>
+                <PerformanceControls value={settings.performance} onChange={value => setSetting('performance', value)} />
             </SettingsSection>
 
             <SettingsSection title="Debugging" onInfo={() => setInfoSection('debugging')}>
@@ -857,6 +867,7 @@ export function SettingsPanel({
                     {infoSection === 'debugging' && (
                         <SettingsInfoRow label="Enable debugging">Show detailed folder errors and attachment file details in Chat info. Disabled by default.</SettingsInfoRow>
                     )}
+                    {infoSection === 'performance' && <PerformanceInformation value={settings.performance} />}
                 </SettingsInfoModal>
             )}
         </div>
