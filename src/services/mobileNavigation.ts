@@ -123,8 +123,15 @@ export class MobileNavigationController {
     return () => { this.listeners.delete(listener); };
   };
   connect = () => {
+    const previousScrollRestoration = this.port.history.scrollRestoration;
+    // Snapshots restore nested chat/gallery scrollers. Native history restoration
+    // can run after popstate and overwrite those positions, including hidden views.
+    this.port.history.scrollRestoration = 'manual';
     this.port.addEventListener('popstate', this.onPopState as EventListener);
-    return () => this.port.removeEventListener('popstate', this.onPopState as EventListener);
+    return () => {
+      this.port.removeEventListener('popstate', this.onPopState as EventListener);
+      this.port.history.scrollRestoration = previousScrollRestoration;
+    };
   };
   setMobile(mobile: boolean) {
     this.mobile = mobile;
