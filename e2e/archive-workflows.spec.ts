@@ -885,6 +885,35 @@ test('contains batch dependencies in a scrollable list grouped by protected chat
   await expect(page.locator('.chat-list-item')).toHaveCount(10);
 });
 
+test('reports denied deletion permission and retries after permission is granted', async ({ page }) => {
+  await installArchive(page, 'facebook');
+  await page.goto('');
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  await page.evaluate(() => {
+    const root = (window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } }).__testArchives.facebook;
+    root.queryPermission = async () => 'prompt';
+    root.requestPermission = async () => 'denied';
+  });
+  const alice = page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' });
+  const bob = page.locator('.chat-list-item').filter({ hasText: 'Bob Chat' });
+  await alice.hover();
+  await alice.getByRole('button', { name: 'Chat options' }).click();
+  await page.getByRole('button', { name: 'Delete chat' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete Chat', exact: true });
+  await dialog.getByRole('button', { name: 'Delete permanently' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Write access was not granted. The chats were not deleted.');
+  await expect(alice).toBeVisible();
+  await expect(bob).toBeVisible();
+  await page.evaluate(() => {
+    const root = (window as unknown as { __testArchives: { facebook: FileSystemDirectoryHandle } }).__testArchives.facebook;
+    root.requestPermission = async () => 'granted';
+  });
+  await dialog.getByRole('button', { name: 'Retry deletion' }).click();
+  await expect(alice).toHaveCount(0);
+  await expect(bob).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+});
+
 test('keeps a partial Messenger deletion retryable and completes it on retry', async ({ page }) => {
   await installArchive(page, 'messenger', true);
   await page.goto('');
