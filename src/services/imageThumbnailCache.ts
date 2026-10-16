@@ -4,6 +4,7 @@ import { MEDIA_THUMBNAIL_SIZE } from './mediaThumbnailConfig';
 import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
 import type { Concurrency } from './concurrency';
 import { performanceLimit } from './performanceSettings';
+import { loadImage as loadImageElement } from './loadImage';
 
 export const IMAGE_THUMBNAIL_SIZE = MEDIA_THUMBNAIL_SIZE;
 const DEFAULT_MAX_THUMBNAILS = 300;
@@ -124,34 +125,7 @@ export class ImageThumbnailCache {
 }
 
 async function loadImage(source: string, signal: AbortSignal): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    const cleanup = () => {
-      image.onload = null;
-      image.onerror = null;
-      signal.removeEventListener('abort', handleAbort);
-    };
-    const handleAbort = () => {
-      cleanup();
-      image.src = '';
-      reject(new DOMException('Thumbnail generation cancelled', 'AbortError'));
-    };
-    image.decoding = 'async';
-    image.onload = () => {
-      cleanup();
-      resolve(image);
-    };
-    image.onerror = () => {
-      cleanup();
-      reject(new Error('Image decode failed'));
-    };
-    signal.addEventListener('abort', handleAbort, { once: true });
-    if (signal.aborted) {
-      handleAbort();
-      return;
-    }
-    image.src = source;
-  });
+  return loadImageElement(source, signal, 'Thumbnail generation cancelled');
 }
 
 async function createImageThumbnail(entry: MediaEntry, signal: AbortSignal): Promise<string | null> {
