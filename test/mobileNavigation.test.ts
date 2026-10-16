@@ -3,11 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { HOME_LOCATION, MobileNavigationController, getNavigationItemKey, getParentLocation, type NavigationLocation } from '../src/services/mobileNavigation';
 import type { SelectableItem } from '../src/types/messenger';
 
-function harness() {
+function harness(scrollRestoration: ScrollRestoration = 'auto') {
   const events = new EventTarget();
   const stack: unknown[] = [null];
   let cursor = 0;
   const history = {
+    scrollRestoration,
     get state() { return stack[cursor]; },
     pushState: vi.fn((state: unknown) => { stack.splice(cursor + 1); stack.push(state); cursor++; }),
     replaceState: vi.fn((state: unknown) => { stack[cursor] = state; }),
@@ -16,14 +17,30 @@ function harness() {
   };
   const controller = new MobileNavigationController({ history: history as unknown as History,
     addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events) } as Pick<Window, 'history' | 'addEventListener' | 'removeEventListener'>);
-  controller.connect();
-  return { controller, history, stack, pop: () => events.dispatchEvent(new Event('popstate')) };
+  const disconnect = controller.connect();
+  return { controller, history, stack, disconnect, pop: () => events.dispatchEvent(new Event('popstate')) };
 }
 
 const chat: NavigationLocation = { ...HOME_LOCATION, screen: 'chat', chatId: 'alice' };
 const image = (messageIndex: number) => ({ category: 'photos', mediaPath: './photos/image.jpg', messageIndex } as SelectableItem);
 
 describe('mobile navigation', () => {
+  it.each(['auto', 'manual'] as const)('owns scroll restoration while connected and restores the previous %s mode on cleanup', mode => {
+    const { controller, history, disconnect } = harness(mode);
+    expect(history.scrollRestoration).toBe('manual');
+    controller.setMobile(true);
+    controller.navigate(chat);
+    controller.setMobile(false);
+    history.back();
+    expect(history.scrollRestoration).toBe('manual');
+    disconnect();
+    expect(history.scrollRestoration).toBe(mode);
+    const reconnect = controller.connect();
+    expect(history.scrollRestoration).toBe('manual');
+    reconnect();
+    expect(history.scrollRestoration).toBe(mode);
+  });
+
   it('queues only one preview Close while browser Back is asynchronous and clears the guard after restoration or reset', () => {
     const { controller, history } = harness();
     const applyBack = history.back;

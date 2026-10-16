@@ -1638,6 +1638,7 @@ for (const scale of ['Week', 'Day']) {
 
 test('restores message positions for date jumps and gallery filters after preview jumps', async ({ page }) => {
   await openChat(page, 120);
+  expect(await page.evaluate(() => history.scrollRestoration)).toBe('manual');
   const before = await page.locator('#chat').evaluate(element => element.scrollTop);
   await expect(page.locator('.chat-header .date-nav-controls')).toHaveCount(0);
   await page.getByRole('button', { name: 'Open chat info', exact: true }).click();
@@ -1657,6 +1658,13 @@ test('restores message positions for date jumps and gallery filters after previe
   await page.locator('.mobile-date-section .date-nav-item').first().click();
   await expectScreen(page, 'chat');
   await expect(page.locator('.message.highlight-target')).toBeVisible();
+  const targetIndex = await page.locator('.message.highlight-target').getAttribute('data-msg-index');
+  await page.evaluate(() => history.back());
+  await expectScreen(page, 'info');
+  await expect.poll(() => page.locator('#chat').evaluate(element => element.scrollTop)).toBeGreaterThan(before - 20);
+  await page.evaluate(() => history.forward());
+  await expectScreen(page, 'chat');
+  await expect(page.locator(`.message[data-msg-index="${targetIndex}"]`)).toBeInViewport();
   await page.evaluate(() => history.back());
   await expectScreen(page, 'info');
   await expect.poll(() => page.locator('#chat').evaluate(element => element.scrollTop)).toBeGreaterThan(before - 20);
