@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useId, type ReactNode } from 'react';
+import { useState, useRef, useEffect, type ReactNode } from 'react';
 import type { Settings } from '../../hooks/useSettings';
 import type { ChatListEntry, MessengerThread } from '../../types/messenger';
 import type { ReadableDirectoryHandle } from '../../types/fileSystem';
@@ -14,22 +14,17 @@ import {
     ChevronUp,
     ChevronDown,
     ChevronRight,
-    Info,
     Keyboard,
-    LoaderCircle,
 } from 'lucide-react';
 import { DEFAULT_ATTACHMENT_FILENAME_TEMPLATE } from '../../services/saveAttachments';
 import { disableOfflineSupport } from '../../services/pwa';
-import { useReactionContext } from '../../hooks/useReactionFeature';
-import { ReactionGuessingDropdown } from './ReactionGuessingDropdown';
 import { useThreadData } from '../../hooks/useThreadData';
-import { reactionConversationId } from '../../services/reactionAuditInventory';
-import { ConsistencyDetailsModal } from '../Modals/ConsistencyDetailsModal';
-import { ReactionNoticesInfoModal } from '../Modals/ReactionNoticesInfoModal';
 import { FolderAccessOptions } from './FolderAccessOptions';
 import { SettingsInfoModal, SettingsInfoRow } from '../Modals/SettingsInfoModal';
 import { PerformanceControls, PerformanceInformation } from './PerformanceControls';
 import { ResetButton } from './ResetButton';
+import { SettingsSection, ToggleRow } from './SettingsControls';
+import { ReactionSettingsSection, ReactionSettingsDialogs } from './ReactionSettingsSection';
 
 const INFO_TITLES = {
     appearance: 'Appearance',
@@ -40,39 +35,6 @@ const INFO_TITLES = {
     debugging: 'Debugging',
     performance: 'Performance',
 };
-
-function SettingsSection({ title, children, onInfo, className = '' }: {
-    title: string;
-    children: ReactNode;
-    onInfo?: () => void;
-    className?: string;
-}) {
-    const [open, setOpen] = useState(true);
-    const id = useId();
-    return (
-        <section className={`settings-section ${className}`}>
-            <div className="settings-section-heading">
-                <button type="button" className="settings-section-toggle" id={`${id}-title`}
-                    aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
-                    {title}
-                </button>
-                {onInfo && (
-                    <button type="button" className="settings-info-button"
-                        aria-label={`Open ${title.toLowerCase()} information`} onClick={event => {
-                            event.currentTarget.focus({ preventScroll: true });
-                            onInfo();
-                        }}>
-                        <Info size={16} />
-                    </button>
-                )}
-                <ChevronDown className={`settings-section-chevron${open ? ' open' : ''}`} size={16} aria-hidden="true" />
-            </div>
-            <div id={id} className="settings-section-content" role="region" aria-labelledby={`${id}-title`} hidden={!open}>
-                {children}
-            </div>
-        </section>
-    );
-}
 
 interface SettingsPanelProps {
     settings: Settings;
@@ -86,36 +48,6 @@ interface SettingsPanelProps {
     onAttachmentBookmarkingChange: (enabled: boolean) => Promise<boolean>;
     chatEntries: ChatListEntry[];
     onSelectChat: (entry: ChatListEntry) => Promise<void>;
-}
-
-function ToggleRow({
-    id,
-    label,
-    checked,
-    onChange,
-    disabled,
-}: {
-    id: string;
-    label: string;
-    checked: boolean;
-    onChange: (val: boolean) => void;
-    disabled?: boolean;
-}) {
-    return (
-        <div className="settings-row">
-            <label htmlFor={id}>{label}</label>
-            <label className="switch">
-                <input
-                    type="checkbox"
-                    id={id}
-                    checked={checked}
-                    onChange={(e) => onChange(e.target.checked)}
-                    disabled={disabled}
-                />
-                <span className="slider" />
-            </label>
-        </div>
-    );
 }
 
 function PerspectiveDropdown({
@@ -233,7 +165,6 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
     const chatData = useThreadData(providedThread);
     const participants = getParticipantNames(chatData);
-    const reactionFeature = useReactionContext();
     const fsSupported = isFileSystemAccessSupported();
     const readOnlyFolder = !!rootHandle && !isWritableDirectoryHandle(rootHandle);
     const canManageChats = fsSupported && !readOnlyFolder;
@@ -255,35 +186,6 @@ export function SettingsPanel({
     const [offlineSupportError, setOfflineSupportError] = useState<
         string | null
     >(null);
-    const consistencyChats = useMemo(() => {
-        const entries = new Map(
-            chatEntries.map((entry) => [
-                reactionConversationId(entry.source, entry.folderName),
-                entry,
-            ]),
-        );
-        const resolve = (
-            issues: typeof reactionFeature.consistency.inconsistentChats,
-        ) =>
-            issues.flatMap((issue) => {
-                const entry = entries.get(issue.id);
-                return entry ? [{ entry, issue }] : [];
-            });
-        return {
-            inconsistent: resolve(
-                reactionFeature.consistency.inconsistentChats,
-            ),
-            unmatched: resolve(reactionFeature.consistency.unmatchedChats),
-        };
-    }, [
-        chatEntries,
-        reactionFeature.consistency.inconsistentChats,
-        reactionFeature.consistency.unmatchedChats,
-    ]);
-    const consistencyPercent = reactionFeature.consistency.notices
-        ? `${(((reactionFeature.consistency.candidates || 0) / reactionFeature.consistency.notices) * 100).toFixed(1)}%`
-        : null;
-
     const handleDeletionToggle = (val: boolean) => {
         if (val) {
             // Always require explicit confirmation before enabling
@@ -479,146 +381,8 @@ export function SettingsPanel({
                     )}
             </SettingsSection>
 
-            <SettingsSection title="Reaction notices" onInfo={() => setShowReactionNoticesInfo(true)}>
-                <ToggleRow
-                    id="hideLikelyReactionNotices"
-                    label="Hide reaction notices"
-                    checked={settings.hideLikelyReactionNotices}
-                    disabled={!reactionFeature.applicable}
-                    onChange={(v) => setSetting('hideLikelyReactionNotices', v)}
-                />
-                <label htmlFor="reactionTimestampGuessingMode">
-                    Reaction timestamp matching
-                </label>
-                <ReactionGuessingDropdown
-                    value={settings.reactionTimestampGuessingMode}
-                    onChange={(v) =>
-                        setSetting('reactionTimestampGuessingMode', v)
-                    }
-                    disabled={!reactionFeature.applicable}
-                />
-                {!reactionFeature.applicable ? (
-                    <p className="browser-notice">
-                        Does not apply to this Messenger export.
-                    </p>
-                ) : (
-                    <>
-                        <div className="reaction-guessing-status">
-                            <p className="browser-notice" role="status">
-                                {settings.reactionTimestampGuessingMode ===
-                                'off'
-                                    ? reactionFeature.hasCache
-                                        ? 'Guesses cached'
-                                        : 'No guesses cached'
-                                    : reactionFeature.status === 'ready'
-                                      ? 'Guesses Available'
-                                      : reactionFeature.reason ||
-                                        (reactionFeature.status === 'checking'
-                                            ? 'Checking reaction notices…'
-                                            : 'Select a Facebook or Instagram export.')}
-                            </p>
-                            {settings.reactionTimestampGuessingMode ===
-                            'off' ? (
-                                <button
-                                    type="button"
-                                    className="btn btn-secondary reaction-refresh-control"
-                                    onClick={reactionFeature.clear}
-                                    disabled={!reactionFeature.canClear}
-                                >
-                                    Clear
-                                </button>
-                            ) : (
-                                [
-                                    'checking',
-                                    'failed',
-                                    'unavailable',
-                                    'ready',
-                                ].includes(reactionFeature.status) && (
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary reaction-refresh-control"
-                                        onClick={reactionFeature.retry}
-                                    >
-                                        Refresh
-                                    </button>
-                                )
-                            )}
-                        </div>
-                        <div className="reaction-guessing-status">
-                            <p className="browser-notice archive-check-label">
-                                {reactionFeature.consistency.status === 'checking' && (
-                                    <LoaderCircle size={14} className="loading-spinner" aria-hidden="true" />
-                                )}
-                                Full archive consistency check
-                            </p>
-                            {reactionFeature.consistency.status ===
-                            'checking' ? (
-                                <button
-                                    type="button"
-                                    className="btn btn-secondary reaction-refresh-control"
-                                    onClick={reactionFeature.cancelArchiveCheck}
-                                >
-                                    Cancel
-                                </button>
-                            ) : (
-                                <button
-                                    type="button"
-                                    className="btn btn-secondary reaction-refresh-control"
-                                    onClick={reactionFeature.checkArchive}
-                                    disabled={!reactionFeature.canCheckArchive}
-                                >
-                                    {reactionFeature.consistency.status ===
-                                    'idle'
-                                        ? 'Check archive'
-                                        : 'Check again'}
-                                </button>
-                            )}
-                        </div>
-                        {reactionFeature.consistency.status !== 'idle' && (
-                            <p className="browser-notice" role="status">
-                                {reactionFeature.consistency.status ===
-                                'checking'
-                                    ? 'Full archive consistency check running. '
-                                    : consistencyPercent
-                                      ? `Full archive consistency check: ${consistencyPercent} passed. `
-                                      : 'Full archive consistency check was inconclusive. '}
-                                {reactionFeature.consistency.reason}
-                            </p>
-                        )}
-                        {reactionFeature.consistency.status ===
-                            'inconsistent' && (
-                            <>
-                                <button
-                                    type="button"
-                                    className="settings-shortcuts-btn"
-                                    onClick={() =>
-                                        setConsistencyDetails('inconsistent')
-                                    }
-                                >
-                                    <span>View inconsistent matches</span>
-                                    <ChevronRight size={16} />
-                                </button>
-                            </>
-                        )}
-                        {reactionFeature.consistency.status !== 'checking' &&
-                            reactionFeature.consistency.unmatchedChats.length >
-                                0 && (
-                                <button
-                                    type="button"
-                                    className="settings-shortcuts-btn"
-                                    onClick={() =>
-                                        setConsistencyDetails('unmatched')
-                                    }
-                                >
-                                    <span>
-                                        View chats with unmatched notices
-                                    </span>
-                                    <ChevronRight size={16} />
-                                </button>
-                            )}
-                    </>
-                )}
-            </SettingsSection>
+            <ReactionSettingsSection settings={settings} setSetting={setSetting}
+                onInfo={() => setShowReactionNoticesInfo(true)} onShowDetails={setConsistencyDetails} />
 
             <SettingsSection title="Downloads" onInfo={() => setInfoSection('downloads')}>
                 <ToggleRow
@@ -800,24 +564,9 @@ export function SettingsPanel({
                 <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />
             )}
 
-            {consistencyDetails && (
-                <ConsistencyDetailsModal
-                    chats={consistencyChats[consistencyDetails]}
-                    title={
-                        consistencyDetails === 'inconsistent'
-                            ? 'Chats with inconsistent matches'
-                            : 'Chats with unmatched notices'
-                    }
-                    onOpenChat={onSelectChat}
-                    onClose={() => setConsistencyDetails(null)}
-                />
-            )}
-
-            {showReactionNoticesInfo && (
-                <ReactionNoticesInfoModal
-                    onClose={() => setShowReactionNoticesInfo(false)}
-                />
-            )}
+            <ReactionSettingsDialogs details={consistencyDetails} infoOpen={showReactionNoticesInfo}
+                chatEntries={chatEntries} onOpenChat={onSelectChat}
+                onCloseDetails={() => setConsistencyDetails(null)} onCloseInfo={() => setShowReactionNoticesInfo(false)} />
 
             {showFilenamePlaceholdersModal && (
                 <FilenamePlaceholdersModal
