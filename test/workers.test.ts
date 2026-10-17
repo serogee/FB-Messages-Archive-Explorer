@@ -83,6 +83,44 @@ describe('parser worker protocols', () => {
     expect(postMessage.mock.calls[0][0]).toMatchObject({ type: 'success', complete: false, data: { messages: [{ content: 'readable' }] } });
   });
 
+  it('keeps first-readable metadata and stable undated messages across parts', async () => {
+    const postMessage = vi.fn();
+    const workerScope: { onmessage?: (event: MessageEvent<{ files: File[] }>) => Promise<void>; postMessage: typeof postMessage } = { postMessage };
+    vi.stubGlobal('self', workerScope);
+    await import('../src/services/parserWorker');
+    const undatedFirst = { content: 'undated first' };
+    const undatedZero = { content: 'undated zero', timestamp_ms: 0, timestamp: 99 };
+    const equalFirst = { content: 'equal first', timestamp_ms: 10 };
+    const equalSecond = { content: 'equal second', timestamp_ms: 10 };
+    const earlier = { content: 'earlier', timestamp: 1 };
+    const undatedSecond = { content: 'undated second', timestamp_ms: -1 };
+    const files = [
+      { text: () => Promise.reject(new Error('Permission revoked')) } as File,
+      new File([JSON.stringify({
+        title: 'First readable', thread_path: 'inbox/first', is_still_participant: true,
+        participants: [{ name: 'Alice' }, { name: 'Bob' }],
+        messages: [undatedZero, equalFirst, undatedFirst],
+      })], 'message_2.json'),
+      new File([JSON.stringify({
+        title: 'Later part', thread_path: 'inbox/later', is_still_participant: false,
+        participants: [{ name: 'Bob' }, { name: 'Cara' }, { name: 'Alice' }],
+        messages: [undatedSecond, equalSecond, earlier],
+      })], 'message_1.json'),
+    ];
+
+    await workerScope.onmessage!({ data: { files } } as MessageEvent<{ files: File[] }>);
+
+    expect(postMessage).toHaveBeenCalledOnce();
+    expect(postMessage.mock.calls[0][0]).toEqual({
+      type: 'success', complete: false,
+      data: {
+        title: 'First readable', thread_path: 'inbox/first', is_still_participant: true,
+        participants: [{ name: 'Alice' }, { name: 'Bob' }, { name: 'Cara' }],
+        messages: [earlier, equalFirst, equalSecond, undatedFirst, undatedZero, undatedSecond],
+      },
+    });
+  });
+
   it('preserves production file/part order for equal-time messages', async () => {
     const postMessage = vi.fn();
     const workerScope: { onmessage?: (event: MessageEvent<{ files: File[] }>) => Promise<void>; postMessage: typeof postMessage } = { postMessage };

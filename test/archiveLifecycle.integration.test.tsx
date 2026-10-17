@@ -466,6 +466,52 @@ describe('archive lifecycle integration', () => {
     unmount();
   });
 
+  it('keeps shared replacement size work when an old archive read settles late', async () => {
+    const roots = [facebookRoot('First archive'), facebookRoot('Second archive')];
+    const fixtures = await Promise.all(roots.map(async (root, index) => {
+      const messages = await root.getDirectoryHandle('messages');
+      const chat = await (await messages.getDirectoryHandle('inbox')).getDirectoryHandle('chat');
+      const photos = await chat.getDirectoryHandle('photos', { create: true });
+      const handle = await photos.getFileHandle('photo.jpg', { create: true });
+      const writer = await handle.createWritable();
+      await writer.write(index === 0 ? 'old archive bytes' : 'new');
+      await writer.close();
+      const file = await handle.getFile();
+      const json = await (await chat.getFileHandle('message_1.json')).getFile();
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const getFile = vi.spyOn(handle, 'getFile').mockImplementation(async () => { await gate; return file; });
+      return { release, getFile, size: file.size + json.size };
+    }));
+    vi.stubGlobal('showDirectoryPicker', vi.fn().mockResolvedValueOnce(roots[0]).mockResolvedValueOnce(roots[1]));
+    const { result, unmount } = renderHook(() => useArchive(false));
+    await act(async () => { await result.current.openFolder(); });
+    await waitFor(() => expect(fixtures[0].getFile).toHaveBeenCalledOnce());
+    const oldSize = result.current.computeAndUpdateFolderSize(result.current.inboxList[0])
+      .then(() => null, error => error);
+
+    await act(async () => { await result.current.openFolder(); });
+    await waitFor(() => expect(fixtures[1].getFile).toHaveBeenCalledOnce());
+    const replacement = result.current.inboxList[0];
+    const firstSize = result.current.computeAndUpdateFolderSize(replacement);
+    await act(async () => {
+      fixtures[0].release();
+      expect(await oldSize).toMatchObject({ name: 'AbortError' });
+    });
+    expect(result.current.inboxList[0]).toMatchObject({ title: 'Second archive', folderSize: 0 });
+    const secondSize = result.current.computeAndUpdateFolderSize(replacement);
+    await act(async () => {
+      fixtures[1].release();
+      expect(await firstSize).toBe(fixtures[1].size);
+      expect(await secondSize).toBe(fixtures[1].size);
+    });
+    await waitFor(() => expect(result.current.sizeProgress).toBeNull());
+    expect(result.current.inboxList[0]).toMatchObject({ title: 'Second archive', folderSize: fixtures[1].size });
+    expect(fixtures[0].getFile).toHaveBeenCalledOnce();
+    expect(fixtures[1].getFile).toHaveBeenCalledOnce();
+    unmount();
+  });
+
   it('aborts an older folder load and prevents its late result from replacing the new archive', async () => {
     const firstRoot = facebookRoot('First archive');
     const secondRoot = facebookRoot('Second archive');

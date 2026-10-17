@@ -3,6 +3,7 @@ import { withAttachmentPreviewPriority } from './attachmentScanScheduling';
 import { createNoopTaskSubscription, SubscribableTaskQueue, type TaskSubscription } from './subscribableTaskQueue';
 import type { Concurrency } from './concurrency';
 import { performanceLimit } from './performanceSettings';
+import { loadImage as loadImageElement } from './loadImage';
 
 export type ChatImagePreviewFit = 'contain' | 'cover';
 
@@ -255,25 +256,7 @@ async function createChatImagePreview(request: PreviewRequest, signal: AbortSign
 }
 
 function loadImage(source: string, signal: AbortSignal): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    const cleanup = () => {
-      image.onload = null;
-      image.onerror = null;
-      signal.removeEventListener('abort', abort);
-    };
-    const abort = () => {
-      cleanup();
-      image.src = '';
-      reject(new DOMException('Chat preview generation cancelled', 'AbortError'));
-    };
-    image.decoding = 'async';
-    image.onload = () => { cleanup(); resolve(image); };
-    image.onerror = () => { cleanup(); reject(new Error('Image decode failed')); };
-    signal.addEventListener('abort', abort, { once: true });
-    if (signal.aborted) abort();
-    else image.src = source;
-  });
+  return loadImageElement(source, signal, 'Chat preview generation cancelled');
 }
 
 export const chatImagePreviewCache = new ChatImagePreviewCache(DEFAULT_MAX_PREVIEWS, performanceLimit('imagePreviews'));

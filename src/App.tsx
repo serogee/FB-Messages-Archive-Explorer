@@ -1,11 +1,12 @@
-import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useCallback, useRef, useEffect, useMemo } from 'react';
 import { ArrowLeft, X } from 'lucide-react';
 import { useSettings } from './hooks/useSettings';
 import { useMobileLayout, useMobileNavigation } from './hooks/useMobileNavigation';
-import { getNavigationItemKey, type NavigationSnapshot, type SidebarView, type PreviewRequest } from './services/mobileNavigation';
-import { getAttachmentJumpTab } from './components/AttachmentGallery/attachmentJump';
+import { getNavigationItemKey, type PreviewRequest } from './services/mobileNavigation';
 import { ReactionFeatureContext, useReactionFeature } from './hooks/useReactionFeature';
 import { useArchive } from './hooks/useArchive';
+import { useDeleteDialog } from './hooks/useDeleteDialog';
+import { useNavigationSync } from './hooks/useNavigationSync';
 import { useChat } from './hooks/useChat';
 import { ThreadDataContext } from './hooks/useThreadData';
 import { AttachmentReferencesContext } from './hooks/useAttachmentReferences';
@@ -16,8 +17,7 @@ import { sortSelectableItemsNewestFirst, useSelection } from './hooks/useSelecti
 import { useAttachments, useSharedLinks } from './hooks/useAttachments';
 import { useBookmarks } from './hooks/useBookmarks';
 import { Sidebar } from './components/Sidebar/Sidebar';
-import { ChatView, type ChatViewHandle } from './components/Chat/ChatView';
-import type { MessageJumpOptions } from './components/Chat/MessageList';
+import { ChatView } from './components/Chat/ChatView';
 import { DateNavigator } from './components/Chat/DateNavigator';
 import { InfoPanel } from './components/InfoPanel/InfoPanel';
 import { SelectionHeader, SelectionPanel } from './components/InfoPanel/SelectionPanel';
@@ -28,31 +28,9 @@ import { TrustModal } from './components/Modals/TrustModal';
 import { ReloadPrompt } from './components/ReloadPrompt';
 import { DeleteConfirmModal } from './components/Modals/DeleteConfirmModal';
 import type { ChatListEntry, SelectableItem } from './types/messenger';
-import type {
-  DeletePreparationState,
-  DeleteProgress,
-  DeleteResultNotice,
-} from './types/deletion';
-import type { GalleryCategory } from './hooks/useAttachments';
-import {
-  MessengerExportIndexIncompleteError,
-  MessengerExportMediaSizeUnavailableError,
-} from './services/messengerExport';
 import { isFileSystemAccessSupported } from './services/fileSystem';
 import { getBookmarkChatId } from './services/bookmarks';
-import {
-  formatBatchDeleteResult,
-  getBookmarkCleanupEntries,
-  getDeleteRetryEntries,
-} from './services/deletionResults';
-import { createProgressThrottle } from './services/progressThrottle';
-import { CalculationProgressStore } from './services/calculationProgress';
-import { SingleFlightGuard } from './services/singleFlight';
 import { isWritableDirectoryHandle, requestDirectoryWritePermission } from './types/fileSystem';
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'An unexpected error occurred.';
-}
 
 export default function App() {
   const { settings, setSetting } = useSettings();
@@ -92,41 +70,30 @@ export default function App() {
     && (!archive.rootHandle || isWritableDirectoryHandle(archive.rootHandle));
   const bookmarks = useBookmarks(archive.rootHandle, bookmarkingEnabled);
 
-  const [sidebarView, setSidebarView] = useState<'chats' | 'settings' | 'archived' | 'requests'>('chats');
-  const [activeTab, setActiveTab] = useState<'chats' | 'settings'>('chats');
-  const [deleteTarget, setDeleteTarget] = useState<ChatListEntry | ChatListEntry[] | null>(null);
-  const [deleteProgress, setDeleteProgress] = useState<DeleteProgress | null>(null);
-  const [deletePreparation, setDeletePreparation] = useState<DeletePreparationState>({
-    status: 'loading',
-    calculatingSizes: false,
-  });
-  const [deleteResultNotice, setDeleteResultNotice] = useState<DeleteResultNotice | null>(null);
-  const [deletePreparing, setDeletePreparing] = useState(false);
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  const [deleteToast, setDeleteToast] = useState<string | null>(null);
-  const deleteInfoRequestRef = useRef(0);
-  const deleteInfoAbortRef = useRef<AbortController | null>(null);
-  const deleteCalculationProgressRef = useRef<CalculationProgressStore | null>(null);
-  const [deleteVerificationProgress, setDeleteVerificationProgress] = useState<CalculationProgressStore | null>(null);
-  const deleteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deleteOperationGuardRef = useRef(new SingleFlightGuard());
-  const deletionPolicyRef = useRef({ enabled: settings.deletionEnabled, revision: 0 });
-  useLayoutEffect(() => {
-    if (deletionPolicyRef.current.enabled === settings.deletionEnabled) return;
-    deletionPolicyRef.current = { enabled: settings.deletionEnabled, revision: deletionPolicyRef.current.revision + 1 };
-  }, [settings.deletionEnabled]);
-  useEffect(() => {
-    if (settings.deletionEnabled) return;
-    deleteInfoRequestRef.current++;
-    deleteInfoAbortRef.current?.abort();
-    deleteInfoAbortRef.current = null;
-    deleteCalculationProgressRef.current?.dispose();
-    setDeleteTarget(null);
-    setDeleteResultNotice(null);
-  }, [settings.deletionEnabled]);
+  const handleDeletedChats = useCallback((deletedEntries: readonly ChatListEntry[]) => {
+    if (chat.activeEntry && deletedEntries.some(
+      entry => getBookmarkChatId(entry) === getBookmarkChatId(chat.activeEntry!)
+    )) {
+      chat.clearChat();
+      navigation.reset();
+      selection.deselectAll();
+    }
+  }, [chat, navigation, selection]);
 
-  const [galleryOpen, setGalleryOpen] = useState(false);
-  const [galleryDefaultTab, setGalleryDefaultTab] = useState<GalleryCategory>('all');
+  const deleteDialog = useDeleteDialog({
+    deletionEnabled: settings.deletionEnabled,
+    permissionRoot: archive.originalRootHandle || archive.rootHandle,
+    getDeleteInfo: archive.getDeleteInfo,
+    updateFolderSize: archive.updateFolderSize,
+    suspendSizeWork: archive.suspendSizeWork,
+    resumeSizeWork: archive.resumeSizeWork,
+    deleteChats: archive.deleteChats,
+    deleteMessengerChatsJsonOnly: archive.deleteMessengerChatsJsonOnly,
+    removeBookmarks: bookmarks.removeForChats,
+    onDeleted: handleDeletedChats,
+  });
+  const { abortForPickedFolder, resetAfterHandledOpen } = deleteDialog;
+
   const repeatedAttachments = useAttachments(chat.chatData, chat.mediaState, { includeRepeated: true });
   const viewerLookup = useMemo(() => new Map([...repeatedAttachments.all, ...sharedLinks].map(item => [getNavigationItemKey(item), item])), [repeatedAttachments.all, sharedLinks]);
   const preview = location.preview;
@@ -158,207 +125,6 @@ export default function App() {
     side: 'right',
   });
 
-  const prepareDeleteTarget = useCallback((
-    target: ChatListEntry | ChatListEntry[],
-    preserveResult = false,
-    skipSizes = false,
-    forceOwnershipCheck = false,
-    skipAttachmentCheck = false,
-  ) => {
-    if (!deletionPolicyRef.current.enabled) return;
-    deleteCalculationProgressRef.current?.dispose();
-    deleteInfoAbortRef.current?.abort();
-    const abortCtrl = new AbortController();
-    deleteInfoAbortRef.current = abortCtrl;
-    const requestId = deleteInfoRequestRef.current + 1;
-    deleteInfoRequestRef.current = requestId;
-    const progress = new CalculationProgressStore();
-    const isMessenger = (Array.isArray(target) ? target : [target]).some(entry => entry._messengerExport);
-    progress.report(skipAttachmentCheck
-      ? { stage: 'sizes', label: 'Calculating chat sizes', done: 0, unit: 'files' }
-      : { stage: 'ownership', label: 'Scanning for shared attachments', done: 0,
-        unit: isMessenger ? 'files' : 'folders', jsonFound: isMessenger ? undefined : 0 });
-    deleteCalculationProgressRef.current = progress;
-    setDeleteTarget(target);
-    if (!preserveResult) setDeleteResultNotice(null);
-    setDeletePreparing(false);
-    setDeleteBusy(false);
-    setDeletePreparation(current => ({
-      status: 'loading', calculatingSizes: skipAttachmentCheck && !skipSizes, sizesSkipped: skipSizes,
-      attachmentCheckSkipped: skipAttachmentCheck,
-      info: !skipAttachmentCheck && preserveResult && 'info' in current ? current.info : undefined, progress,
-    }));
-    archive.getDeleteInfo(target, abortCtrl.signal, ownershipInfo => {
-      if (deleteInfoRequestRef.current !== requestId) return;
-      setDeletePreparation({ status: 'loading', info: ownershipInfo, calculatingSizes: !skipSizes, sizesSkipped: skipSizes, progress });
-    }, { skipSizes, forceOwnershipCheck, skipAttachmentCheck, progress })
-      .then(info => {
-        if (deleteInfoRequestRef.current !== requestId) return;
-        setDeletePreparation(skipSizes
-          ? skipAttachmentCheck ? { status: 'unchecked', attachmentCheckSkipped: true } : { status: 'skipped', info }
-          : { status: 'ready', info, attachmentCheckSkipped: skipAttachmentCheck });
-        if (!skipSizes && !Array.isArray(target) && !target._messengerExport && target.folderSize <= 0) {
-          archive.updateFolderSize(target, info.totalSize - (info.stickerSize || 0));
-        }
-      })
-      .catch(error => {
-        if (deleteInfoRequestRef.current !== requestId) return;
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        if (error instanceof MessengerExportIndexIncompleteError) {
-          setDeletePreparation({
-            status: 'error',
-            error: 'Media ownership could not be verified for every conversation.',
-            mediaSafetyUnavailable: true,
-          });
-        } else if (error instanceof MessengerExportMediaSizeUnavailableError) {
-          setDeletePreparation({
-            status: 'error',
-            error: 'Media byte totals could not be calculated. Ownership is verified, so deletion is still safe.',
-            mediaSafetyUnavailable: false,
-            info: error.safeInfo,
-          });
-        } else {
-          setDeletePreparation(current => ({
-            status: 'error',
-            error: getErrorMessage(error),
-            mediaSafetyUnavailable: false,
-            info: 'info' in current ? current.info : undefined,
-            attachmentCheckSkipped: skipAttachmentCheck,
-          }));
-        }
-        console.error('Failed to prepare delete details:', error);
-      })
-      .finally(() => {
-        progress.dispose();
-        if (deleteInfoRequestRef.current !== requestId) return;
-        if (deleteInfoAbortRef.current === abortCtrl) {
-          deleteInfoAbortRef.current = null;
-        }
-      });
-  }, [archive]);
-
-  const handleDeleteRequest = useCallback((target: ChatListEntry | ChatListEntry[]) => {
-    prepareDeleteTarget(target);
-  }, [prepareDeleteTarget]);
-
-  const handleDeleteConfirm = useCallback(async (mode: 'normal' | 'json-only' | 'override' | 'unchecked') => {
-    if (!deleteTarget || !deletionPolicyRef.current.enabled) return;
-    const policyRevision = deletionPolicyRef.current.revision;
-    const assertPolicyCurrent = () => {
-      if (!deletionPolicyRef.current.enabled || deletionPolicyRef.current.revision !== policyRevision) {
-        throw new DOMException('Chat deletion was disabled or superseded.', 'AbortError');
-      }
-    };
-    const jsonOnly = mode === 'json-only';
-    const operationToken = deleteOperationGuardRef.current.tryBegin();
-    if (!operationToken) return;
-    const progressReporter = createProgressThrottle<DeleteProgress>(
-      setDeleteProgress,
-      75,
-      progress => progress.stage
-    );
-    deleteCalculationProgressRef.current?.dispose();
-    deleteInfoAbortRef.current?.abort();
-    deleteInfoAbortRef.current = null;
-    setDeleteResultNotice(null);
-    setDeletePreparing(true);
-    setDeleteProgress({ stage: 'preparing', done: 0, total: 0 });
-    const verificationProgress = new CalculationProgressStore();
-    setDeleteVerificationProgress(mode === 'normal' || mode === 'override' ? verificationProgress : null);
-    deleteInfoRequestRef.current++;
-    const targets = Array.isArray(deleteTarget) ? deleteTarget : [deleteTarget];
-    let retryTargets: ChatListEntry[] | null = null;
-    let sizeWorkSuspended = false;
-    try {
-      const permissionRoot = archive.originalRootHandle || archive.rootHandle;
-      if (!permissionRoot || !await requestDirectoryWritePermission(permissionRoot)) {
-        throw new DOMException('Write access is required to delete these chats.', 'NotAllowedError');
-      }
-      assertPolicyCurrent();
-      sizeWorkSuspended = true;
-      await archive.suspendSizeWork();
-      assertPolicyCurrent();
-      setDeletePreparing(false);
-      setDeleteBusy(true);
-      setDeleteProgress(null);
-      const result = jsonOnly
-        ? await archive.deleteMessengerChatsJsonOnly(targets, progress => {
-            progressReporter.report(progress, progress.total > 0 && progress.done >= progress.total);
-          })
-        : await archive.deleteChats(targets, progress => {
-            setDeleteVerificationProgress(null);
-            progressReporter.report(progress, progress.total > 0 && progress.done >= progress.total);
-          }, { allowSharedAttachmentLoss: mode === 'override', skipAttachmentCheck: mode === 'unchecked', verificationProgress });
-      progressReporter.flush();
-
-      let bookmarkCleanupError: string | undefined;
-      const bookmarkCleanupEntries = getBookmarkCleanupEntries(result);
-      if (bookmarkCleanupEntries.length > 0) {
-        setDeleteProgress({ stage: 'bookmarks', done: 0, total: 1 });
-        try {
-          await bookmarks.removeForChats(bookmarkCleanupEntries);
-        } catch (error) {
-          bookmarkCleanupError = 'Chats were deleted, but their bookmarks could not be removed.';
-          console.error(bookmarkCleanupError, error);
-        } finally {
-          setDeleteProgress({ stage: 'bookmarks', done: 1, total: 1 });
-        }
-      }
-
-      if (chat.activeEntry && result.deleted.some(
-        entry => getBookmarkChatId(entry) === getBookmarkChatId(chat.activeEntry!)
-      )) {
-        chat.clearChat();
-        navigation.reset();
-        selection.deselectAll();
-      }
-
-      for (const failure of result.failed) {
-        console.error(`Failed to delete ${failure.entry.folderName}`, failure.error);
-      }
-      const resultMessage = formatBatchDeleteResult(result, jsonOnly);
-      setDeleteToast(bookmarkCleanupError
-        ? `${resultMessage}; bookmark cleanup failed`
-        : resultMessage);
-      if (deleteToastTimerRef.current) clearTimeout(deleteToastTimerRef.current);
-      deleteToastTimerRef.current = setTimeout(() => setDeleteToast(null), 3200);
-
-      const failedEntries = getDeleteRetryEntries(result);
-      if (failedEntries.length > 0) {
-        retryTargets = failedEntries;
-        setDeleteResultNotice({
-          message: resultMessage,
-          failures: result.failed,
-          bookmarkCleanupError,
-        });
-      } else {
-        setDeleteTarget(null);
-      }
-    } catch (error) {
-      if (!(error instanceof DOMException && error.name === 'AbortError')) {
-        console.error('Delete failed:', error);
-        const message = error instanceof DOMException && error.name === 'NotAllowedError'
-          ? 'Write access was not granted. The chats were not deleted.'
-          : `Deletion failed: ${getErrorMessage(error)}`;
-        setDeleteResultNotice({ message, failures: [] });
-      }
-    } finally {
-      if (sizeWorkSuspended) archive.resumeSizeWork();
-      progressReporter.cancel();
-      verificationProgress.dispose();
-      setDeleteVerificationProgress(null);
-      deleteOperationGuardRef.current.finish(operationToken);
-      setDeletePreparing(false);
-      setDeleteBusy(false);
-      setDeleteProgress(null);
-    }
-
-    if (retryTargets && retryTargets.length > 0) {
-      const retryTarget = retryTargets.length === 1 ? retryTargets[0] : retryTargets;
-      prepareDeleteTarget(retryTarget, true);
-    }
-  }, [deleteTarget, archive, bookmarks, chat, selection, prepareDeleteTarget, navigation]);
-
   const loadChatEntry = useCallback(async (entry: ChatListEntry) => {
     await archive.suspendSizeWork();
     try {
@@ -373,51 +139,49 @@ export default function App() {
     }
   }, [archive, chat]);
 
+  const {
+    sidebarView, activeTab, setActiveTab, galleryOpen, galleryDefaultTab,
+    chatViewRef, chatScrollContainerRef, attachmentJumpTarget,
+    hideGallery, resetSidebar, clearAttachmentJumpTarget,
+    handleBrowseToMessage, handleJumpToMessage, handleChatMessageJump,
+    handleOpenGallery, handleJumpToAttachment, handleSidebarViewChange,
+    handleGalleryTabChange,
+  } = useNavigationSync({
+    navigation, navigationState, isMobile, archiveList,
+    activeEntry: chat.activeEntry, chatData: chat.chatData, chatLoading: chat.loading,
+    loadChatEntry, viewerLookup,
+  });
+
   const handleSelectChat = useCallback(async (entry: ChatListEntry) => {
     navigation.navigate({ ...navigation.getState().location, screen: 'chat', chatId: getBookmarkChatId(entry),
       preview: undefined, messageTarget: undefined, attachmentTarget: undefined });
-    setGalleryOpen(false);
+    hideGallery();
     if (chat.activeEntry && getBookmarkChatId(chat.activeEntry) === getBookmarkChatId(entry) && chat.chatData) return;
     // Paint the loading view before pausing background work or reading chat files.
     await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
     if (navigation.getState().location.chatId !== getBookmarkChatId(entry)) return;
     await loadChatEntry(entry);
-  }, [navigation, loadChatEntry, chat.activeEntry, chat.chatData]);
-
-  useEffect(() => {
-    return () => {
-      deleteInfoAbortRef.current?.abort();
-      if (deleteToastTimerRef.current) clearTimeout(deleteToastTimerRef.current);
-    };
-  }, []);
+  }, [navigation, loadChatEntry, chat.activeEntry, chat.chatData, hideGallery]);
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await archive.openFolder(
       settings.deletionEnabled || settings.attachmentBookmarkingEnabled,
       () => {
-        setActiveTab('chats');
-        setSidebarView('chats');
-        deleteInfoAbortRef.current?.abort();
-        deleteInfoAbortRef.current = null;
+        resetSidebar();
+        abortForPickedFolder();
         chat.clearChat();
         search.clearSearch();
         search.clearWideSearchCache();
         selection.deselectAll();
-        setGalleryOpen(false);
+        hideGallery();
         navigation.reset();
       },
       settings.folderAccessMode,
     );
     if (picked) {
-      deleteInfoRequestRef.current++;
-      setDeleteTarget(null);
-      setDeletePreparation({ status: 'loading', calculatingSizes: false });
-      setDeleteResultNotice(null);
-      setDeletePreparing(false);
-      setDeleteBusy(false);
-      setDeleteProgress(null);
+      resetAfterHandledOpen();
     }
-  }, [settings.deletionEnabled, settings.attachmentBookmarkingEnabled, settings.folderAccessMode, archive, chat, search, selection, navigation]);
+  }, [settings.deletionEnabled, settings.attachmentBookmarkingEnabled, settings.folderAccessMode, archive, chat, search, selection, navigation, abortForPickedFolder, resetAfterHandledOpen, resetSidebar, hideGallery]);
 
   const handleAttachmentBookmarkingChange = useCallback(async (enabled: boolean): Promise<boolean> => {
     if (!enabled) {
@@ -431,75 +195,11 @@ export default function App() {
     return true;
   }, [archive.originalRootHandle, archive.rootHandle, setSetting]);
 
-  const chatViewRef = useRef<ChatViewHandle>(null);
-  const chatScrollContainerRef = useMemo(() => ({ get current() { return chatViewRef.current?.getChatContainer() ?? null; } }), []);
-  const pendingJumpCompletion = useRef<{ revision: number; resolve: () => void; options?: MessageJumpOptions } | null>(null);
-  const pendingDateBrowse = useRef<{ data: typeof chat.chatData; index: number } | null>(null);
-
-  const handleBrowseToMessage = useCallback((index: number) => {
-    pendingDateBrowse.current = { data: chat.chatData, index };
-  }, [chat.chatData]);
-
-  const handleJumpToMessage = useCallback(async (index: number, folderName?: string, options?: MessageJumpOptions) => {
-    const entry = folderName ? archiveList.find(entry => entry.folderName === folderName) : chat.activeEntry;
-    if (!entry) return;
-    pendingDateBrowse.current = null;
-    const previousRevision = navigation.getState().revision;
-    const source = navigation.getState().location;
-    const fromAttachment = source.screen === 'gallery' || source.screen === 'selected' || !!source.preview;
-    navigation.navigate({ ...source, screen: 'chat', chatId: getBookmarkChatId(entry),
-      preview: undefined, messageTarget: index, attachmentTarget: undefined },
-      ENABLE_CONTEXTUAL_BACK_NAVIGATION && fromAttachment ? 'attachment' : undefined);
-    const revision = navigation.getState().revision;
-    if (revision === previousRevision) {
-      await chatViewRef.current?.jumpToMessage(index, options);
-      return;
-    }
-    pendingJumpCompletion.current?.resolve();
-    const completion = new Promise<void>(resolve => { pendingJumpCompletion.current = { revision, resolve, options }; });
-    setGalleryOpen(false);
-    if (getBookmarkChatId(entry) !== (chat.activeEntry ? getBookmarkChatId(chat.activeEntry) : undefined)) {
-      await loadChatEntry(entry);
-    }
-    await completion;
-  }, [archiveList, chat.activeEntry, loadChatEntry, navigation]);
-
-  const handleChatMessageJump = useCallback((index: number, options?: MessageJumpOptions) => (
-    handleJumpToMessage(index, undefined, options)
-  ), [handleJumpToMessage]);
-
   const prevChatDataRef = useRef(chat.chatData);
   useEffect(() => {
     if (chat.chatData && chat.chatData !== prevChatDataRef.current) selection.deselectAll();
     prevChatDataRef.current = chat.chatData;
   }, [chat.chatData, selection]);
-
-  const handleOpenGallery = useCallback((tab?: string) => {
-    const nextTab = (tab as GalleryCategory | undefined) ?? galleryDefaultTab;
-    navigation.navigate({ ...navigation.getState().location, screen: 'gallery', galleryTab: nextTab,
-      preview: undefined, messageTarget: undefined, attachmentTarget: undefined });
-    setGalleryDefaultTab(nextTab);
-    setGalleryOpen(true);
-  }, [galleryDefaultTab, navigation]);
-
-  const handleJumpToAttachment = useCallback((item: SelectableItem) => {
-    const tab = getAttachmentJumpTab(galleryDefaultTab, item.category);
-    const source = navigation.getState().location;
-    navigation.navigate({ ...source, screen: 'gallery', galleryTab: tab,
-      preview: undefined, messageTarget: undefined, attachmentTarget: getNavigationItemKey(item) },
-      ENABLE_CONTEXTUAL_BACK_NAVIGATION && (source.screen === 'chat' || source.preview?.source === 'chat') ? 'message' : undefined);
-    setGalleryDefaultTab(tab);
-    setGalleryOpen(true);
-  }, [galleryDefaultTab, navigation]);
-
-  const handleSidebarViewChange = useCallback((view: SidebarView) => {
-    const destination = { ...navigation.getState().location, screen: 'home' as const, sidebarView: view,
-      chatListView: view === 'settings' ? navigation.getState().location.chatListView : view,
-      preview: undefined, messageTarget: undefined, attachmentTarget: undefined };
-    if (isMobile) navigation.navigate(destination);
-    else navigation.update(destination);
-    setSidebarView(view);
-  }, [isMobile, navigation]);
 
   const handleInfo = useCallback(() => {
     if (isMobile) navigation.navigate({ ...navigation.getState().location, screen: 'info', preview: undefined,
@@ -517,97 +217,6 @@ export default function App() {
   const updateViewerItem = useCallback((item: SelectableItem) => navigation.updatePreview(item), [navigation]);
   const closeViewer = useCallback(() => navigation.closePreview(), [navigation]);
   const parent = useCallback(() => navigation.parent(), [navigation]);
-
-  const sidebarScrollElement = () => document.querySelector<HTMLElement>('#sidebar .sidebar-scroll-region')
-    ?? document.querySelector<HTMLElement>('#sidebar .settings');
-  navigation.capture = (): NavigationSnapshot => ({
-    ...chatViewRef.current?.captureSnapshot(),
-    sidebarScroll: sidebarScrollElement()?.scrollTop,
-    infoScroll: document.querySelector<HTMLElement>('#chatInfoPanel .info-panel-content')?.scrollTop,
-    selectedScroll: document.querySelector<HTMLElement>('.selection-panel-content')?.scrollTop,
-  });
-
-  const appliedRevisionRef = useRef(-1);
-  const startedRevisionRef = useRef(-1);
-  const loadedRestorationRef = useRef(-1);
-  const [attachmentJumpTarget, setAttachmentJumpTarget] = useState<import('./components/AttachmentGallery/AttachmentGallery').AttachmentJumpTarget | null>(null);
-  useLayoutEffect(() => {
-    const { location: destination, snapshot, revision, restoring } = navigationState;
-    if (pendingDateBrowse.current?.data !== chat.chatData) pendingDateBrowse.current = null;
-    if (appliedRevisionRef.current === revision) return;
-    if (startedRevisionRef.current !== revision) {
-      if (pendingJumpCompletion.current && pendingJumpCompletion.current.revision !== revision) {
-        pendingJumpCompletion.current.resolve();
-        pendingJumpCompletion.current = null;
-      }
-      startedRevisionRef.current = revision;
-      chatViewRef.current?.cancelJump();
-      setAttachmentJumpTarget(null);
-    }
-    if (sidebarView !== destination.sidebarView) {
-      setSidebarView(destination.sidebarView);
-      setActiveTab(destination.sidebarView === 'settings' ? 'settings' : 'chats');
-      return;
-    }
-    setSidebarView(destination.sidebarView);
-    setActiveTab(destination.sidebarView === 'settings' ? 'settings' : 'chats');
-    const wantsGallery = destination.screen === 'gallery' || destination.screen === 'selected';
-    if (galleryOpen !== wantsGallery) { setGalleryOpen(wantsGallery); return; }
-    if (galleryDefaultTab !== destination.galleryTab) { setGalleryDefaultTab(destination.galleryTab); return; }
-    if (destination.chatId) {
-      const entry = archiveList.find(entry => getBookmarkChatId(entry) === destination.chatId);
-      if (!entry) { navigation.reset(); return; }
-      if (!chat.activeEntry || getBookmarkChatId(chat.activeEntry) !== destination.chatId) {
-        if (restoring && loadedRestorationRef.current !== revision) {
-          loadedRestorationRef.current = revision;
-          void loadChatEntry(entry);
-        }
-        return;
-      }
-      if (chat.loading) return;
-      if (!chat.chatData && destination.screen !== 'home' && destination.screen !== 'chat') {
-        navigation.navigate({ ...destination, screen: 'chat', preview: undefined });
-        return;
-      }
-    }
-    appliedRevisionRef.current = revision;
-    const dateBrowse = destination.screen === 'chat' && !destination.preview ? pendingDateBrowse.current : null;
-    if (dateBrowse) pendingDateBrowse.current = null;
-    if (restoring && snapshot) {
-      // A date selected in Info takes precedence over the chat position saved on entry.
-      void chatViewRef.current?.restoreSnapshot(dateBrowse ? { ...snapshot, message: undefined } : snapshot);
-      const sidebar = sidebarScrollElement();
-      if (sidebar && snapshot.sidebarScroll !== undefined) sidebar.scrollTop = snapshot.sidebarScroll;
-      const info = document.querySelector<HTMLElement>('#chatInfoPanel .info-panel-content');
-      if (info && snapshot.infoScroll !== undefined) info.scrollTop = snapshot.infoScroll;
-      const selected = document.querySelector<HTMLElement>('.selection-panel-content');
-      if (selected && snapshot.selectedScroll !== undefined) selected.scrollTop = snapshot.selectedScroll;
-    } else if (!destination.preview) {
-      if (destination.messageTarget !== undefined && !dateBrowse) {
-        const finish = () => {
-          if (pendingJumpCompletion.current?.revision === revision) {
-            pendingJumpCompletion.current.resolve();
-            pendingJumpCompletion.current = null;
-          }
-        };
-        const options = pendingJumpCompletion.current?.revision === revision ? pendingJumpCompletion.current.options : undefined;
-        void chatViewRef.current?.jumpToMessage(destination.messageTarget, options).then(finish, finish);
-      }
-      if (destination.attachmentTarget) {
-        const item = viewerLookup.get(destination.attachmentTarget);
-        if (item) setAttachmentJumpTarget({ ...item, tab: destination.galleryTab });
-      } else setAttachmentJumpTarget(null);
-    }
-    if (dateBrowse) void chatViewRef.current?.jumpToMessage(dateBrowse.index);
-    if (isMobile) {
-      const focused = document.activeElement;
-      if (focused instanceof HTMLElement && focused.closest('[inert]')) focused.blur();
-      const activePanel = destination.screen === 'home' ? '#sidebar' : destination.screen === 'info' ? '#chatInfoPanel'
-        : destination.screen === 'selected' ? '.selection-panel' : '.chat-container .chat-view-layer.active';
-      const heading = document.querySelector<HTMLElement>(`${activePanel} h3, ${activePanel} .title-text`);
-      if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
-    }
-  }, [navigationState, archiveList, chat.activeEntry, chat.chatData, chat.loading, galleryOpen, galleryDefaultTab, sidebarView, isMobile, loadChatEntry, navigation, viewerLookup]);
 
   const selectableItemsNewestFirst = useMemo(
     () => sortSelectableItemsNewestFirst([...attachments.all, ...sharedLinks]),
@@ -643,7 +252,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         onSelectChat={handleSelectChat}
         onOpenFolder={handleOpenFolder}
-        onDeleteChat={handleDeleteRequest}
+        onDeleteChat={deleteDialog.request}
         search={search}
         mediaState={chat.mediaState}
         selectedPerspective={chat.selectedPerspective}
@@ -679,7 +288,7 @@ export default function App() {
         onNavigateToMessage={handleChatMessageJump}
         onNavigateToAttachment={handleJumpToAttachment}
         attachmentJumpTarget={attachmentJumpTarget}
-        onAttachmentJumpHandled={() => setAttachmentJumpTarget(null)}
+        onAttachmentJumpHandled={() => clearAttachmentJumpTarget()}
         activeEntry={viewEntry}
         mediaState={chat.mediaState}
         msgProgress={navigatingChat ? 0 : chat.msgProgress}
@@ -694,9 +303,9 @@ export default function App() {
         onSelectPerspective={chat.setSelectedPerspective}
         galleryOpen={galleryOpen}
         galleryDefaultTab={galleryDefaultTab}
-        onGalleryTabChange={tab => { setGalleryDefaultTab(tab); navigation.update({ ...navigation.getState().location, galleryTab: tab }); }}
+        onGalleryTabChange={handleGalleryTabChange}
         onOpenGallery={handleOpenGallery}
-        onCloseGallery={() => { if (isMobile) parent(); else { setGalleryOpen(false); navigation.navigate({ ...location, screen: 'chat', preview: undefined, messageTarget: undefined, attachmentTarget: undefined }); } }}
+        onCloseGallery={() => { if (isMobile) parent(); else { hideGallery(); navigation.navigate({ ...location, screen: 'chat', preview: undefined, messageTarget: undefined, attachmentTarget: undefined }); } }}
         selection={selection}
         attachmentBookmarkingEnabled={bookmarkingEnabled}
         bookmarks={bookmarks}
@@ -786,42 +395,23 @@ export default function App() {
         </div>
       )}
 
-      {deleteTarget && (
+      {deleteDialog.target && (
         <DeleteConfirmModal
-          entry={deleteTarget}
-          onConfirm={() => handleDeleteConfirm(deletePreparation.status === 'unchecked' || deletePreparation.attachmentCheckSkipped ? 'unchecked' : 'normal')}
-          onDeleteAnyway={() => handleDeleteConfirm('override')}
-          onDeleteJsonOnly={() => handleDeleteConfirm('json-only')}
-          onRetryCalculation={() => prepareDeleteTarget(deleteTarget, true)}
-          onSkipCalculation={() => {
-            deleteCalculationProgressRef.current?.dispose();
-            deleteInfoAbortRef.current?.abort();
-            deleteInfoAbortRef.current = null;
-            deleteInfoRequestRef.current++;
-            setDeleteResultNotice(null);
-            setDeletePreparation(current => current.attachmentCheckSkipped
-              ? { status: 'unchecked', attachmentCheckSkipped: true }
-              : { status: 'skipped', info: 'info' in current ? current.info : undefined });
-          }}
-          onCheckAttachments={() => prepareDeleteTarget(deleteTarget, false, deletePreparation.status === 'skipped', true)}
-          onSkipCheck={() => prepareDeleteTarget(deleteTarget, false, false, false, true)}
-          onCancel={() => {
-            if (!deleteProgress && !deleteBusy) {
-              deleteCalculationProgressRef.current?.dispose();
-              deleteInfoAbortRef.current?.abort();
-              deleteInfoAbortRef.current = null;
-              setDeleteTarget(null);
-              setDeletePreparation({ status: 'loading', calculatingSizes: false });
-              setDeleteResultNotice(null);
-              deleteInfoRequestRef.current++;
-            }
-          }}
-          progress={deleteProgress}
-          preparation={deletePreparation}
-          resultNotice={deleteResultNotice}
-          preparingDeletion={deletePreparing}
-          deleting={deleteBusy}
-          verificationProgress={deleteVerificationProgress}
+          entry={deleteDialog.target}
+          onConfirm={() => deleteDialog.confirm(deleteDialog.preparation.status === 'unchecked' || deleteDialog.preparation.attachmentCheckSkipped ? 'unchecked' : 'normal')}
+          onDeleteAnyway={() => deleteDialog.confirm('override')}
+          onDeleteJsonOnly={() => deleteDialog.confirm('json-only')}
+          onRetryCalculation={deleteDialog.retry}
+          onSkipCalculation={deleteDialog.skipSizes}
+          onCheckAttachments={deleteDialog.checkAttachments}
+          onSkipCheck={deleteDialog.skipCheck}
+          onCancel={deleteDialog.cancel}
+          progress={deleteDialog.progress}
+          preparation={deleteDialog.preparation}
+          resultNotice={deleteDialog.resultNotice}
+          preparingDeletion={deleteDialog.preparing}
+          deleting={deleteDialog.busy}
+          verificationProgress={deleteDialog.verificationProgress}
         />
       )}
       {preview && viewerItems.length > 0 && !chat.loading && !navigatingChat && (
@@ -861,12 +451,12 @@ export default function App() {
         {settings.offlineSupportEnabled && (
           <ReloadPrompt canAutoReload={!archive.rootHandle && !archive.loading} />
         )}
-        {deleteToast && (
+        {deleteDialog.toast && (
           <div className="delete-toast" role="status" aria-live="polite">
-            {deleteToast}
+            {deleteDialog.toast}
           </div>
         )}
-        {!deleteToast && bookmarks.error && (
+        {!deleteDialog.toast && bookmarks.error && (
           <div className="delete-toast bookmark-error-toast" role="status">
             <span>{bookmarks.error}</span>
             <button

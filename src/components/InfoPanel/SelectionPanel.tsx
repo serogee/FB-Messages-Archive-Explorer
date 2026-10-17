@@ -9,7 +9,8 @@ import { findMediaFile } from '../../services/media';
 import { imageThumbnailCache } from '../../services/imageThumbnailCache';
 import { videoPosterCache } from '../../services/videoPosterCache';
 import { blobCache } from '../../services/blobCache';
-import { getAudioMetadata, type AudioMetadata } from '../../services/audioMetadata';
+import { formatAudioDuration } from '../../services/audioMetadata';
+import { useAudioMetadata } from '../../hooks/useAudioMetadata';
 import type { Settings } from '../../hooks/useSettings';
 import type { BookmarksController } from '../../hooks/useBookmarks';
 import { MediaFileSize } from '../MediaFileSize';
@@ -69,34 +70,8 @@ function getLinkHostname(link: ResolvedLink): string {
   }
 }
 
-function formatAudioDuration(seconds: number | null): string {
-  if (seconds === null) return 'Unknown duration';
-  const totalSeconds = Math.max(0, Math.round(seconds));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const remainingSeconds = totalSeconds % 60;
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
-    : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
-}
-
 function SelectedAudioMetadata({ attachment, mediaState }: { attachment: ResolvedAttachment; mediaState: MediaState }) {
-  const [metadata, setMetadata] = useState<AudioMetadata | null>(null);
-
-  useEffect(() => {
-    const entry = attachment.mediaEntry || findMediaFile(mediaState, attachment.mediaPath);
-    if (!entry) {
-      setMetadata({ duration: null, size: null });
-      return;
-    }
-
-    let mounted = true;
-    setMetadata(null);
-    void getAudioMetadata(entry).then(result => {
-      if (mounted) setMetadata(result);
-    });
-    return () => { mounted = false; };
-  }, [attachment, mediaState]);
+  const metadata = useAudioMetadata(attachment, mediaState);
 
   return (
     <div className="gallery-file-meta gallery-author-size-meta gallery-even-metadata-spacing">

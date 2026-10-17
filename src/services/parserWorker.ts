@@ -1,4 +1,4 @@
-import { parseMessengerJsonContent, getMessageTimestamp } from './parser';
+import { parseMessengerJsonContent, mergeMessengerData, normalizeMessengerData } from './parser';
 import type { MessengerThread } from '../types/messenger';
 import { FILE_READ_CONCURRENCY, LiveConcurrencyLimit, mapWithConcurrency } from './concurrency';
 
@@ -32,27 +32,7 @@ self.onmessage = async (e: MessageEvent<ParserRequest>) => {
     const parsedData = results.filter((data): data is MessengerThread => data !== null);
     if (!parsedData.length) throw new Error('No readable message JSON files.');
     
-    const base = { ...parsedData[0] };
-    base.messages = parsedData.flatMap(data => Array.isArray(data.messages) ? data.messages : []);
-
-    const participantMap = new Map<string, { name: string }>();
-    parsedData.forEach(data => {
-      (data.participants || []).forEach(participant => {
-        const name = participant.name;
-        if (name && !participantMap.has(name)) participantMap.set(name, participant);
-      });
-    });
-    base.participants = Array.from(participantMap.values());
-
-    base.messages = base.messages
-      .map((msg, index) => ({ msg, index, timestamp: getMessageTimestamp(msg) }))
-      .sort((a, b) => {
-        if (a.timestamp === null && b.timestamp === null) return a.index - b.index;
-        if (a.timestamp === null) return 1;
-        if (b.timestamp === null) return -1;
-        return (a.timestamp - b.timestamp) || (a.index - b.index);
-      })
-      .map(item => item.msg);
+    const base = normalizeMessengerData(mergeMessengerData(parsedData));
       
     self.postMessage({ type: 'success', data: base, complete });
   } catch (error) {
