@@ -1384,15 +1384,36 @@ test('read-only mobile access disables write actions and native reopening restor
   await expect(deleteToggle).toBeChecked();
 });
 
-for (const { prefix, flat } of [
-  { prefix: '', flat: false }, { prefix: 'Download', flat: false }, { prefix: 'storage/Download', flat: false },
-  { prefix: 'Download', flat: true },
+for (const { prefix, flat, android } of [
+  { prefix: '', flat: false, android: false }, { prefix: 'Download', flat: false, android: false },
+  { prefix: 'storage/Download', flat: false, android: false }, { prefix: 'Download', flat: true, android: false },
+  { prefix: '', flat: false, android: true },
 ]) {
-  test(`opens a standalone Messenger export through read-only mobile access (${prefix || 'no wrapper'}${flat ? ', flat files' : ''})`, async ({ page }) => {
+  test(`opens a standalone Messenger export through read-only mobile access (${prefix || 'no wrapper'}${flat ? ', flat files' : ''}${android ? ', Android document paths' : ''})`, async ({ page }) => {
     await installArchive(page, 'messenger', false, false, false, 0, true, prefix, flat);
     await enableDebuggingOnLoad(page);
     await page.goto('');
     await setMessengerPhoto(page);
+    if (android) {
+      await page.evaluate(() => {
+        const dispatch = HTMLInputElement.prototype.dispatchEvent;
+        HTMLInputElement.prototype.dispatchEvent = function (event) {
+          if (this.type === 'file' && this.webkitdirectory && event.type === 'change' && this.files) {
+            const tree = 'primary:Download/Messenger export';
+            const files = Array.from(this.files, file => {
+              const relativePath = file.webkitRelativePath.split('/').slice(1).join('/');
+              const uploaded = new File([file], file.name, { type: file.type, lastModified: file.lastModified });
+              Object.defineProperty(uploaded, 'webkitRelativePath', {
+                value: `tree/${encodeURIComponent(tree)}/document/${encodeURIComponent(`${tree}/${relativePath}`)}`,
+              });
+              return uploaded;
+            });
+            Object.defineProperty(this, 'files', { configurable: true, value: files });
+          }
+          return dispatch.call(this, event);
+        };
+      });
+    }
     await selectFolderAccess(page, 'upload');
     await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
     const alice = page.locator('.chat-list-item').filter({ hasText: 'Messenger Alice' });
