@@ -19,6 +19,32 @@ function uploadFile(path: string, content = 'media bytes', relativePath = path):
 }
 
 describe('Messenger attachments in flat folder uploads', () => {
+  it.each(['tree/', 'content://com.android.externalstorage.documents/tree/'])('restores Android document paths from %s uploads', async prefix => {
+    const selectedDirectory = 'primary:Download/Messenger export';
+    const androidPath = (path: string) => `${prefix}${encodeURIComponent(selectedDirectory)}/document/${encodeURIComponent(`${selectedDirectory}/${path}`)}`;
+    const photo = uploadFile('photo.jpg', 'image bytes', androidPath('media/photo.jpg'));
+    const document = uploadFile('report.pdf', 'document bytes', androidPath('media/documents/report.pdf'));
+    const root = createVirtualFileSystem([
+      uploadFile('chat.json', conversation, androidPath('chat.json')), photo, document,
+      uploadFile('photo.jpg', 'unrelated image', androidPath('media/other/photo.jpg')),
+    ]);
+    expect(await resolveMessengerExportRoot(root)).toBe(root);
+    const state = createMediaState();
+    await processMessengerExportMedia(root, state);
+
+    expect(state.mediaFileCount).toBe(3);
+    expect(await findMediaFile(state, 'media/photo.jpg')?.handle?.getFile()).toBe(photo);
+    expect(await findMediaFile(state, 'media/documents/report.pdf')?.handle?.getFile()).toBe(document);
+    const sizes = await buildMessengerExportMediaSizeIndex(root);
+    expect(await computeMessengerExportChatSize(root, 'chat.json', sizes)).toBe(
+      new Blob([conversation]).size + photo.size + document.size,
+    );
+    const report = await checkMessengerAttachmentFiles(root, parseMessengerExportJson(conversation), state);
+    expect(report).toContain('Indexed files: 3\nMatched references: 2');
+    expect(report).toContain('Attachment lookup: media folder');
+    expect(report).toContain('Sample getFile(): OK\nSample file bytes: OK');
+  });
+
   it.each(['', 'export/', 'Download/export/', 'storage/Download/export/'])('loads flat uploaded files with prefix "%s"', async prefix => {
     const photo = uploadFile(`${prefix}photo.jpg`);
     const document = uploadFile(`${prefix}report.pdf`);

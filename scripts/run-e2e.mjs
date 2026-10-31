@@ -1,20 +1,25 @@
 import { spawn } from 'node:child_process';
-import { createServer } from 'vite';
+import { createServer, preview } from 'vite';
 
 const host = '127.0.0.1';
 const port = 4173;
-const server = await createServer({
+const args = process.argv.slice(2);
+const development = args.includes('--dev');
+const settings = {
   configFile: 'vite.config.ts',
   logLevel: 'error',
-  server: { host, port, strictPort: true },
-});
+};
+// npm run test:e2e builds first; CI also builds before invoking this runner.
+const server = development
+  ? await createServer({ ...settings, server: { host, port, strictPort: true } })
+  : await preview({ ...settings, preview: { host, port, strictPort: true } });
 
 try {
-  await server.listen();
+  if (development) await server.listen();
   const playwright = spawn(
     process.execPath,
-    ['./node_modules/@playwright/test/cli.js', 'test', ...process.argv.slice(2)],
-    { cwd: process.cwd(), stdio: 'inherit' },
+    ['./node_modules/@playwright/test/cli.js', 'test', ...args.filter(arg => arg !== '--dev')],
+    { cwd: process.cwd(), stdio: 'inherit', env: { ...process.env, E2E_PRODUCTION: development ? '' : '1' } },
   );
   const exitCode = await new Promise((resolve, reject) => {
     playwright.once('error', reject);
@@ -22,5 +27,6 @@ try {
   });
   process.exitCode = exitCode;
 } finally {
-  await server.close();
+  if (development) await server.close();
+  else await new Promise((resolve, reject) => server.httpServer.close(error => error ? reject(error) : resolve()));
 }

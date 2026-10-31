@@ -332,10 +332,13 @@ npm run preview
 | Command              | Description                |
 | -------------------- | -------------------------- |
 | `npm test`           | Run all tests once         |
-| `npm run test:e2e`   | Run browser workflow tests |
+| `npm run test:e2e`   | Build and run production browser workflow tests |
+| `npm run test:e2e:dev` | Run browser workflow tests on the development server |
 | `npm run test:watch` | Run tests in watch mode    |
 | `npm run test:perf`  | Run performance benchmarks |
 | `npm run lint`       | Lint with oxlint           |
+
+The production browser command builds before starting preview. To run selected cases against an existing build, use `node scripts/run-e2e.mjs` with Playwright arguments. The development command skips production-only service worker tests. Workflow fixtures disable offline support; the dedicated PWA case tests its default enabled setting.
 
 ---
 

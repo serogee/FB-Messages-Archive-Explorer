@@ -19,6 +19,7 @@ for (const mode of ['Guess nearby', 'Guess aggressively']) {
         chats[actor] = directory(actor, { 'message_1.json': { kind: 'file', name: 'message_1.json', async getFile() { return new File([contents], 'message_1.json'); } } });
       }
       localStorage.setItem(`majv_${location.hostname}_setting_dontShowTrustModal`, '1');
+      localStorage.setItem(`majv_${location.hostname}_setting_offlineSupportEnabled`, '0');
       localStorage.setItem(`majv_${location.hostname}_setting_reactionTimestampGuessingMode`, 'off');
       Object.defineProperty(window, 'showDirectoryPicker', { value: async () => directory('messages', { inbox: directory('inbox', chats) }), configurable: true });
       const Original = window.Worker;
@@ -74,6 +75,7 @@ for (const mode of ['Guess nearby', 'Guess aggressively']) {
 }
 
 test('nearby completes delayed reaction pairs and closes the extended block', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
   await page.addInitScript(() => {
     const base = 1_700_000_000_000, late = base + 31 * 60_000, emoji = '\u{1f602}';
     const directory = (name: string, children: Record<string, any>): any => ({
@@ -98,6 +100,7 @@ test('nearby completes delayed reaction pairs and closes the extended block', as
       conversations[actor] = directory(actor, { 'message_1.json': { kind: 'file', name: 'message_1.json', async getFile() { return new File([contents], 'message_1.json'); } } });
     }
     localStorage.setItem(`majv_${location.hostname}_setting_dontShowTrustModal`, '1');
+    localStorage.setItem(`majv_${location.hostname}_setting_offlineSupportEnabled`, '0');
     Object.defineProperty(window, 'showDirectoryPicker', { value: async () => directory('messages', { inbox: directory('inbox', conversations) }), configurable: true });
   });
   await page.goto('');
@@ -117,13 +120,18 @@ test('nearby completes delayed reaction pairs and closes the extended block', as
     await page.getByRole('button', { name: 'Close', exact: true }).click();
   }
   const hiddenNotice = page.getByRole('region', { name: 'Hidden reaction notices', exact: true });
+  // Keep the three-second hint visible while checking the mobile layout.
+  await page.clock.pauseAt(new Date('2026-01-01T01:00:00Z'));
   await page.locator('label[for="hideLikelyReactionNotices"]').click();
   await expect(hiddenNotice).toHaveCount(0);
   await page.locator('label[for="hideLikelyReactionNotices"]').click();
   await expect(hiddenNotice).toContainText('5 reaction notices hidden');
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.clock.runFor(100);
   await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+  await page.clock.runFor(100);
   await page.locator('.chat-list-item').filter({ hasText: 'Alice Chat' }).click();
+  await page.clock.runFor(100);
   await hiddenNotice.scrollIntoViewIfNeeded();
   const noticeBox = await hiddenNotice.boundingBox();
   const chatBox = await page.locator('.chat-container').boundingBox();
@@ -131,7 +139,8 @@ test('nearby completes delayed reaction pairs and closes the extended block', as
   expect(noticeBox!.x + noticeBox!.width).toBeLessThanOrEqual(chatBox!.x + chatBox!.width);
   await page.screenshot({ path: test.info().outputPath('reaction-controls-mobile.png') });
   const scrollTop = await page.locator('#chat').evaluate(el => el.scrollTop);
-  await expect(hiddenNotice).toHaveCount(0, { timeout: 5000 });
+  await page.clock.runFor(3000);
+  await expect(hiddenNotice).toHaveCount(0);
   expect(await page.locator('#chat').evaluate(el => el.scrollTop)).toBe(scrollTop);
 });
 
@@ -161,6 +170,7 @@ test('reaction hints dismiss and timestamped names show blue hover dates across 
     }
     const root = makeDirectory('messages', { inbox: makeDirectory('inbox', conversations) });
     localStorage.setItem(`majv_${location.hostname}_setting_dontShowTrustModal`, '1');
+    localStorage.setItem(`majv_${location.hostname}_setting_offlineSupportEnabled`, '0');
     localStorage.setItem(`majv_${location.hostname}_setting_reactionTimestampGuessingMode`, 'off');
     Object.defineProperty(window, 'showDirectoryPicker', { value: async () => root, configurable: true });
     const BrowserWorker = window.Worker;

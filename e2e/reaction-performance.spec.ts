@@ -32,6 +32,7 @@ test('dense notice histories stay bounded when opening and toggling visibility',
     const file = { kind: 'file', name: 'message_1.json', async getFile() { return new File([contents], 'message_1.json'); } };
     const root = directory('messages', { inbox: directory('inbox', { dense: directory('dense', { 'message_1.json': file }) }) });
     localStorage.setItem(`majv_${location.hostname}_setting_dontShowTrustModal`, '1');
+    localStorage.setItem(`majv_${location.hostname}_setting_offlineSupportEnabled`, '0');
     Object.defineProperty(window, 'showDirectoryPicker', { value: async () => root, configurable: true });
   }, { count });
   await page.goto('');

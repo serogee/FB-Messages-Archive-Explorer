@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run test",
-    "test:e2e": "node scripts/run-e2e.mjs",
+    "test:e2e": "npm run build && node scripts/run-e2e.mjs",
+    "test:e2e:dev": "node scripts/run-e2e.mjs --dev",
     "test:perf": "vitest bench",
     "test:watch": "vitest test",
     "preview": "vite preview"

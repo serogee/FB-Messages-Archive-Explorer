@@ -170,6 +170,40 @@ describe('folder-upload filesystem fallback', () => {
     ])).toThrow(/invalid uploaded file path/i);
   });
 
+  it.each([
+    ['primary:Download/export', 'primary:Download/export-other/media/photo.jpg'],
+    ['primary:Download/export', 'primary:Download/export/../photo.jpg'],
+    ['primary:Download/export', 'primary:Download/export/media//photo.jpg'],
+    ['primary:Download/export', 'primary:Download/export/media/./photo.jpg'],
+    ['primary:Download/export', 'primary:Download/export/media/other.jpg'],
+    ['primary:Download/export', '%invalid'],
+  ])('rejects Android document paths outside the selected folder or with invalid segments (%s, %s)', (tree, document) => {
+    const file = new File(['image'], 'photo.jpg');
+    Object.defineProperty(file, 'webkitRelativePath', { value: `tree/${encodeURIComponent(tree)}/document/${encodeURIComponent(document)}` });
+    expect(() => createVirtualFileSystem([file])).toThrow(/invalid uploaded file path/i);
+  });
+
+  it('decodes Android document identifiers once and preserves literal encoded filenames in ordinary uploads', async () => {
+    const name = 'photo%20name.jpg';
+    const android = new File(['android image'], name);
+    Object.defineProperty(android, 'webkitRelativePath', { value: `tree/primary%3Aexport/document/${encodeURIComponent(`primary:export/media/${name}`)}` });
+    const ordinary = new File(['ordinary image'], name);
+    Object.defineProperty(ordinary, 'webkitRelativePath', { value: `export/media/${name}` });
+    for (const file of [android, ordinary]) {
+      const root = createVirtualFileSystem([file]);
+      const media = await root.getDirectoryHandle('media');
+      expect(await (await media.getFileHandle(name)).getFile()).toBe(file);
+      await expect(media.getFileHandle('photo name.jpg')).rejects.toMatchObject({ name: 'NotFoundError' });
+    }
+  });
+
+  it('preserves ordinary folders named tree and document', async () => {
+    const file = folderUploadFile('tree/albums/document/photo.jpg');
+    const root = createVirtualFileSystem([file]);
+    const directory = await (await root.getDirectoryHandle('albums')).getDirectoryHandle('document');
+    expect(await (await directory.getFileHandle('photo.jpg')).getFile()).toBe(file);
+  });
+
   it('reports cancellation without preparing uploaded files', async () => {
     vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function () {
       this.dispatchEvent(new Event('cancel'));

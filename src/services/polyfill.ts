@@ -85,15 +85,40 @@ export class VirtualDirectoryHandle implements ReadableDirectoryHandle {
   }
 }
 
-function addUploadedFile(root: VirtualDirectoryHandle, file: File): void {
-  // Folder uploads include the selected directory name; native handles expose its contents.
-  const relativePath = file.webkitRelativePath;
-  const parts = (relativePath || file.name).split('/');
+function getUploadedPathParts(file: File, relativePath: string): string[] {
+  const androidPath = /^(?:content:\/\/[^/]+\/)?tree\/([^/]*%3[aA][^/]*)\/document\/([^/]+)$/.exec(relativePath);
+  let parts: string[];
+  if (androidPath) {
+    // Some Android providers return document URIs instead of relative paths.
+    // Decode the IDs once, then retain only descendants of the selected tree.
+    let tree: string, document: string;
+    try {
+      tree = decodeURIComponent(androidPath[1]);
+      document = decodeURIComponent(androidPath[2]);
+    } catch {
+      throw new Error(`Invalid uploaded file path: ${relativePath}`);
+    }
+    if (!tree.includes(':') || !document.startsWith(`${tree}/`)) {
+      throw new Error(`Invalid uploaded file path: ${relativePath}`);
+    }
+    parts = document.slice(tree.length + 1).split('/');
+    if (parts[parts.length - 1] !== file.name) {
+      throw new Error(`Invalid uploaded file path: ${relativePath}`);
+    }
+  } else {
+    parts = (relativePath || file.name).split('/');
+  }
   if (parts.some(part => !part || part === '.' || part === '..')) {
     throw new Error(`Invalid uploaded file path: ${relativePath || file.name}`);
   }
-  if (relativePath && parts.length > 1) parts.shift();
-  if (parts.length === 0) throw new Error(`Invalid uploaded file path: ${relativePath || file.name}`);
+  // Ordinary folder uploads include the selected directory name.
+  if (!androidPath && relativePath && parts.length > 1) parts.shift();
+  return parts;
+}
+
+function addUploadedFile(root: VirtualDirectoryHandle, file: File): void {
+  const relativePath = file.webkitRelativePath;
+  const parts = getUploadedPathParts(file, relativePath);
 
   let currentDir = root;
   for (let j = 0; j < parts.length - 1; j++) {
