@@ -178,6 +178,8 @@ export async function installArchive(page: Page, format: 'facebook' | 'instagram
     localStorage.setItem(`majv_${location.hostname}_setting_dontShowTrustModal`, '1');
     localStorage.setItem(`majv_${location.hostname}_setting_deletionEnabled`, '1');
     localStorage.setItem(`majv_${location.hostname}_setting_attachmentBookmarkingEnabled`, '1');
+    // Workflow/layout fixtures do not exercise service worker notifications.
+    localStorage.setItem(`majv_${location.hostname}_setting_offlineSupportEnabled`, '0');
     Object.defineProperty(window, 'showDirectoryPicker', {
       configurable: true,
       value: async () => selectedFormat === 'facebook' ? facebook : selectedFormat === 'instagram' ? instagram : messenger,
