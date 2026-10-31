@@ -145,8 +145,6 @@ export function useChat(): {
         if (abortCtrl.signal.aborted) return;
       }
 
-      await classifyChatMp4Attachments(data, newMediaState, abortCtrl.signal);
-      if (abortCtrl.signal.aborted) return;
       setMediaState({ ...newMediaState });
 
       setMsgStatusText("Loading messages...");
@@ -181,8 +179,14 @@ export function useChat(): {
         setLoading(false);
         setMsgProgress(1);
       });
-      
 
+      // Track inspection is optional metadata. Slow native media reads must
+      // not keep the conversation behind its loading view.
+      void classifyChatMp4Attachments(data, newMediaState, abortCtrl.signal).then(() => {
+        if (!abortCtrl.signal.aborted && mediaAbortControllerRef.current === abortCtrl) {
+          setMediaState({ ...newMediaState });
+        }
+      }).catch(() => { /* Keep the export's media types if inspection fails. */ });
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       if (mediaAbortControllerRef.current === abortCtrl) {

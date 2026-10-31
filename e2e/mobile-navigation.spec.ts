@@ -1440,6 +1440,67 @@ for (const { prefix, flat, android } of [
   });
 }
 
+test('opens a native Messenger chat before slow attachment filename lookups finish', async ({ page }) => {
+  await installArchive(page, 'messenger');
+  await page.goto('');
+  await setMessengerPhoto(page);
+  await page.evaluate(async () => {
+    const fixture = window as unknown as {
+      __testArchives: { messenger: FileSystemDirectoryHandle };
+      releaseNativeMediaLookups: () => void;
+    };
+    const root = fixture.__testArchives.messenger;
+    const media = await root.getDirectoryHandle('media');
+    const clip = await media.getFileHandle('clip.mp4', { create: true });
+    const clipWriter = await clip.createWritable();
+    await clipWriter.write(new Uint8Array([0, 0, 0, 8, 102, 116, 121, 112]));
+    await clipWriter.close();
+    const conversation = await root.getFileHandle('alice.json');
+    const data = JSON.parse(await (await conversation.getFile()).text());
+    data.messages[1].media.push({ uri: 'media/clip.mp4' });
+    const writer = await conversation.createWritable();
+    await writer.write(JSON.stringify(data));
+    await writer.close();
+    const entries = root.entries.bind(root);
+    root.entries = async function* () {
+      for await (const [name, entry] of entries()) {
+        yield [name, entry.kind === 'directory' ? entry : {
+          kind: 'file', name,
+          getFile: async () => { throw new DOMException('Listed document not found', 'NotFoundError'); },
+        } as FileSystemFileHandle];
+      }
+    };
+  });
+  await page.getByRole('button', { name: /Select messages folder|Select folder/ }).click();
+  await page.getByRole('button', { name: 'Sort chats', exact: true }).click();
+  await expect(page.getByRole('option', { name: 'Biggest Size', exact: true })).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await page.evaluate(async () => {
+    const fixture = window as unknown as {
+      __testArchives: { messenger: FileSystemDirectoryHandle };
+      releaseNativeMediaLookups: () => void;
+    };
+    const media = await fixture.__testArchives.messenger.getDirectoryHandle('media');
+    const entries = media.entries.bind(media);
+    media.entries = async function* () {
+      for await (const [name] of entries()) yield [name, {
+        kind: 'file', name,
+        getFile: async () => { throw new DOMException('Listed document not found', 'NotFoundError'); },
+      } as FileSystemFileHandle];
+    };
+    const lookup = media.getFileHandle.bind(media);
+    const gate = new Promise<void>(resolve => { fixture.releaseNativeMediaLookups = resolve; });
+    media.getFileHandle = async (...args) => { await gate; return lookup(...args); };
+  });
+  await page.locator('.chat-list-item').filter({ hasText: 'Messenger Alice' }).click();
+  await expect(page.locator('#chat')).toContainText('needle from Messenger');
+  await expect(page.getByRole('progressbar', { name: 'Chat loading progress', exact: true })).toHaveCount(0);
+  await page.evaluate(() => (window as unknown as { releaseNativeMediaLookups: () => void }).releaseNativeMediaLookups());
+  const photo = page.locator('#chat img.preview').first();
+  await expect(photo).toBeVisible();
+  await expect.poll(() => photo.evaluate(element => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+});
+
 for (const failure of ['missing folder', 'unreadable bytes']) {
   test(`read-only attachment details identify ${failure}`, async ({ page }) => {
     await installArchive(page, 'messenger', false, false, false, 0, true, 'Download');
